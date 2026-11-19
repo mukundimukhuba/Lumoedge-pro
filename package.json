@@ -1,0 +1,10 @@
+{
+  "name": "edges-ea-control",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Edges / Lumo Edge Pro EA control + Mentors Portal (Expo web)",
+  "scripts": {
+    "export:web": "cd mobile && npx expo export --platform web --output-dir ../dist-web && node ../scripts/publish-static.js",
+    "start:static": "npx --yes serve -s . -l 8099"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "buildCommand": null,
+  "outputDirectory": ".",
+  "rewrites": [
+    { "source": "/portal", "destination": "/portal/index.html" },
+    { "source": "/portal/", "destination": "/portal/index.html" },
+    { "source": "/portal/dashboard", "destination": "/portal/dashboard/index.html" },
+    { "source": "/portal/dashboard/", "destination": "/portal/dashboard/index.html" },
+    { "source": "/((?!_expo/|assets/|favicon.ico|.*\\..*).*)", "destination": "/index.html" }
+  ]
+}

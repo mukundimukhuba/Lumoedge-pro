@@ -1,0 +1,9 @@
+node_modules/
+.expo/
+dist-web/
+dist-cdn/
+.DS_Store
+.vercel
+*.log
+mobile/node_modules/
+mobile/.expo/
