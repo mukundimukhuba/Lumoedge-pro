@@ -101,6 +101,7 @@ export function EaControlRoot() {
 
 export function EaControlScreen() {
   const router = useRouter();
+  const { height: windowH } = useWindowDimensions();
   const {
     status,
     setStatus,
@@ -129,6 +130,8 @@ export function EaControlScreen() {
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
   const [brokerConnected, setBrokerConnected] = useState(false);
+  /** Compact hero so quotes/status/bottom bar fit one phone viewport. */
+  const heroH = Math.max(168, Math.min(Math.round(windowH * 0.30), 236));
   /** Triple-tap the logo (hero image) → Mentors Portal — not Settings. */
   const logoTaps = useRef<{ count: number; at: number }>({
     count: 0,
@@ -261,43 +264,6 @@ export function EaControlScreen() {
     <View style={styles.root}>
       <StatusBar style="light" />
 
-      <View style={[styles.hero, { backgroundColor: accent }]} pointerEvents="box-none">
-        <View
-          style={[styles.heroFill, { backgroundColor: accent }]}
-          pointerEvents="none"
-        />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Edges logo — triple tap for Mentors Portal"
-          onPress={onLogoPress}
-          hitSlop={20}
-          style={({ pressed }) => [
-            styles.logoHit,
-            Platform.OS === 'web'
-              ? ({ cursor: 'pointer', touchAction: 'manipulation' } as object)
-              : null,
-            pressed && { opacity: 0.92 },
-          ]}
-        >
-          <Image
-            source={eaPicture}
-            style={styles.mascot}
-            resizeMode={
-              activeEa?.pictureUri ? 'cover' : 'contain'
-            }
-          />
-        </Pressable>
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.35)', BASE.black]}
-          locations={[0.55, 0.82, 1]}
-          style={styles.heroFade}
-          pointerEvents="none"
-        />
-        <Text style={styles.title} pointerEvents="none">
-          {eaTitle}
-        </Text>
-      </View>
-
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="settings"
@@ -312,113 +278,179 @@ export function EaControlScreen() {
         ]}
         hitSlop={12}
       >
-        <Ionicons name="settings-outline" size={20} color={BASE.white} />
+        <Ionicons name="settings-outline" size={18} color={BASE.white} />
       </Pressable>
 
-      <View style={styles.lower}>
-        <Glass accent={accent} style={styles.controlGlass} contentStyle={styles.controlRow}>
-          <Control
-            accent={accent}
-            label="quotes"
-            onPress={() => {
-              setQuery('');
-              setSheet('quotes');
-            }}
-            icon={
-              <MaterialCommunityIcons name="chart-line" size={22} color={accent} />
-            }
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces
+        alwaysBounceVertical
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
+        <View
+          style={[styles.hero, { height: heroH, backgroundColor: accent }]}
+          pointerEvents="box-none"
+        >
+          <View
+            style={[styles.heroFill, { backgroundColor: accent }]}
+            pointerEvents="none"
           />
-          <Control
-            accent={accent}
-            label={isActive ? 'stop' : 'start'}
-            onPress={onToggleRun}
-            large
-            lit={isActive}
-            icon={
-              <Ionicons
-                name={isActive ? 'stop' : 'play'}
-                size={28}
-                color={accent}
-              />
-            }
-          />
-          <Control
-            accent={accent}
-            label="remove"
-            onPress={onRemove}
-            icon={<Ionicons name="trash-outline" size={22} color={accent} />}
-          />
-        </Glass>
-
-        <Text style={styles.powered}>
-          powered by{' '}
-          <Text style={[styles.poweredBrand, { color: accent }]}>
-            lumo edge pro
-          </Text>
-        </Text>
-
-        {selected.length > 0 ? (
-          <Text style={styles.symbolHint} numberOfLines={1}>
-            {selected.join(' · ')}
-          </Text>
-        ) : (
-          <Text style={styles.symbolHint}>no symbols selected</Text>
-        )}
-
-        <Glass accent={accent} style={styles.statusGlass} contentStyle={styles.statusRow}>
           <Pressable
-            onPress={onLogoPress}
             accessibilityRole="button"
             accessibilityLabel="Edges logo — triple tap for Mentors Portal"
-            hitSlop={8}
+            onPress={onLogoPress}
+            hitSlop={20}
+            style={({ pressed }) => [
+              styles.logoHit,
+              Platform.OS === 'web'
+                ? ({ cursor: 'pointer', touchAction: 'manipulation' } as object)
+                : null,
+              pressed && { opacity: 0.92 },
+            ]}
           >
             <Image
               source={eaPicture}
-              style={[styles.statusThumb, { borderColor: accent }]}
+              style={styles.mascot}
+              resizeMode={activeEa?.pictureUri ? 'cover' : 'contain'}
             />
           </Pressable>
-          <View style={styles.statusText}>
-            <Text style={styles.statusTitle} numberOfLines={1}>
-              {eaTitle}
-            </Text>
-            <Text style={[styles.statusState, { color: statusColor }]}>
-              {statusLabel}
-            </Text>
-          </View>
-        </Glass>
-
-        <View
-          style={[
-            styles.bottomBar,
-            { borderColor: hexToRgba(accent, 0.55) },
-            Platform.OS === 'web'
-              ? ({ boxShadow: `0 0 14px ${hexToRgba(accent, 0.25)}` } as object)
-              : null,
-          ]}
-        >
-          <BottomNavItem
-            accent={accent}
-            active={bottomTab === 'home'}
-            label="Home"
-            icon="home-outline"
-            onPress={() => onBottomTab('home')}
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.35)', BASE.black]}
+            locations={[0.45, 0.78, 1]}
+            style={styles.heroFade}
+            pointerEvents="none"
           />
-          <BottomNavItem
-            accent={accent}
-            active={bottomTab === 'scanner'}
-            label="Chart scanner"
-            icon="scan-outline"
-            onPress={() => onBottomTab('scanner')}
-          />
-          <BottomNavItem
-            accent={accent}
-            active={bottomTab === 'broker'}
-            label="Connect your broker"
-            icon="link-outline"
-            onPress={() => onBottomTab('broker')}
-          />
+          <Text style={styles.title} pointerEvents="none">
+            {eaTitle}
+          </Text>
         </View>
-      </View>
+
+        <View style={styles.lower}>
+          <Glass
+            accent={accent}
+            style={styles.controlGlass}
+            contentStyle={styles.controlRow}
+          >
+            <Control
+              accent={accent}
+              label="quotes"
+              onPress={() => {
+                setQuery('');
+                setSheet('quotes');
+              }}
+              icon={
+                <MaterialCommunityIcons
+                  name="chart-line"
+                  size={20}
+                  color={accent}
+                />
+              }
+            />
+            <Control
+              accent={accent}
+              label={isActive ? 'stop' : 'start'}
+              onPress={onToggleRun}
+              large
+              lit={isActive}
+              icon={
+                <Ionicons
+                  name={isActive ? 'stop' : 'play'}
+                  size={24}
+                  color={accent}
+                />
+              }
+            />
+            <Control
+              accent={accent}
+              label="remove"
+              onPress={onRemove}
+              icon={
+                <Ionicons name="trash-outline" size={20} color={accent} />
+              }
+            />
+          </Glass>
+
+          <Text style={styles.powered}>
+            powered by{' '}
+            <Text style={[styles.poweredBrand, { color: accent }]}>
+              lumo edge pro
+            </Text>
+          </Text>
+
+          {selected.length > 0 ? (
+            <Text style={styles.symbolHint} numberOfLines={1}>
+              {selected.join(' · ')}
+            </Text>
+          ) : (
+            <Text style={styles.symbolHint}>no symbols selected</Text>
+          )}
+
+          <Glass
+            accent={accent}
+            style={styles.statusGlass}
+            contentStyle={styles.statusRow}
+          >
+            <Pressable
+              onPress={onLogoPress}
+              accessibilityRole="button"
+              accessibilityLabel="Edges logo — triple tap for Mentors Portal"
+              hitSlop={8}
+            >
+              <Image
+                source={eaPicture}
+                style={[styles.statusThumb, { borderColor: accent }]}
+              />
+            </Pressable>
+            <View style={styles.statusText}>
+              <Text style={styles.statusTitle} numberOfLines={1}>
+                {eaTitle}
+              </Text>
+              <Text style={[styles.statusState, { color: statusColor }]}>
+                {statusLabel}
+              </Text>
+            </View>
+          </Glass>
+
+          <View style={styles.bottomDock}>
+            <View
+              style={[
+                styles.bottomBar,
+                { borderColor: hexToRgba(accent, 0.55) },
+                Platform.OS === 'web'
+                  ? ({
+                      boxShadow: `0 0 14px ${hexToRgba(accent, 0.25)}`,
+                    } as object)
+                  : null,
+              ]}
+            >
+              <BottomNavItem
+                accent={accent}
+                active={bottomTab === 'home'}
+                label="Home"
+                icon="home-outline"
+                onPress={() => onBottomTab('home')}
+              />
+              <BottomNavItem
+                accent={accent}
+                active={bottomTab === 'scanner'}
+                label="Chart scanner"
+                icon="scan-outline"
+                onPress={() => onBottomTab('scanner')}
+              />
+              <BottomNavItem
+                accent={accent}
+                active={bottomTab === 'broker'}
+                label="Connect your broker"
+                icon="link-outline"
+                onPress={() => onBottomTab('broker')}
+              />
+            </View>
+          </View>
+        </View>
+      </ScrollView>
 
       <Modal
         visible={sheet !== 'none'}
@@ -959,7 +991,7 @@ function Control({
   lit?: boolean;
   accent: string;
 }) {
-  const size = large ? 72 : 54;
+  const size = large ? 58 : 46;
   return (
     <Pressable
       accessibilityRole="button"
@@ -1057,8 +1089,13 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   root: { flex: 1, backgroundColor: BASE.black },
+  scroll: { flex: 1 },
+  scrollContent: {
+    // No flexGrow fill — keeps the stack compact at the top and lets
+    // paddingBottom create real overflow so the screen can scroll past.
+    paddingBottom: 480,
+  },
   hero: {
-    height: '54%',
     width: '100%',
     overflow: 'hidden',
     alignItems: 'center',
@@ -1079,9 +1116,9 @@ const styles = StyleSheet.create({
   heroFade: { ...StyleSheet.absoluteFill },
   title: {
     position: 'absolute',
-    bottom: 14,
+    bottom: 8,
     color: BASE.white,
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: '700',
     letterSpacing: 0.3,
     textTransform: 'lowercase',
@@ -1091,55 +1128,61 @@ const styles = StyleSheet.create({
   },
   settingsBtn: {
     position: 'absolute',
-    top: 48,
-    right: 14,
+    top: 14,
+    right: 12,
     zIndex: 30,
     elevation: 30,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.55)',
     borderWidth: 1.5,
   },
   lower: {
-    flex: 1,
     backgroundColor: BASE.black,
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 10,
-    gap: 8,
+    paddingHorizontal: 14,
+    paddingTop: 6,
+    paddingBottom: 8,
+    gap: 6,
+  },
+  bottomDock: {
+    width: '100%',
+    paddingHorizontal: 0,
+    paddingBottom: 4,
+    paddingTop: 6,
+    backgroundColor: BASE.black,
   },
   bottomBar: {
     width: '100%',
+    alignSelf: 'center',
     maxWidth: 420,
-    marginTop: 4,
     flexDirection: 'row',
     alignItems: 'stretch',
     justifyContent: 'space-between',
     gap: 4,
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 6,
-    borderRadius: 18,
+    borderRadius: 16,
     borderWidth: 1.5,
-    backgroundColor: 'rgba(8, 8, 8, 0.92)',
+    backgroundColor: 'rgba(8, 8, 8, 0.96)',
   },
   bottomItem: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 4,
+    gap: 3,
+    paddingVertical: 2,
     paddingHorizontal: 2,
-    minHeight: 56,
+    minHeight: 48,
   },
   bottomLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700',
     textAlign: 'center',
-    lineHeight: 12,
+    lineHeight: 11,
   },
   brokerRow: {
     marginTop: 10,
@@ -1178,10 +1221,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
-    paddingVertical: 16,
-    paddingHorizontal: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
   },
-  control: { alignItems: 'center', minWidth: 70 },
+  control: { alignItems: 'center', minWidth: 62 },
   ring: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
   sheen: {
     position: 'absolute',
@@ -1194,49 +1237,50 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
   controlLabel: {
-    marginTop: 8,
-    fontSize: 13,
+    marginTop: 5,
+    fontSize: 12,
     fontWeight: '600',
     textTransform: 'lowercase',
   },
-  powered: { marginTop: 2, color: BASE.muted, fontSize: 12 },
+  powered: { marginTop: 0, color: BASE.muted, fontSize: 11 },
   poweredBrand: { fontWeight: '700' },
   symbolHint: {
     color: 'rgba(255,255,255,0.55)',
-    fontSize: 11,
+    fontSize: 10,
     letterSpacing: 0.3,
     maxWidth: 340,
     textAlign: 'center',
   },
   statusGlass: {
-    marginTop: 'auto',
+    marginTop: 4,
     marginBottom: 2,
     borderRadius: 999,
     maxWidth: 420,
+    width: '100%',
   },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    paddingVertical: 9,
-    paddingHorizontal: 11,
+    gap: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
   },
   statusThumb: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     borderWidth: 1.5,
   },
   statusText: { flex: 1 },
   statusTitle: {
     color: BASE.white,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
   statusState: {
     marginTop: 1,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
