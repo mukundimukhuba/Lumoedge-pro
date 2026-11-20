@@ -135,8 +135,8 @@ export function EaControlScreen() {
   /** Prefer on-layout height (phone chrome / real device) over window. */
   const [layoutH, setLayoutH] = useState(windowH);
   /**
-   * Exact reference proportions (Edges branding kept):
-   * hero ~50% viewport, 10–15px gaps hero→controls→status, fixed dock.
+   * Exact match to algo-nova-layout-reference proportions (Edges branding):
+   * measured hero ≈52.9% of frame; 10–15px gaps; neon pills; fixed dock.
    */
   // Keep dock fully above home-indicator / browser safe area.
   const safeBottom = Math.max(
@@ -145,19 +145,28 @@ export function EaControlScreen() {
   );
   const safeTop = Math.max(insets.top, Platform.OS === 'web' ? 8 : 0);
   const scale = Math.min(1.08, Math.max(0.85, layoutH / 844));
-  /** Hero ≈ half the phone — dominant visual plane like the reference. */
-  const heroH = Math.max(220, Math.min(Math.round(layoutH * 0.5), 440));
+  /**
+   * Measured reference: face hero + neck/body strip ≈ 52.9% total.
+   * Face ~80% of that band; neck strip ~20% (lower-body crop of same pic).
+   */
+  const heroTotalH = Math.max(240, Math.min(Math.round(layoutH * 0.529), 460));
+  const neckH = Math.max(48, Math.round(heroTotalH * 0.2));
+  const faceH = heroTotalH - neckH;
+  /** Shared image height so face shows top, neck shows bottom of same pic. */
+  const bleedImgH = Math.round(faceH * 1.55);
   const dockPad = Math.max(6, 2 + safeBottom);
-  const dockH = Math.round(48 * scale) + dockPad;
-  /** Tight stack gaps (~10–15px) between hero / controls / status. */
-  const gapTight = Math.round(Math.min(15, Math.max(10, 12 * scale)));
-  const gapSm = Math.max(2, Math.round(3 * scale));
-  const titleSize = Math.max(15, Math.round(17 * scale));
-  const controlPadV = Math.max(6, Math.round(8 * scale));
-  const ringSm = Math.max(34, Math.round(38 * scale));
-  const ringLg = Math.max(44, Math.round(50 * scale));
-  const iconSm = Math.max(15, Math.round(17 * scale));
-  const iconLg = Math.max(20, Math.round(22 * scale));
+  const dockH = Math.round(50 * scale) + dockPad;
+  /** Reference stack gaps ≈ 10–15px (use 12). */
+  const gapTight = 12;
+  const gapSm = 4;
+  const titleSize = Math.max(16, Math.round(18 * scale));
+  const controlPadV = Math.max(8, Math.round(10 * scale));
+  /** Reference: smaller side rings, larger center stop. */
+  const ringSm = Math.max(36, Math.round(40 * scale));
+  const ringLg = Math.max(48, Math.round(54 * scale));
+  const iconSm = Math.max(16, Math.round(18 * scale));
+  const iconLg = Math.max(22, Math.round(24 * scale));
+  const sidePad = Math.max(14, Math.round(16 * scale));
   /** Triple-tap the logo (hero image) → Mentors Portal — not Settings. */
   const logoTaps = useRef<{ count: number; at: number }>({
     count: 0,
@@ -351,14 +360,11 @@ export function EaControlScreen() {
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
       >
+        {/* Face band: full-bleed EA picture (pic bg fills — no black gutters). */}
         <View
-          style={[styles.hero, { height: heroH, backgroundColor: accent }]}
+          style={[styles.heroFace, { height: faceH, backgroundColor: accent }]}
           pointerEvents="box-none"
         >
-          <View
-            style={[styles.heroFill, { backgroundColor: accent }]}
-            pointerEvents="none"
-          />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Edges logo — triple tap for Mentors Portal"
@@ -374,23 +380,53 @@ export function EaControlScreen() {
           >
             <Image
               source={eaPicture}
-              style={styles.mascot}
+              style={[styles.heroBleedImg, { height: bleedImgH }]}
               resizeMode="cover"
             />
           </Pressable>
+          {/* Light bottom shade for title only — do not paint black over pic bg. */}
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.4)', BASE.black]}
-            locations={[0.35, 0.72, 1]}
+            colors={['transparent', 'rgba(0,0,0,0.45)']}
+            locations={[0.55, 1]}
             style={styles.heroFade}
             pointerEvents="none"
           />
           <Text
-            style={[styles.title, { fontSize: titleSize, bottom: gapSm }]}
+            style={[
+              styles.title,
+              { fontSize: titleSize, bottom: Math.max(8, gapTight - 2) },
+            ]}
             pointerEvents="none"
             numberOfLines={1}
           >
             {eaTitle}
           </Text>
+        </View>
+
+        {/* Neck/lower-body strip: same pic, cropped to lower portion (Algo Nova style). */}
+        <View
+          style={[
+            styles.heroNeck,
+            {
+              height: neckH,
+              backgroundColor: accent,
+              // Overlap 1px to avoid a black hairline seam between bands.
+              marginTop: -1,
+            },
+          ]}
+          pointerEvents="none"
+        >
+          <Image
+            source={eaPicture}
+            style={[
+              styles.heroBleedImg,
+              {
+                height: bleedImgH,
+                marginTop: -(bleedImgH - neckH),
+              },
+            ]}
+            resizeMode="cover"
+          />
         </View>
 
         <View
@@ -399,6 +435,7 @@ export function EaControlScreen() {
             {
               paddingTop: gapTight,
               paddingBottom: gapSm,
+              paddingHorizontal: sidePad,
               gap: gapTight,
             },
           ]}
@@ -409,7 +446,10 @@ export function EaControlScreen() {
               style={styles.controlGlass}
               contentStyle={[
                 styles.controlRow,
-                { paddingVertical: controlPadV },
+                {
+                  paddingVertical: controlPadV,
+                  paddingHorizontal: Math.max(8, Math.round(10 * scale)),
+                },
               ]}
             >
               <Control
@@ -1298,40 +1338,44 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     paddingBottom: 8,
   },
-  hero: {
+  heroFace: {
     width: '100%',
     maxWidth: '100%',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
-  heroFill: { ...StyleSheet.absoluteFill },
+  heroNeck: {
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
+  },
+  /** Full-bleed cover — no black Image bg so uploaded pic colour fills the band. */
+  heroBleedImg: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
   logoHit: {
     ...StyleSheet.absoluteFill,
     zIndex: 25,
     elevation: 25,
-  },
-  mascot: {
-    width: '100%',
-    height: '100%',
-    alignSelf: 'center',
-    backgroundColor: '#0A0A0A',
+    overflow: 'hidden',
   },
   heroFade: { ...StyleSheet.absoluteFill },
   title: {
     position: 'absolute',
-    bottom: 4,
-    left: 14,
-    right: 14,
+    bottom: 10,
+    left: 16,
+    right: 16,
     textAlign: 'center',
     color: BASE.white,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '700',
-    letterSpacing: 0.2,
+    letterSpacing: 0.3,
     textTransform: 'lowercase',
-    textShadowColor: 'rgba(0,0,0,0.65)',
+    textShadowColor: 'rgba(0,0,0,0.75)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 8,
+    textShadowRadius: 10,
   },
   settingsBtn: {
     position: 'absolute',
@@ -1351,7 +1395,7 @@ const styles = StyleSheet.create({
     backgroundColor: BASE.black,
     alignItems: 'center',
     justifyContent: 'flex-start',
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 4,
     gap: 12,
@@ -1440,10 +1484,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
-    paddingVertical: 8,
-    paddingHorizontal: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
   },
-  control: { alignItems: 'center', minWidth: 56 },
+  control: { alignItems: 'center', minWidth: 60 },
   ring: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
   sheen: {
     position: 'absolute',
@@ -1456,7 +1500,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
   controlLabel: {
-    marginTop: 4,
+    marginTop: 5,
     fontSize: 11,
     fontWeight: '600',
     textTransform: 'lowercase',
@@ -1464,8 +1508,8 @@ const styles = StyleSheet.create({
   powered: { marginTop: 2, color: BASE.muted, fontSize: 10 },
   poweredBrand: { fontWeight: '700' },
   symbolHint: {
-    color: 'rgba(255,255,255,0.55)',
-    fontSize: 10,
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 9,
     letterSpacing: 0.3,
     maxWidth: 340,
     textAlign: 'center',
@@ -1485,25 +1529,25 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    gap: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   statusThumb: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1.5,
   },
   statusText: { flex: 1, minWidth: 0 },
   statusTitle: {
     color: BASE.white,
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
   statusState: {
-    marginTop: 1,
+    marginTop: 2,
     fontSize: 12,
     fontWeight: '700',
     textTransform: 'lowercase',
@@ -1521,9 +1565,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(8, 8, 8, 0.78)',
   },
   addEaIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
   },
