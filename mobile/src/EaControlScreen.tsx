@@ -23,6 +23,8 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccessGateScreen } from './AccessGateScreen';
 import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
+import { pushAutoTradeHistory } from './autoTradeHistory';
+import { BotTradeFloat } from './BotTradeFloat';
 import { loadMt5Token } from './brokers/mt5Token';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
@@ -139,6 +141,7 @@ export function EaControlScreen() {
   const [brokerConnected, setBrokerConnected] = useState(false);
   const [autoEngineOpen, setAutoEngineOpen] = useState(false);
   const [mt5Token, setMt5Token] = useState<string | null>(null);
+  const [historyTick, setHistoryTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -698,6 +701,14 @@ export function EaControlScreen() {
         </View>
       </ScrollView>
 
+      <BotTradeFloat
+        accent={accent}
+        botImage={eaPicture}
+        botName={activeEa?.name}
+        engineRunning={autoEngineOpen}
+        historyTick={historyTick}
+      />
+
       <EdgesBottomDock onHomeRetap={closeSheet} />
 
       <Modal
@@ -969,8 +980,20 @@ export function EaControlScreen() {
         quoteSetups={quoteSetups}
         botName={activeEa?.name}
         onClose={haltAutoTrade}
-        onExecuted={() => {
-          setStatus('running');
+        onExecuted={(result) => {
+          setStatus(result.status === 'failed' ? 'stopped' : 'running');
+          void (async () => {
+            await pushAutoTradeHistory({
+              symbol: result.symbol,
+              direction: result.direction,
+              trades: result.trades,
+              lotSize: result.lotSize,
+              botName: activeEa?.name || undefined,
+              status: result.status,
+              note: result.note,
+            });
+            setHistoryTick((n) => n + 1);
+          })();
         }}
       />
     </View>
