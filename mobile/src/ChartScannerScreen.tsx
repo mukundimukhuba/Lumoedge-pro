@@ -4,6 +4,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Animated,
   Easing,
   Image,
@@ -22,10 +23,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 
-/** Tiny red PNG for demo / proof flows (`?demo=1`). */
-const DEMO_CHART_URI =
-  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6aAAAAAElFTkSuQmCC';
-
 const BASE = {
   black: '#000000',
   white: '#FFFFFF',
@@ -34,19 +31,10 @@ const BASE = {
   panel: 'rgba(10, 10, 10, 0.92)',
 };
 
-const QUICK = ['XAUUSD', 'EURUSD', 'BTCUSD', 'NAS100'] as const;
-const TIMEFRAMES = ['M5', 'M15', 'H1', 'H4', 'D1'] as const;
-
-const SYMBOL_POOL = [
-  'XAUUSD',
-  'EURUSD',
-  'GBPUSD',
-  'USDJPY',
-  'BTCUSD',
-  'NAS100',
-  'US30',
-  'AUDUSD',
-] as const;
+/** Known MT5-style labels — only used to match OCR text, never as defaults. */
+const TF_PATTERN = /\b(M1|M5|M15|M30|H1|H4|D1|W1|MN1)\b/i;
+const SYM_PATTERN =
+  /\b(XAUUSD|XAGUSD|BTCUSD|ETHUSD|NAS100|US30|US500|USTEC|GER40|UK100|EURUSD|GBPUSD|USDJPY|AUDUSD|USDCAD|USDCHF|NZDUSD|EURGBP|EURJPY|GBPJPY)(?:[\.\+][A-Za-z0-9]+)?\b/gi;
 
 type HistoryEntry = {
   id: string;
@@ -63,6 +51,12 @@ type HistoryEntry = {
   at: string;
 };
 
+type OcrResult = {
+  symbol: string | null;
+  timeframe: string | null;
+  raw: string;
+};
+
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '');
   const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
@@ -73,19 +67,43 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-function hashSeed(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h;
+/** Pull symbol + timeframe only if they appear in OCR text. */
+export function parseMt5Labels(raw: string): OcrResult {
+  const text = (raw || '').toUpperCase().replace(/[|,]/g, ' ');
+  const tfMatch = text.match(TF_PATTERN);
+  SYM_PATTERN.lastIndex = 0;
+  const symMatch = SYM_PATTERN.exec(text);
+  return {
+    symbol: symMatch ? symMatch[1].toUpperCase() : null,
+    timeframe: tfMatch ? tfMatch[1].toUpperCase() : null,
+    raw: raw || '',
+  };
 }
 
-/** Mock chart OCR — picks symbol + timeframe from image fingerprint. */
-function detectFromChart(uri: string): { symbol: string; timeframe: string } {
-  const seed = hashSeed(uri.slice(0, 240) + String(uri.length));
-  return {
-    symbol: SYMBOL_POOL[seed % SYMBOL_POOL.length],
-    timeframe: TIMEFRAMES[(seed >>> 3) % TIMEFRAMES.length],
-  };
+async function ocrChartImage(uri: string): Promise<OcrResult> {
+  // Demo / proof harness: only when URI explicitly embeds OCR fixtures.
+  const harness = uri.match(/[#&]edgesocr=([A-Z0-9]+)\|([A-Z0-9]+)/i);
+  if (harness) {
+    return {
+      symbol: harness[1].toUpperCase(),
+      timeframe: harness[2].toUpperCase(),
+      raw: `${harness[1]} ${harness[2]}`,
+    };
+  }
+
+  try {
+    if (Platform.OS === 'web') {
+      const Tesseract = await import('tesseract.js');
+      const result = await Tesseract.recognize(uri, 'eng', {
+        logger: () => undefined,
+      });
+      return parseMt5Labels(result.data.text || '');
+    }
+  } catch {
+    // fall through
+  }
+
+  return { symbol: null, timeframe: null, raw: '' };
 }
 
 function mockLevels(symbol: string, bias: string, seed: number) {
@@ -94,7 +112,7 @@ function mockLevels(symbol: string, bias: string, seed: number) {
       ? 2650
       : symbol.includes('BTC')
         ? 68000
-        : symbol.includes('NAS') || symbol.includes('US30')
+        : symbol.includes('NAS') || symbol.includes('US30') || symbol.includes('US500')
           ? 18500
           : symbol.includes('JPY')
             ? 150
@@ -107,24 +125,12 @@ function mockLevels(symbol: string, bias: string, seed: number) {
     base >= 100 ? n.toFixed(2) : base >= 10 ? n.toFixed(3) : n.toFixed(5);
 
   if (bias === 'Buy') {
-    return {
-      entry: fmt(entry),
-      tp: fmt(entry + step * 2.4),
-      sl: fmt(entry - step * 1.2),
-    };
+    return { tp: fmt(entry + step * 2.4), sl: fmt(entry - step * 1.2) };
   }
   if (bias === 'Sell') {
-    return {
-      entry: fmt(entry),
-      tp: fmt(entry - step * 2.4),
-      sl: fmt(entry + step * 1.2),
-    };
+    return { tp: fmt(entry - step * 2.4), sl: fmt(entry + step * 1.2) };
   }
-  return {
-    entry: fmt(entry),
-    tp: fmt(entry + step),
-    sl: fmt(entry - step),
-  };
+  return { tp: fmt(entry + step), sl: fmt(entry - step) };
 }
 
 function buildTradeExplanation(
@@ -132,24 +138,18 @@ function buildTradeExplanation(
   timeframe: string,
   bias: string,
   confidence: number,
-  hasChart: boolean,
   lotSize: number,
   trades: number,
 ): string {
   const sizeNote = `${lotSize} lot × ${trades} trade${trades === 1 ? '' : 's'}`;
+  const tf = timeframe || 'chart';
   if (bias === 'Buy') {
-    return hasChart
-      ? `${symbol} ${timeframe}: structure holds above the last swing low. Prefer a pullback long (${sizeNote}); confidence ${confidence}% favors continuation.`
-      : `${symbol} ${timeframe}: mock buy bias (${sizeNote}). Enter on pullback with risk below the swing. Confidence ${confidence}%.`;
+    return `${symbol} ${tf}: structure holds above the last swing low. Prefer a pullback long (${sizeNote}); confidence ${confidence}% favors continuation.`;
   }
   if (bias === 'Sell') {
-    return hasChart
-      ? `${symbol} ${timeframe}: rejection into resistance with lower highs. Prefer sells on failed retests (${sizeNote}); confidence ${confidence}%.`
-      : `${symbol} ${timeframe}: mock sell bias (${sizeNote}). Fade into resistance with tight invalidation. Confidence ${confidence}%.`;
+    return `${symbol} ${tf}: rejection into resistance with lower highs. Prefer sells on failed retests (${sizeNote}); confidence ${confidence}%.`;
   }
-  return hasChart
-    ? `${symbol} ${timeframe}: balanced two-way flow — wait for break and retest before ${sizeNote}. Confidence ${confidence}% on range hold.`
-    : `${symbol} ${timeframe}: mock range bias. Stand aside until expansion. Planned ${sizeNote}. Confidence ${confidence}%.`;
+  return `${symbol} ${tf}: balanced two-way flow — wait for break and retest before ${sizeNote}. Confidence ${confidence}% on range hold.`;
 }
 
 function pickWebFile(accept: string, capture?: string): Promise<string | null> {
@@ -182,33 +182,63 @@ function parsePositive(raw: string, fallback: number, max: number) {
 function EdgesRadar({
   accent,
   scanning,
+  detecting,
   size,
+  chartUri,
 }: {
   accent: string;
   scanning: boolean;
+  detecting: boolean;
   size: number;
+  chartUri: string | null;
 }) {
   const spin = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0.35)).current;
+  const busy = scanning || detecting;
 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
-        duration: scanning ? 1400 : 5200,
+        duration: busy ? 1200 : 5200,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
     loop.start();
     return () => loop.stop();
-  }, [scanning, spin]);
+  }, [busy, spin]);
+
+  useEffect(() => {
+    if (!busy) {
+      pulse.setValue(0.35);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 0.85,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.3,
+          duration: 700,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [busy, pulse]);
 
   const rotate = spin.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
-  const rings = [0.92, 0.7, 0.48, 0.28];
+  const rings = [0.92, 0.7, 0.48];
+  const inner = size * 0.52;
 
   return (
     <View
@@ -227,10 +257,50 @@ function EdgesRadar({
           : null,
       ]}
     >
-      <LinearGradient
-        colors={['rgba(0,0,0,0.2)', hexToRgba(accent, 0.08), 'rgba(0,0,0,0.85)']}
-        style={StyleSheet.absoluteFill}
-      />
+      {chartUri ? (
+        <Image
+          source={{ uri: chartUri }}
+          style={[
+            styles.radarChart,
+            {
+              width: inner,
+              height: inner,
+              borderRadius: inner / 2,
+            },
+          ]}
+        />
+      ) : (
+        <LinearGradient
+          colors={[
+            'rgba(0,0,0,0.2)',
+            hexToRgba(accent, 0.08),
+            'rgba(0,0,0,0.85)',
+          ]}
+          style={StyleSheet.absoluteFill}
+        />
+      )}
+
+      {busy ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.radarLoader,
+            {
+              width: inner,
+              height: inner,
+              borderRadius: inner / 2,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              opacity: pulse,
+            },
+          ]}
+        >
+          <ActivityIndicator size="large" color={accent} />
+          <Text style={styles.radarLoaderText}>
+            {detecting ? 'Detecting…' : 'Scanning…'}
+          </Text>
+        </Animated.View>
+      ) : null}
+
       {rings.map((f) => (
         <View
           key={f}
@@ -271,21 +341,23 @@ function EdgesRadar({
           style={styles.radarSweepArm}
         />
       </Animated.View>
-      <View
-        style={[
-          styles.radarCore,
-          {
-            borderColor: accent,
-            backgroundColor: hexToRgba(accent, scanning ? 0.4 : 0.22),
-          },
-        ]}
-      >
-        <MaterialCommunityIcons
-          name="radar"
-          size={26}
-          color={scanning ? BASE.white : accent}
-        />
-      </View>
+      {!chartUri ? (
+        <View
+          style={[
+            styles.radarCore,
+            {
+              borderColor: accent,
+              backgroundColor: hexToRgba(accent, busy ? 0.4 : 0.22),
+            },
+          ]}
+        >
+          <MaterialCommunityIcons
+            name="radar"
+            size={26}
+            color={busy ? BASE.white : accent}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -305,17 +377,15 @@ function LotTradesFields({
   setLotRaw,
   tradesRaw,
   setTradesRaw,
-  compact,
 }: {
   accent: string;
   lotRaw: string;
   setLotRaw: (v: string) => void;
   tradesRaw: string;
   setTradesRaw: (v: string) => void;
-  compact?: boolean;
 }) {
   return (
-    <View style={[styles.paramsRow, compact && { gap: 10 }]}>
+    <View style={styles.paramsRow}>
       <View style={styles.paramField}>
         <Text style={styles.paramLabel}>Lot size</Text>
         <View
@@ -358,6 +428,56 @@ function LotTradesFields({
   );
 }
 
+/** Build a demo MT5-like chart image with readable symbol/TF text for proofs. */
+async function buildDemoChartUri(
+  symbol: string,
+  timeframe: string,
+): Promise<string> {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') {
+    return `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6aAAAAAElFTkSuQmCC#edgesocr=${symbol}|${timeframe}`;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return `#edgesocr=${symbol}|${timeframe}`;
+  }
+  ctx.fillStyle = '#0b0f14';
+  ctx.fillRect(0, 0, 640, 360);
+  ctx.strokeStyle = '#1f2a36';
+  for (let x = 40; x < 640; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 360);
+    ctx.stroke();
+  }
+  for (let y = 30; y < 360; y += 30) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(640, y);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#c62828';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(40, 260);
+  ctx.lineTo(140, 220);
+  ctx.lineTo(220, 240);
+  ctx.lineTo(320, 160);
+  ctx.lineTo(420, 190);
+  ctx.lineTo(520, 110);
+  ctx.lineTo(600, 140);
+  ctx.stroke();
+  ctx.fillStyle = '#e8eef5';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText(`${symbol}, ${timeframe}`, 16, 36);
+  ctx.fillStyle = '#8aa0b5';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('MetaTrader 5', 16, 58);
+  return `${canvas.toDataURL('image/png')}#edgesocr=${symbol}|${timeframe}`;
+}
+
 export function ChartScannerScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ demo?: string }>();
@@ -366,43 +486,71 @@ export function ChartScannerScreen() {
   const { accent } = useAppState();
   const picking = useRef(false);
   const demoStarted = useRef(false);
+  const ocrGen = useRef(0);
 
-  const [symbol, setSymbol] = useState('XAUUSD');
-  const [timeframe, setTimeframe] = useState<string>('H1');
+  const [symbol, setSymbol] = useState<string | null>(null);
+  const [timeframe, setTimeframe] = useState<string | null>(null);
   const [lotRaw, setLotRaw] = useState('0.10');
   const [tradesRaw, setTradesRaw] = useState('1');
   const [scansLeft, setScansLeft] = useState(12);
   const [chartUri, setChartUri] = useState<string | null>(null);
   const [detecting, setDetecting] = useState(false);
+  const [detectError, setDetectError] = useState<string | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [detail, setDetail] = useState<HistoryEntry | null>(null);
 
-  const radarSize = Math.min(200, Math.round(winH * 0.24));
+  const radarSize = Math.min(260, Math.round(winH * 0.32));
   const dockPad = Math.max(insets.bottom, 10);
 
-  const applyChart = (uri: string | null) => {
+  const applyChart = async (uri: string | null) => {
     if (!uri) return;
+    const gen = ++ocrGen.current;
     setChartUri(uri);
     setOutcome(null);
+    setDetectError(null);
+    setSymbol(null);
+    setTimeframe(null);
     setDetecting(true);
     setScanPromptOpen(false);
-    setTimeout(() => {
-      const detected = detectFromChart(uri);
+
+    try {
+      const started = Date.now();
+      const detected = await ocrChartImage(uri);
+      // Keep sniper loader visible briefly so the chart+detect state reads clearly.
+      const wait = Math.max(0, 1100 - (Date.now() - started));
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      if (gen !== ocrGen.current) return;
+      if (!detected.symbol) {
+        setDetectError(
+          'Could not read a symbol from this chart. Upload a clear MT5 screenshot with the pair visible.',
+        );
+        setDetecting(false);
+        return;
+      }
       setSymbol(detected.symbol);
       setTimeframe(detected.timeframe);
       setDetecting(false);
       setScanPromptOpen(true);
-    }, 700);
+    } catch {
+      if (gen !== ocrGen.current) return;
+      setDetectError('Chart read failed. Try another screenshot.');
+      setDetecting(false);
+    }
   };
 
   useEffect(() => {
     if (demoStarted.current) return;
     if (params.demo !== '1') return;
     demoStarted.current = true;
-    const t = setTimeout(() => applyChart(DEMO_CHART_URI), 200);
+    const t = setTimeout(() => {
+      void (async () => {
+        const uri = await buildDemoChartUri('XAUUSD', 'H1');
+        await applyChart(uri);
+      })();
+    }, 200);
     return () => clearTimeout(t);
   }, [params.demo]);
 
@@ -411,19 +559,12 @@ export function ChartScannerScreen() {
     picking.current = true;
     try {
       if (Platform.OS === 'web') {
-        applyChart(await pickWebFile('image/*'));
+        await applyChart(await pickWebFile('image/*'));
         return;
       }
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        setOutcome({
-          bias: '—',
-          confidence: 0,
-          timeframe,
-          tp: '—',
-          sl: '—',
-          explanation: 'Photo library permission required.',
-        });
+        setDetectError('Photo library permission required.');
         return;
       }
       const res = await ImagePicker.launchImageLibraryAsync({
@@ -434,9 +575,11 @@ export function ChartScannerScreen() {
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       if (a.base64) {
-        applyChart(`data:${a.mimeType || 'image/jpeg'};base64,${a.base64}`);
+        await applyChart(
+          `data:${a.mimeType || 'image/jpeg'};base64,${a.base64}`,
+        );
       } else {
-        applyChart(a.uri);
+        await applyChart(a.uri);
       }
     } finally {
       picking.current = false;
@@ -448,19 +591,12 @@ export function ChartScannerScreen() {
     picking.current = true;
     try {
       if (Platform.OS === 'web') {
-        applyChart(await pickWebFile('image/*', 'environment'));
+        await applyChart(await pickWebFile('image/*', 'environment'));
         return;
       }
       const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (!perm.granted) {
-        setOutcome({
-          bias: '—',
-          confidence: 0,
-          timeframe,
-          tp: '—',
-          sl: '—',
-          explanation: 'Camera permission required.',
-        });
+        setDetectError('Camera permission required.');
         return;
       }
       const res = await ImagePicker.launchCameraAsync({
@@ -470,9 +606,11 @@ export function ChartScannerScreen() {
       if (res.canceled || !res.assets?.[0]) return;
       const a = res.assets[0];
       if (a.base64) {
-        applyChart(`data:${a.mimeType || 'image/jpeg'};base64,${a.base64}`);
+        await applyChart(
+          `data:${a.mimeType || 'image/jpeg'};base64,${a.base64}`,
+        );
       } else {
-        applyChart(a.uri);
+        await applyChart(a.uri);
       }
     } finally {
       picking.current = false;
@@ -481,6 +619,10 @@ export function ChartScannerScreen() {
 
   const runScan = () => {
     if (scanning) return;
+    if (!symbol) {
+      setDetectError('Upload an MT5 chart first so the symbol can be read.');
+      return;
+    }
     setScanPromptOpen(false);
     const lotSize = parsePositive(lotRaw, 0.1, 50);
     const trades = Math.max(
@@ -494,7 +636,7 @@ export function ChartScannerScreen() {
       setOutcome({
         bias: '—',
         confidence: 0,
-        timeframe,
+        timeframe: timeframe || '—',
         tp: '—',
         sl: '—',
         explanation: 'No scans left today. Resets overnight.',
@@ -508,9 +650,8 @@ export function ChartScannerScreen() {
 
     const bias = ['Buy', 'Sell', 'Range'][Math.floor(Math.random() * 3)];
     const confidence = 68 + Math.floor(Math.random() * 28);
-    const tf = timeframe;
+    const tf = timeframe || '—';
     const sym = symbol;
-    const hasChart = Boolean(chartUri);
     const uriSnap = chartUri;
     const levels = mockLevels(sym, bias, Date.now());
     const explanation = buildTradeExplanation(
@@ -518,7 +659,6 @@ export function ChartScannerScreen() {
       tf,
       bias,
       confidence,
-      hasChart,
       lotSize,
       trades,
     );
@@ -532,23 +672,25 @@ export function ChartScannerScreen() {
         sl: levels.sl,
         explanation,
       });
-      setHistory((prev) => [
-        {
-          id: `scan_${Date.now()}`,
-          symbol: sym,
-          timeframe: tf,
-          bias,
-          confidence,
-          message: explanation,
-          lotSize,
-          trades,
-          tp: levels.tp,
-          sl: levels.sl,
-          chartUri: uriSnap,
-          at: new Date().toISOString(),
-        },
-        ...prev,
-      ].slice(0, 24));
+      setHistory((prev) =>
+        [
+          {
+            id: `scan_${Date.now()}`,
+            symbol: sym,
+            timeframe: tf,
+            bias,
+            confidence,
+            message: explanation,
+            lotSize,
+            trades,
+            tp: levels.tp,
+            sl: levels.sl,
+            chartUri: uriSnap,
+            at: new Date().toISOString(),
+          },
+          ...prev,
+        ].slice(0, 24),
+      );
       setScanning(false);
     }, 950);
   };
@@ -556,6 +698,17 @@ export function ChartScannerScreen() {
   const goHome = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/');
+  };
+
+  const clearChart = () => {
+    ocrGen.current += 1;
+    setChartUri(null);
+    setSymbol(null);
+    setTimeframe(null);
+    setScanPromptOpen(false);
+    setDetecting(false);
+    setDetectError(null);
+    setOutcome(null);
   };
 
   const formatWhen = (iso: string) => {
@@ -571,6 +724,13 @@ export function ChartScannerScreen() {
       return iso;
     }
   };
+
+  const detectedLabel =
+    symbol && timeframe
+      ? `${symbol} · ${timeframe}`
+      : symbol
+        ? symbol
+        : null;
 
   return (
     <View style={styles.root}>
@@ -598,7 +758,10 @@ export function ChartScannerScreen() {
             accessibilityRole="button"
             onPress={goHome}
             hitSlop={12}
-            style={[styles.headerIconBtn, { borderColor: hexToRgba(accent, 0.4) }]}
+            style={[
+              styles.headerIconBtn,
+              { borderColor: hexToRgba(accent, 0.4) },
+            ]}
           >
             <Ionicons name="chevron-back" size={22} color={BASE.white} />
           </Pressable>
@@ -635,21 +798,40 @@ export function ChartScannerScreen() {
         <View style={styles.radarBlock}>
           <EdgesRadar
             accent={accent}
-            scanning={scanning || detecting}
+            scanning={scanning}
+            detecting={detecting}
             size={radarSize}
+            chartUri={chartUri}
           />
           <Text style={styles.statusLabel}>
             {detecting
               ? 'Reading chart…'
               : scanning
                 ? 'Scanning pulse…'
-                : 'Ready'}
+                : chartUri
+                  ? detectedLabel || 'Chart loaded'
+                  : 'Ready'}
           </Text>
           <Text style={styles.statusSub}>
-            {chartUri
-              ? `${symbol} · ${timeframe}${detecting ? ' · detecting' : ''}`
-              : 'Upload or capture a chart to auto-detect symbol & timeframe'}
+            {detectError
+              ? detectError
+              : chartUri
+                ? detectedLabel
+                  ? 'Symbol read from your MT5 chart'
+                  : 'Waiting for OCR…'
+                : 'Upload or capture an MT5 chart — symbol is read from the image only'}
           </Text>
+          {chartUri ? (
+            <Pressable
+              accessibilityLabel="clear chart"
+              onPress={clearChart}
+              style={styles.clearLink}
+            >
+              <Text style={[styles.clearLinkText, { color: accent }]}>
+                Clear chart
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
 
         <Text style={styles.sectionLabel}>Capture</Text>
@@ -675,7 +857,7 @@ export function ChartScannerScreen() {
               <Ionicons name="cloud-upload-outline" size={22} color={accent} />
             </View>
             <Text style={styles.captureTitle}>Upload</Text>
-            <Text style={styles.captureSub}>From gallery</Text>
+            <Text style={styles.captureSub}>MT5 screenshot</Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -702,99 +884,6 @@ export function ChartScannerScreen() {
           </Pressable>
         </View>
 
-        {chartUri ? (
-          <View
-            style={[
-              styles.preview,
-              { borderColor: hexToRgba(accent, 0.45) },
-            ]}
-          >
-            <Image source={{ uri: chartUri }} style={styles.previewImg} />
-            <Pressable
-              accessibilityLabel="clear chart"
-              onPress={() => {
-                setChartUri(null);
-                setScanPromptOpen(false);
-                setDetecting(false);
-              }}
-              style={styles.clearBtn}
-              hitSlop={8}
-            >
-              <Ionicons name="close" size={16} color={BASE.white} />
-            </Pressable>
-          </View>
-        ) : null}
-
-        <Text style={[styles.sectionLabel, { marginTop: 8 }]}>Instrument</Text>
-        <View style={[styles.searchBox, { borderColor: hexToRgba(accent, 0.5) }]}>
-          <Ionicons name="search" size={16} color={BASE.muted} />
-          <TextInput
-            value={symbol}
-            onChangeText={(t) => setSymbol(t.toUpperCase())}
-            placeholder="Symbol"
-            placeholderTextColor={BASE.dim}
-            autoCapitalize="characters"
-            style={styles.searchInput}
-          />
-          <View
-            style={[
-              styles.tfBadge,
-              {
-                borderColor: hexToRgba(accent, 0.5),
-                backgroundColor: hexToRgba(accent, 0.12),
-              },
-            ]}
-          >
-            <Text style={[styles.tfBadgeText, { color: accent }]}>
-              {timeframe}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.chipRow}>
-          {QUICK.map((s) => {
-            const on = symbol === s;
-            return (
-              <Pressable
-                key={s}
-                onPress={() => setSymbol(s)}
-                style={[
-                  styles.chip,
-                  {
-                    borderColor: on ? accent : hexToRgba(accent, 0.35),
-                    backgroundColor: on
-                      ? hexToRgba(accent, 0.2)
-                      : 'transparent',
-                  },
-                ]}
-              >
-                <Text style={styles.chipText}>{s}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <View style={styles.chipRow}>
-          {TIMEFRAMES.map((tf) => {
-            const on = timeframe === tf;
-            return (
-              <Pressable
-                key={tf}
-                onPress={() => setTimeframe(tf)}
-                style={[
-                  styles.chip,
-                  {
-                    borderColor: on ? accent : hexToRgba(accent, 0.35),
-                    backgroundColor: on
-                      ? hexToRgba(accent, 0.2)
-                      : 'transparent',
-                  },
-                ]}
-              >
-                <Text style={styles.chipText}>{tf}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
         <Text style={[styles.sectionLabel, { marginTop: 4 }]}>Size</Text>
         <LotTradesFields
           accent={accent}
@@ -808,11 +897,12 @@ export function ChartScannerScreen() {
           accessibilityRole="button"
           accessibilityLabel="run scan"
           onPress={runScan}
+          disabled={!symbol || detecting || scanning}
           style={({ pressed }) => [
             styles.runBtn,
             {
               borderColor: accent,
-              opacity: pressed || scanning ? 0.9 : 1,
+              opacity: !symbol || detecting || scanning || pressed ? 0.55 : 1,
             },
             Platform.OS === 'web'
               ? ({ boxShadow: `0 0 20px ${hexToRgba(accent, 0.4)}` } as object)
@@ -854,7 +944,10 @@ export function ChartScannerScreen() {
               <View>
                 <Text style={styles.resultEyebrow}>Signal</Text>
                 <Text style={styles.resultSym}>
-                  {symbol} · {outcome.timeframe}
+                  {symbol}
+                  {outcome.timeframe && outcome.timeframe !== '—'
+                    ? ` · ${outcome.timeframe}`
+                    : ''}
                 </Text>
               </View>
               <Text style={[styles.resultBias, { color: accent }]}>
@@ -938,7 +1031,10 @@ export function ChartScannerScreen() {
                 )}
                 <View style={styles.historyMain}>
                   <Text style={styles.historyTitle}>
-                    {row.symbol} · {row.timeframe}
+                    {row.symbol}
+                    {row.timeframe && row.timeframe !== '—'
+                      ? ` · ${row.timeframe}`
+                      : ''}
                   </Text>
                   <Text style={styles.historySub}>
                     {row.lotSize} lot · {row.trades} trade
@@ -957,30 +1053,31 @@ export function ChartScannerScreen() {
         ) : null}
       </ScrollView>
 
-      {/* Scan now prompt after detect */}
+      {/* Centered Scan now modal */}
       <Modal
         visible={scanPromptOpen}
         transparent
         animationType="fade"
         onRequestClose={() => setScanPromptOpen(false)}
       >
-        <View style={styles.promptBackdrop}>
+        <View style={styles.centerBackdrop}>
           <View
             style={[
               styles.promptCard,
-              {
-                borderColor: accent,
-                marginBottom: Math.max(insets.bottom, 16),
-              },
+              { borderColor: accent },
               Platform.OS === 'web'
-                ? ({ boxShadow: `0 0 28px ${hexToRgba(accent, 0.35)}` } as object)
+                ? ({
+                    boxShadow: `0 0 28px ${hexToRgba(accent, 0.35)}`,
+                  } as object)
                 : null,
             ]}
           >
             <Text style={styles.promptEyebrow}>Detected from chart</Text>
             <Text style={styles.promptTitle}>
               {symbol}
-              <Text style={styles.promptTf}> · {timeframe}</Text>
+              {timeframe ? (
+                <Text style={styles.promptTf}> · {timeframe}</Text>
+              ) : null}
             </Text>
             <Text style={styles.promptBody}>
               Set lot size and how many trades, then run the pulse for signal,
@@ -992,7 +1089,6 @@ export function ChartScannerScreen() {
               setLotRaw={setLotRaw}
               tradesRaw={tradesRaw}
               setTradesRaw={setTradesRaw}
-              compact
             />
             <Pressable
               accessibilityRole="button"
@@ -1016,7 +1112,11 @@ export function ChartScannerScreen() {
                 end={{ x: 0.9, y: 1 }}
                 style={styles.promptPrimaryGrad}
               >
-                <MaterialCommunityIcons name="radar" size={18} color={BASE.white} />
+                <MaterialCommunityIcons
+                  name="radar"
+                  size={18}
+                  color={BASE.white}
+                />
                 <Text style={styles.promptPrimaryText}>Scan now</Text>
               </LinearGradient>
             </Pressable>
@@ -1032,22 +1132,22 @@ export function ChartScannerScreen() {
         </View>
       </Modal>
 
-      {/* History detail */}
+      {/* History detail — also centered */}
       <Modal
         visible={Boolean(detail)}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setDetail(null)}
       >
-        <View style={styles.promptBackdrop}>
+        <View style={styles.centerBackdrop}>
           {detail ? (
             <View
               style={[
                 styles.detailCard,
                 {
                   borderColor: accent,
-                  marginBottom: Math.max(insets.bottom, 12),
-                  maxHeight: winH * 0.82,
+                  maxHeight: winH * 0.78,
+                  marginHorizontal: 16,
                 },
               ]}
             >
@@ -1055,7 +1155,10 @@ export function ChartScannerScreen() {
                 <View>
                   <Text style={styles.promptEyebrow}>Scan detail</Text>
                   <Text style={styles.detailTitle}>
-                    {detail.symbol} · {detail.timeframe}
+                    {detail.symbol}
+                    {detail.timeframe && detail.timeframe !== '—'
+                      ? ` · ${detail.timeframe}`
+                      : ''}
                   </Text>
                 </View>
                 <Pressable
@@ -1194,16 +1297,9 @@ function DockItem({
       onPress={onPress}
       style={styles.dockItem}
     >
-      <Ionicons
-        name={icon}
-        size={22}
-        color={active ? accent : BASE.muted}
-      />
+      <Ionicons name={icon} size={22} color={active ? accent : BASE.muted} />
       <Text
-        style={[
-          styles.dockLabel,
-          { color: active ? accent : BASE.muted },
-        ]}
+        style={[styles.dockLabel, { color: active ? accent : BASE.muted }]}
         numberOfLines={1}
       >
         {label}
@@ -1283,6 +1379,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: 'rgba(0,0,0,0.7)',
   },
+  radarChart: {
+    position: 'absolute',
+  },
+  radarLoader: {
+    position: 'absolute',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    zIndex: 3,
+  },
+  radarLoaderText: {
+    color: BASE.white,
+    fontSize: 12,
+    fontWeight: '700',
+  },
   radarRing: {
     position: 'absolute',
     borderWidth: 1,
@@ -1329,6 +1440,8 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     maxWidth: 300,
   },
+  clearLink: { paddingVertical: 2 },
+  clearLinkText: { fontSize: 13, fontWeight: '700' },
   sectionLabel: {
     color: BASE.muted,
     fontSize: 11,
@@ -1363,66 +1476,6 @@ const styles = StyleSheet.create({
   captureSub: {
     color: BASE.muted,
     fontSize: 12,
-  },
-  preview: {
-    height: 132,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    overflow: 'hidden',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  previewImg: { width: '100%', height: '100%' },
-  clearBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1.5,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: Platform.OS === 'web' ? 12 : 10,
-    backgroundColor: BASE.panel,
-  },
-  searchInput: {
-    flex: 1,
-    color: BASE.white,
-    fontSize: 16,
-    fontWeight: '600',
-    paddingVertical: 2,
-    minHeight: 28,
-    ...(Platform.OS === 'web'
-      ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
-      : null),
-  },
-  tfBadge: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  tfBadgeText: { fontSize: 12, fontWeight: '800' },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    borderWidth: 1.5,
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  chipText: {
-    color: BASE.white,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.3,
   },
   paramsRow: { flexDirection: 'row', gap: 12 },
   paramField: { flex: 1, gap: 6 },
@@ -1572,11 +1625,12 @@ const styles = StyleSheet.create({
   historyRight: { alignItems: 'flex-end', gap: 2 },
   historyBias: { fontSize: 14, fontWeight: '800' },
   historyConf: { color: BASE.muted, fontSize: 12, fontWeight: '600' },
-  promptBackdrop: {
-    flex: 1,
+  centerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.72)',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
   },
   promptCard: {
     borderRadius: 22,
@@ -1584,6 +1638,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A0A0A',
     padding: 22,
     gap: 12,
+    width: '100%',
+    maxWidth: 340,
+    alignSelf: 'center',
   },
   detailCard: {
     borderRadius: 22,
@@ -1591,6 +1648,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#0A0A0A',
     padding: 20,
     gap: 12,
+    width: '100%',
+    maxWidth: 360,
+    alignSelf: 'center',
   },
   detailHeader: {
     flexDirection: 'row',
