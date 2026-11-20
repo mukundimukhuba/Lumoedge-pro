@@ -8,7 +8,7 @@ import {
   vaultCatalogPictures,
   vaultGetPicture,
 } from './pictureVault';
-import { getSupabase, isSupabaseConfigured } from './supabase/client';
+import { getSupabase } from './supabase/client';
 import { persistPictureRemote } from './supabase/eaPictureUpload';
 
 /** Shared storage keys — portal License Keys + app Activate MUST use these. */
@@ -322,11 +322,57 @@ async function readDiskCatalog(): Promise<{
   return { eas: diskEas, keys: diskKeys };
 }
 
-async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
-  const sb = getSupabase();
-  if (!sb) return false;
+export type CatalogPushResult = {
+  ok: boolean;
+  via?: string;
+  error?: string;
+  hint?: string;
+};
+
+/**
+ * Push catalog to remote. Prefers /api/licenses/put (service role → table or
+ * Storage). Falls back to anon client upsert when API unreachable.
+ */
+async function pushRemoteCatalog(
+  eas: StoredEa[],
+  keys: StoredLicenseKey[],
+): Promise<CatalogPushResult> {
+  if (!keys.length && !eas.length) return { ok: true };
+
+  // Primary: server admin route (works even when tables are missing).
   try {
-    // Prefer Storage URLs for data-URL pictures so rows stay small + durable.
+    const { putLicenseRemote } = await import('./licenses/remoteApi');
+    const eaById = new Map(eas.map((e) => [e.id, e]));
+    let last: CatalogPushResult = { ok: true };
+    // Newest keys first — generate always prepends.
+    for (const k of keys.slice(0, 25)) {
+      const result = await putLicenseRemote(k, eaById.get(k.eaId) || null);
+      if (!result.ok) {
+        last = {
+          ok: false,
+          error: result.error,
+          hint: result.hint || result.tableError,
+        };
+        console.warn('[edges] /api/licenses/put failed', result.error);
+      } else {
+        last = { ok: true, via: result.via, hint: result.hint };
+      }
+    }
+    if (last.ok) return last;
+    // Fall through to anon upsert if API failed.
+  } catch (err) {
+    console.warn('[edges] putLicenseRemote import/call failed', err);
+  }
+
+  const sb = getSupabase();
+  if (!sb) {
+    return {
+      ok: false,
+      error:
+        'Supabase client not configured (set SUPABASE_URL + SUPABASE_ANON_KEY).',
+    };
+  }
+  try {
     const easRemote = await Promise.all(
       eas.map(async (e) => ({
         ...e,
@@ -368,7 +414,7 @@ async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
       });
       if (error) {
         console.warn('[edges] supabase eas upsert failed', error.message);
-        return false;
+        return { ok: false, error: error.message };
       }
     }
     if (keyRows.length) {
@@ -377,13 +423,38 @@ async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
       });
       if (error) {
         console.warn('[edges] supabase keys upsert failed', error.message);
-        return false;
+        return { ok: false, error: error.message };
       }
     }
-    return true;
+    return { ok: true, via: 'anon-table' };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.warn('[edges] supabase catalog push error', err);
-    return false;
+    return { ok: false, error: msg };
+  }
+}
+
+/** Explicitly sync one newly generated key; returns write status for UI. */
+export async function syncIssuedLicenseRemote(
+  key: StoredLicenseKey,
+  ea?: StoredEa | null,
+): Promise<CatalogPushResult> {
+  try {
+    const { putLicenseRemote } = await import('./licenses/remoteApi');
+    const result = await putLicenseRemote(key, ea || null);
+    if (result.ok) {
+      return { ok: true, via: result.via, hint: result.hint };
+    }
+    return {
+      ok: false,
+      error: result.error || 'Remote write failed',
+      hint: result.hint || result.tableError,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -461,13 +532,13 @@ function stripDataUrlPicsFromKeys(keys: StoredLicenseKey[]): StoredLicenseKey[] 
 export async function saveLicenseCatalog(
   eas: StoredEa[],
   keys: StoredLicenseKey[],
-  opts?: { allowEmpty?: boolean; broadcast?: boolean },
+  opts?: { allowEmpty?: boolean; broadcast?: boolean; skipRemote?: boolean },
 ) {
   if (await shouldRefuseEmptyWipe(eas, keys, Boolean(opts?.allowEmpty))) {
     console.warn(
       '[edges] refused empty catalog save — would wipe existing EAs/keys',
     );
-    return { eas: memoryEas, keys: memoryKeys };
+    return { eas: memoryEas, keys: memoryKeys, remote: undefined };
   }
 
   // Compress data-URL pictures before any disk write.
@@ -530,8 +601,9 @@ export async function saveLicenseCatalog(
     }
   }
 
-  if (isSupabaseConfigured()) {
-    await pushRemoteCatalog(prepared.eas, prepared.keys);
+  let remote: CatalogPushResult | undefined;
+  if (opts?.skipRemote !== true) {
+    remote = await pushRemoteCatalog(prepared.eas, prepared.keys);
   }
 
   // Skip broadcast on quiet persists (refresh/hydrate) to avoid sync loops.
@@ -540,7 +612,7 @@ export async function saveLicenseCatalog(
   }
 
   // Return in-memory catalog WITH pictures (never return stripped copies).
-  return prepared;
+  return { ...prepared, remote };
 }
 
 async function attachRemoteEa(
@@ -565,23 +637,34 @@ async function attachRemoteEa(
 
 async function lookupKeyOnSupabase(
   normalized: string,
-): Promise<StoredLicenseKey | null> {
+): Promise<{ key: StoredLicenseKey; ea?: StoredEa | null } | null> {
+  // Prefer server admin lookup (tables OR Storage catalog) — works when
+  // anon PostgREST tables are missing (PGRST205).
+  try {
+    const { lookupLicenseRemote } = await import('./licenses/remoteApi');
+    const remote = await lookupLicenseRemote(normalized);
+    if (remote.ok && remote.key) {
+      return { key: remote.key, ea: remote.ea ?? null };
+    }
+  } catch (err) {
+    console.warn('[edges] /api/licenses/lookup failed', err);
+  }
+
   const sb = getSupabase();
   if (!sb) return null;
 
-  // 1) security-definer RPC (folds O/I/L when migration 002 is applied)
+  // Direct anon RPC / table as secondary path when schema is applied.
   try {
     const { data, error } = await sb.rpc('lookup_license_key', {
       p_key: normalized,
     });
     if (!error && Array.isArray(data) && data.length) {
-      return rowToKey(data[0] as Record<string, unknown>);
+      return { key: rowToKey(data[0] as Record<string, unknown>) };
     }
   } catch (err) {
     console.warn('[edges] lookup_license_key rpc failed', err);
   }
 
-  // 2) Direct table read by key_normalized (anon RLS allows select)
   try {
     const { data, error } = await sb
       .from('license_keys')
@@ -589,32 +672,10 @@ async function lookupKeyOnSupabase(
       .eq('key_normalized', normalized)
       .limit(1);
     if (!error && Array.isArray(data) && data.length) {
-      return rowToKey(data[0] as Record<string, unknown>);
+      return { key: rowToKey(data[0] as Record<string, unknown>) };
     }
   } catch (err) {
     console.warn('[edges] license_keys select failed', err);
-  }
-
-  // 3) Legacy rows stored before OCR fold — scan a page and match client-side
-  try {
-    const { data, error } = await sb
-      .from('license_keys')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(200);
-    if (!error && Array.isArray(data)) {
-      const hit = data.find(
-        (row) =>
-          normalizeLicenseKey(String((row as { key?: string }).key || '')) ===
-            normalized ||
-          normalizeLicenseKey(
-            String((row as { key_normalized?: string }).key_normalized || ''),
-          ) === normalized,
-      );
-      if (hit) return rowToKey(hit as Record<string, unknown>);
-    }
-  } catch (err) {
-    console.warn('[edges] license_keys scan failed', err);
   }
 
   return null;
@@ -637,20 +698,24 @@ export async function findIssuedLicense(
     keys.find((k) => licenseKeysMatch(k.key, normalized)) ||
     memoryKeys.find((k) => licenseKeysMatch(k.key, normalized));
 
-  // Cross-device / wiped localStorage: Supabase RPC + table + OCR scan.
+  // Cross-device / wiped localStorage: server admin lookup + anon table.
   if (!key) {
-    const remoteKey = await lookupKeyOnSupabase(normalized);
-    if (remoteKey) {
-      key = remoteKey;
+    const remote = await lookupKeyOnSupabase(normalized);
+    if (remote?.key) {
+      key = remote.key;
       memoryKeys = mergeKeysByKeyString([key], keys);
-      const sb = getSupabase();
-      if (sb) await attachRemoteEa(sb, key, eas);
+      if (remote.ea) {
+        memoryEas = mergeEaPreferPicture([remote.ea], eas);
+      } else {
+        const sb = getSupabase();
+        if (sb) await attachRemoteEa(sb, key, eas);
+      }
       // Persist so same-device Activate works offline next time.
       try {
         await saveLicenseCatalog(
           memoryEas.length ? memoryEas : eas,
           memoryKeys,
-          { broadcast: false },
+          { broadcast: false, skipRemote: true },
         );
       } catch {
         /* memory still holds the key for this session */

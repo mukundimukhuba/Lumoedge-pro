@@ -6,6 +6,7 @@ import {
   View,
 } from 'react-native';
 import { useAppState } from '../AppState';
+import { fetchLicenseStatus } from '../licenses/remoteApi';
 
 const ACCENT = '#7C5CFF';
 
@@ -14,26 +15,70 @@ export function LicenseKeysPanel() {
     useAppState();
   const [eaId, setEaId] = useState<string>(eas[0]?.id ?? '');
   const [flash, setFlash] = useState('');
+  const [flashError, setFlashError] = useState(false);
+  const [envLine, setEnvLine] = useState('Checking Supabase…');
 
   useEffect(() => {
     void refreshLicenseCatalog();
   }, [refreshLicenseCatalog]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const st = await fetchLicenseStatus();
+      if (cancelled) return;
+      if (!st.urlConfigured || !st.serviceRoleConfigured) {
+        setEnvLine(
+          'Supabase env incomplete on server — Generate Key cannot sync remotely.',
+        );
+        return;
+      }
+      const easT = st.tables?.managed_eas || '?';
+      const keysT = st.tables?.license_keys || '?';
+      if (easT === 'missing' || keysT === 'missing') {
+        setEnvLine(
+          `Supabase OK · tables missing (eas=${easT}, keys=${keysT}) · Storage fallback active. Apply migrations for full DB.`,
+        );
+      } else {
+        setEnvLine(`Supabase OK · managed_eas=${easT} · license_keys=${keysT}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const activeId = eas.some((e) => e.id === eaId) ? eaId : eas[0]?.id ?? '';
 
   const onGenerate = async () => {
     if (!activeId) {
+      setFlashError(true);
       setFlash('Create a robot in Manage EAs first.');
       return;
     }
-    setFlash('Saving key…');
-    const row = await generateLicenseKey(activeId);
-    if (row) {
+    setFlashError(false);
+    setFlash('Saving key to device + Supabase…');
+    const result = await generateLicenseKey(activeId);
+    if (!result) {
+      setFlashError(true);
+      setFlash('Could not generate key — pick a saved EA.');
+      return;
+    }
+    const { key: row, remote } = result;
+    if (remote.ok) {
+      setFlashError(false);
       setFlash(
-        `Generated ${row.key} for ${row.eaName}. Use Activate on this same phone preview.`,
+        `Generated ${row.key} for ${row.eaName}. Synced via ${remote.via || 'remote'}. Activate with this key.${
+          remote.hint ? ` Note: ${remote.hint}` : ''
+        }`,
       );
     } else {
-      setFlash('Could not generate key — pick a saved EA.');
+      setFlashError(true);
+      setFlash(
+        `Generated ${row.key} locally, but remote write FAILED: ${remote.error || 'unknown'}${
+          remote.hint ? ` (${remote.hint})` : ''
+        }. Activate on this device may still work; other devices will not see it until sync succeeds.`,
+      );
     }
   };
 
@@ -45,6 +90,7 @@ export function LicenseKeysPanel() {
           Generate a key for a saved Manage EAs robot. The user enters this key
           after Lumo Edge Pro access to activate that EA (name, picture, symbols).
         </Text>
+        <Text style={styles.env}>{envLine}</Text>
 
         <Text style={styles.label}>EA</Text>
         {eas.length === 0 ? (
@@ -76,7 +122,9 @@ export function LicenseKeysPanel() {
         >
           <Text style={styles.genText}>GENERATE KEY</Text>
         </Pressable>
-        {flash ? <Text style={styles.msg}>{flash}</Text> : null}
+        {flash ? (
+          <Text style={flashError ? styles.msgErr : styles.msg}>{flash}</Text>
+        ) : null}
       </View>
 
       <View style={styles.card}>
@@ -113,6 +161,7 @@ const styles = StyleSheet.create({
   },
   h2: { color: '#fff', fontWeight: '800', fontSize: 16 },
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
+  env: { color: '#93C5FD', fontSize: 11, lineHeight: 16 },
   label: {
     color: '#9CA3AF',
     fontSize: 11,
@@ -144,6 +193,7 @@ const styles = StyleSheet.create({
   genDisabled: { opacity: 0.45 },
   genText: { color: '#fff', fontWeight: '900', fontSize: 15, letterSpacing: 0.6 },
   msg: { color: '#86EFAC', fontSize: 13 },
+  msgErr: { color: '#FCA5A5', fontSize: 13, lineHeight: 18 },
   keyRow: {
     gap: 4,
     paddingVertical: 10,

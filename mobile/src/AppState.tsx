@@ -19,6 +19,7 @@ import {
   saveLicenseCatalog,
   sessionFromLicenseKey,
   subscribeCatalogUpdated,
+  syncIssuedLicenseRemote,
 } from './licenseStorage';
 import {
   eaPictureVaultKey,
@@ -147,7 +148,10 @@ type AppStateValue = {
     ea: Omit<ManagedEa, 'id' | 'createdAt'>,
   ) => Promise<ManagedEa>;
   licenseKeys: LicenseKey[];
-  generateLicenseKey: (eaId: string) => Promise<LicenseKey | null>;
+  generateLicenseKey: (eaId: string) => Promise<{
+    key: LicenseKey;
+    remote: { ok: boolean; via?: string; error?: string; hint?: string };
+  } | null>;
   eaAccess: EaAccess | null;
   accessReady: boolean;
   /** Paid access only — does NOT open control UI without a license. */
@@ -214,10 +218,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const catalog = await loadLicenseCatalog();
     applyCatalog(catalog.eas, catalog.keys);
     // Only re-persist when there is something to keep — never rewrite empty.
-    // Quiet: do not broadcast (would re-enter this refresh via sync listeners).
+    // Quiet + skipRemote: local disk only (avoid re-push storms on focus).
     if (catalog.eas.length || catalog.keys.length) {
       await saveLicenseCatalog(catalog.eas, catalog.keys, {
         broadcast: false,
+        skipRemote: true,
       });
     }
   }, []);
@@ -242,6 +247,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (catalog.eas.length || catalog.keys.length) {
           await saveLicenseCatalog(catalog.eas, catalog.keys, {
             broadcast: false,
+            skipRemote: true,
           });
         }
         let loadedSetups: QuoteSetup[] = [];
@@ -389,8 +395,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     );
     const nextKeys = [row, ...keysRef.current];
     applyCatalog(nextEas, nextKeys);
-    await saveLicenseCatalog(nextEas, nextKeys);
-    return row;
+    // Local first (skip remote bulk) then explicit single-key remote write.
+    await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
+    const liveEa = nextEas.find((e) => e.id === ea.id) || ea;
+    const remote = await syncIssuedLicenseRemote(row, liveEa);
+    return { key: row, remote };
   };
 
   const persistQuoteSetups = useCallback(async (rows: QuoteSetup[]) => {
