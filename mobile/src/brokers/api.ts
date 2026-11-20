@@ -127,6 +127,80 @@ export async function connectBrokerApi(input: {
   return data;
 }
 
+export type BrokerOrderRequest = {
+  id: string;
+  symbol: string;
+  /** 0 = buy, 1 = sell */
+  operation: 0 | 1;
+  volume: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  comment?: string;
+  slippage?: number;
+};
+
+export type BrokerOrderResponse = {
+  ok: boolean;
+  error?: string;
+  symbol?: string;
+  operation?: number;
+  volume?: number;
+  result?: unknown;
+};
+
+/**
+ * Live MT5 OrderSend via brokers proxy.
+ * On failure returns ok:false with the API/bridge reason in `error`.
+ */
+export async function sendBrokerOrder(
+  input: BrokerOrderRequest,
+): Promise<BrokerOrderResponse> {
+  const root = getBrokersApiRoot();
+  const url = new URL('/api/brokers/order', root || 'http://127.0.0.1');
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        id: input.id,
+        symbol: input.symbol,
+        operation: input.operation,
+        volume: input.volume,
+        stopLoss: input.stopLoss,
+        takeProfit: input.takeProfit,
+        comment: input.comment,
+        slippage: input.slippage,
+      }),
+    });
+    let data: BrokerOrderResponse = { ok: false };
+    try {
+      data = (await res.json()) as BrokerOrderResponse;
+    } catch {
+      data = { ok: false, error: `OrderSend failed (${res.status})` };
+    }
+    if (!res.ok || !data.ok) {
+      return {
+        ok: false,
+        error:
+          String(data.error || '').trim() ||
+          `OrderSend failed (${res.status})`,
+      };
+    }
+    return data;
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error
+          ? `OrderSend unreachable: ${err.message}`
+          : 'OrderSend unreachable',
+    };
+  }
+}
+
 /**
  * Live account poll — uses connect token as `id` (MT5 session).
  */

@@ -814,7 +814,11 @@ export function ChartScannerScreen() {
   const params = useLocalSearchParams<{ demo?: string }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
-  const { accent, selected: quoteSymbols } = useAppState();
+  const {
+    accent,
+    selected: quoteSymbols,
+    quoteSetups,
+  } = useAppState();
   const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
   const demoStarted = useRef(false);
@@ -1724,6 +1728,7 @@ export function ChartScannerScreen() {
         accent={accent}
         mt5Token={mt5Token}
         symbols={quoteSymbols}
+        quoteSetups={quoteSetups}
         lotSize={clampLot(parsePositive(lotRaw, 0.01, 1))}
         trades={clampTrades(parsePositive(tradesRaw, 1, 3))}
         onClose={() => setAutoEngineOpen(false)}

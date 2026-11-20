@@ -26,7 +26,13 @@ import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { loadMt5Token } from './brokers/mt5Token';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
-import { useAppState, ACCENTS, SYMBOLS } from './AppState';
+import {
+  useAppState,
+  ACCENTS,
+  SYMBOLS,
+  normalizeQuoteSetup,
+  type QuoteSetup,
+} from './AppState';
 
 type Sheet =
   | 'none'
@@ -108,7 +114,9 @@ export function EaControlScreen() {
     status,
     setStatus,
     selected,
-    setSelected,
+    quoteSetups,
+    upsertQuoteSetup,
+    removeQuoteSetup,
     accent,
     setAccent,
     activeEa,
@@ -259,14 +267,6 @@ export function EaControlScreen() {
       logoTaps.current = { count: 0, at: 0 };
       router.push('/portal');
     }
-  };
-
-  const toggleSymbol = (sym: string) => {
-    setSelected(
-      selected.includes(sym)
-        ? selected.filter((s) => s !== sym)
-        : [...selected, sym],
-    );
   };
 
   const haltAutoTrade = () => {
@@ -754,18 +754,9 @@ export function EaControlScreen() {
                 setQuery={setQuery}
                 filtered={filtered}
                 selected={selected}
-                toggleSymbol={toggleSymbol}
-                addCustomSymbol={(sym) => {
-                  const s = String(sym || '')
-                    .trim()
-                    .replace(/\s+/g, '')
-                    .toUpperCase();
-                  if (!s) return;
-                  if (!selected.includes(s)) setSelected([...selected, s]);
-                }}
-                removeSymbol={(sym) =>
-                  setSelected(selected.filter((x) => x !== sym))
-                }
+                quoteSetups={quoteSetups}
+                upsertQuoteSetup={upsertQuoteSetup}
+                removeQuoteSetup={removeQuoteSetup}
                 onDone={closeSheet}
               />
             ) : null}
@@ -975,6 +966,7 @@ export function EaControlScreen() {
         accent={accent}
         mt5Token={mt5Token}
         symbols={selected}
+        quoteSetups={quoteSetups}
         onClose={haltAutoTrade}
         onExecuted={() => {
           setStatus('running');
@@ -990,9 +982,9 @@ function QuotesPanel({
   setQuery,
   filtered,
   selected,
-  toggleSymbol,
-  addCustomSymbol,
-  removeSymbol,
+  quoteSetups,
+  upsertQuoteSetup,
+  removeQuoteSetup,
   onDone,
 }: {
   accent: string;
@@ -1000,20 +992,54 @@ function QuotesPanel({
   setQuery: (v: string) => void;
   filtered: string[];
   selected: string[];
-  toggleSymbol: (s: string) => void;
-  addCustomSymbol: (s: string) => void;
-  removeSymbol: (s: string) => void;
+  quoteSetups: QuoteSetup[];
+  upsertQuoteSetup: (setup: QuoteSetup) => void;
+  removeQuoteSetup: (symbol: string) => void;
   onDone: () => void;
 }) {
   const [custom, setCustom] = useState('');
+  const [promptSym, setPromptSym] = useState<string | null>(null);
+  const [lotRaw, setLotRaw] = useState('0.01');
+  const [tradesRaw, setTradesRaw] = useState('1');
   const catalog = filtered.filter((s) => !selected.includes(s));
+  const setupBySym = useMemo(() => {
+    const m = new Map<string, QuoteSetup>();
+    for (const s of quoteSetups) m.set(s.symbol, s);
+    return m;
+  }, [quoteSetups]);
+
+  const openPrompt = (sym: string) => {
+    const s = String(sym || '')
+      .trim()
+      .replace(/\s+/g, '')
+      .toUpperCase();
+    if (!s) return;
+    const existing = setupBySym.get(s);
+    setLotRaw(String(existing?.lotSize ?? 0.01));
+    setTradesRaw(String(existing?.trades ?? 1));
+    setPromptSym(s);
+  };
+
+  const confirmPrompt = () => {
+    if (!promptSym) return;
+    const lot = Number(lotRaw);
+    const trades = Number(tradesRaw);
+    const setup = normalizeQuoteSetup({
+      symbol: promptSym,
+      lotSize: lot,
+      trades,
+    });
+    if (!setup) return;
+    upsertQuoteSetup(setup);
+    setPromptSym(null);
+    setCustom('');
+    setQuery('');
+  };
 
   const submitCustom = () => {
     const s = custom.trim().replace(/\s+/g, '').toUpperCase();
     if (!s) return;
-    addCustomSymbol(s);
-    setCustom('');
-    setQuery('');
+    openPrompt(s);
   };
 
   return (
@@ -1021,25 +1047,46 @@ function QuotesPanel({
       <Text style={styles.quotesSectionLabel}>Selected symbols</Text>
       {selected.length === 0 ? (
         <Text style={styles.empty}>
-          None yet — tap a symbol below or type a custom MT5 symbol
+          None yet — tap a symbol below or type a custom MT5 symbol. You will
+          set lot size and how many trades.
         </Text>
       ) : (
         <View style={styles.selectedWrap}>
-          {selected.map((sym) => (
-            <Pressable
-              key={sym}
-              accessibilityRole="button"
-              accessibilityLabel={`Remove ${sym}`}
-              onPress={() => removeSymbol(sym)}
-              style={[
-                styles.selectedChip,
-                { borderColor: hexToRgba(accent, 0.55) },
-              ]}
-            >
-              <Text style={styles.selectedChipText}>{sym}</Text>
-              <Ionicons name="close-circle" size={16} color={accent} />
-            </Pressable>
-          ))}
+          {selected.map((sym) => {
+            const setup = setupBySym.get(sym);
+            return (
+              <Pressable
+                key={sym}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit or remove ${sym}`}
+                onPress={() => openPrompt(sym)}
+                onLongPress={() => removeQuoteSetup(sym)}
+                style={[
+                  styles.selectedChip,
+                  { borderColor: hexToRgba(accent, 0.55) },
+                ]}
+              >
+                <View>
+                  <Text style={styles.selectedChipText}>{sym}</Text>
+                  <Text style={styles.selectedChipMeta}>
+                    {setup
+                      ? `${setup.lotSize} lot · ${setup.trades} trade${
+                          setup.trades === 1 ? '' : 's'
+                        }`
+                      : 'tap to set lot / trades'}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${sym}`}
+                  onPress={() => removeQuoteSetup(sym)}
+                  hitSlop={8}
+                >
+                  <Ionicons name="close-circle" size={16} color={accent} />
+                </Pressable>
+              </Pressable>
+            );
+          })}
         </View>
       )}
 
@@ -1106,7 +1153,7 @@ function QuotesPanel({
         }
         renderItem={({ item }) => (
           <Pressable
-            onPress={() => toggleSymbol(item)}
+            onPress={() => openPrompt(item)}
             style={({ pressed }) => [
               styles.symbolRow,
               pressed && { opacity: 0.8 },
@@ -1131,6 +1178,67 @@ function QuotesPanel({
           done · {selected.length} selected · Auto Trade uses these
         </Text>
       </Pressable>
+
+      <Modal
+        visible={Boolean(promptSym)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPromptSym(null)}
+      >
+        <View style={styles.setupBackdrop}>
+          <View
+            style={[
+              styles.setupCard,
+              { borderColor: hexToRgba(accent, 0.55) },
+            ]}
+          >
+            <Text style={styles.setupTitle}>{promptSym}</Text>
+            <Text style={styles.setupHint}>
+              Set lot size and how many trades for Auto Trade on this symbol.
+            </Text>
+            <Text style={styles.setupLabel}>Lot size</Text>
+            <TextInput
+              value={lotRaw}
+              onChangeText={setLotRaw}
+              keyboardType="decimal-pad"
+              placeholder="0.01"
+              placeholderTextColor={BASE.muted}
+              style={[styles.setupInput, { borderColor: accent }]}
+              accessibilityLabel="Lot size"
+            />
+            <Text style={styles.setupLabel}>How many trades</Text>
+            <TextInput
+              value={tradesRaw}
+              onChangeText={setTradesRaw}
+              keyboardType="number-pad"
+              placeholder="1"
+              placeholderTextColor={BASE.muted}
+              style={[styles.setupInput, { borderColor: accent }]}
+              accessibilityLabel="How many trades"
+            />
+            <View style={styles.setupActions}>
+              <Pressable
+                onPress={() => setPromptSym(null)}
+                style={styles.setupCancel}
+              >
+                <Text style={styles.setupCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmPrompt}
+                style={[
+                  styles.setupConfirm,
+                  {
+                    borderColor: accent,
+                    backgroundColor: hexToRgba(accent, 0.2),
+                  },
+                ]}
+              >
+                <Text style={styles.setupConfirmText}>Save</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }
@@ -1645,10 +1753,10 @@ const styles = StyleSheet.create({
   selectedChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     borderWidth: 1.5,
-    borderRadius: 999,
-    paddingVertical: 6,
+    borderRadius: 14,
+    paddingVertical: 8,
     paddingHorizontal: 10,
     backgroundColor: 'rgba(0,0,0,0.55)',
   },
@@ -1657,6 +1765,80 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.4,
+  },
+  selectedChipMeta: {
+    color: BASE.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  setupBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  setupCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(12,12,12,0.98)',
+    padding: 16,
+    gap: 8,
+  },
+  setupTitle: {
+    color: BASE.white,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  setupHint: {
+    color: BASE.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  setupLabel: {
+    color: BASE.white,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'lowercase',
+    marginTop: 4,
+  },
+  setupInput: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'web' ? 10 : 12,
+    color: BASE.white,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  setupActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 10,
+  },
+  setupCancel: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  setupCancelText: {
+    color: BASE.muted,
+    fontWeight: '700',
+  },
+  setupConfirm: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  setupConfirmText: {
+    color: BASE.white,
+    fontWeight: '800',
   },
   symbolList: { maxHeight: 220 },
   symbolRow: {

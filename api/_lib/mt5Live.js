@@ -369,9 +369,110 @@ async function fetchLiveAccount(id) {
   };
 }
 
+/**
+ * Live OrderSend — GET /api/mt5/OrderSend?id&symbol&operation&volume…
+ * operation: 0 = buy, 1 = sell (mt5rest).
+ * Surfaces bridge error/title/message to the client.
+ */
+async function sendLiveOrder({
+  id,
+  symbol,
+  operation,
+  volume,
+  stopLoss,
+  takeProfit,
+  comment,
+  slippage,
+}) {
+  const token = String(id || '').trim();
+  const sym = String(symbol || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .toUpperCase();
+  const op = Number(operation);
+  const vol = Number(volume);
+  if (!token) {
+    return { ok: false, status: 400, error: 'id (MT5 token) is required' };
+  }
+  if (!sym) {
+    return { ok: false, status: 400, error: 'symbol is required' };
+  }
+  if (!(op === 0 || op === 1)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'operation must be 0 (buy) or 1 (sell)',
+    };
+  }
+  if (!Number.isFinite(vol) || vol <= 0) {
+    return { ok: false, status: 400, error: 'volume (lot size) must be > 0' };
+  }
+
+  const qs = new URLSearchParams();
+  qs.set('id', token);
+  qs.set('symbol', sym);
+  qs.set('operation', String(op));
+  qs.set('volume', String(vol));
+  if (comment != null && String(comment).trim()) {
+    qs.set('comment', String(comment).trim().slice(0, 31));
+  }
+  if (slippage != null && Number.isFinite(Number(slippage))) {
+    qs.set('slippage', String(Number(slippage)));
+  }
+  const sl = Number(stopLoss);
+  if (Number.isFinite(sl) && sl > 0) qs.set('stoploss', String(sl));
+  const tp = Number(takeProfit);
+  if (Number.isFinite(tp) && tp > 0) qs.set('takeprofit', String(tp));
+
+  const res = await mt5Get(`/OrderSend?${qs.toString()}`);
+  if (!res.ok) {
+    const d = res.data;
+    let err = '';
+    if (typeof d === 'string') err = d;
+    else if (d && typeof d === 'object') {
+      err = String(
+        d.title || d.error || d.message || d.code || d.Message || '',
+      ).trim();
+    }
+    return {
+      ok: false,
+      status: res.status || 502,
+      error: err || `OrderSend failed (${res.status || 'bridge'})`,
+      raw: d,
+    };
+  }
+
+  // Some bridges return HTTP 200 with an error payload
+  const d = res.data;
+  if (d && typeof d === 'object') {
+    const code = d.code ?? d.Code ?? d.errorCode;
+    const msg = String(
+      d.title || d.error || d.message || d.Message || '',
+    ).trim();
+    if (
+      (typeof code === 'number' && code !== 0 && code !== 10009) ||
+      (typeof code === 'string' &&
+        code &&
+        code !== '0' &&
+        !/ok|success|done/i.test(code)) ||
+      /reject|fail|invalid|error|denied|not enough|trade context/i.test(msg)
+    ) {
+      return {
+        ok: false,
+        status: 422,
+        error: msg || `Order rejected (code ${code})`,
+        raw: d,
+      };
+    }
+  }
+
+  return { ok: true, status: res.status || 200, result: d };
+}
+
 module.exports = {
   connectLiveMt5,
   fetchLiveAccount,
+  sendLiveOrder,
   mt5Root,
   mapOrder,
   extractOrdersList,
