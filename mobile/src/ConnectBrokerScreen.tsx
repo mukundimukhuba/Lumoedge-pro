@@ -355,6 +355,7 @@ export function ConnectBrokerScreen() {
   const [showPass, setShowPass] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [restoring, setRestoring] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [account, setAccount] = useState<BrokerAccount | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -366,7 +367,6 @@ export function ConnectBrokerScreen() {
   );
   const searchGen = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const restoringRef = useRef(true);
 
   const servers = useMemo(
     () => (selected ? getBrokerServers(selected) : []),
@@ -379,14 +379,15 @@ export function ConnectBrokerScreen() {
   const showSuggest =
     !selected && (searchFocused || query.trim().length > 0);
 
-  // Restore MT5 link across reload / navigation until Disconnect
+  // Restore MT5 link silently — no Linking animation when already Connected
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const link = await loadMt5Link();
-        if (cancelled || !link?.token) {
-          restoringRef.current = false;
+        if (cancelled) return;
+        if (!link?.token) {
+          setRestoring(false);
           return;
         }
         setSelected(link.broker);
@@ -396,8 +397,15 @@ export function ConnectBrokerScreen() {
         setSessionId(link.token);
         setConnected(true);
         setError(null);
+        // Hydrate account before ending restore so UI never flashes Linking…
+        try {
+          const next = await fetchBrokerAccount(link.token);
+          if (!cancelled) setAccount(next);
+        } catch {
+          // Poll will retry; still leave Connected UI without Linking pulse
+        }
       } finally {
-        restoringRef.current = false;
+        if (!cancelled) setRestoring(false);
       }
     })();
     return () => {
@@ -612,7 +620,16 @@ export function ConnectBrokerScreen() {
               }.`}
         </Text>
 
-        {connected && selected ? (
+        {restoring ? (
+          <Text
+            style={styles.silentRestore}
+            accessibilityLabel="Restoring connected session"
+          >
+            Restoring live session…
+          </Text>
+        ) : null}
+
+        {!restoring && connected && selected ? (
           <View style={styles.formBlock}>
             <View
               style={[
@@ -647,7 +664,12 @@ export function ConnectBrokerScreen() {
             {account ? (
               <LiveAccountPanel account={account} accent={accent} />
             ) : (
-              <ConnectPulse accent={accent} active broker={selected} />
+              <Text
+                style={styles.silentRestore}
+                accessibilityLabel="Refreshing live account"
+              >
+                Refreshing live account…
+              </Text>
             )}
 
             <Pressable
@@ -668,7 +690,7 @@ export function ConnectBrokerScreen() {
           </View>
         ) : null}
 
-        {!connected ? (
+        {!restoring && !connected ? (
           <>
         <Text style={styles.sectionLabel}>Broker</Text>
         <View
@@ -1262,6 +1284,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     backgroundColor: hexToRgba('#FF5252', 0.08),
     marginTop: 4,
+  },
+  silentRestore: {
+    color: BASE.muted,
+    fontSize: 13,
+    fontWeight: '600',
+    paddingVertical: 14,
+    textAlign: 'center',
   },
   disconnectText: {
     color: BASE.red,

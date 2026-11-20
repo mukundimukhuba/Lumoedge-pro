@@ -362,18 +362,37 @@ function EdgesRadar({
     status === 'SIGNAL DETECTED';
   const locked = status === 'SIGNAL DETECTED';
 
+  // Web: native driver can stall / flash; use JS driver there.
+  const nativeAnim = Platform.OS !== 'web';
+
   useEffect(() => {
-    const loop = Animated.loop(
-      Animated.timing(spin, {
-        toValue: 1,
-        duration: status === 'DETECTING' ? 900 : status === 'ANALYSING' ? 1400 : 4200,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [status, spin]);
+    let cancelled = false;
+    let loop: Animated.CompositeAnimation | null = null;
+    const start = () => {
+      if (cancelled) return;
+      loop = Animated.loop(
+        Animated.timing(spin, {
+          toValue: 1,
+          duration:
+            status === 'DETECTING'
+              ? 900
+              : status === 'ANALYSING'
+                ? 1400
+                : 4200,
+          easing: Easing.linear,
+          useNativeDriver: nativeAnim,
+        }),
+      );
+      loop.start();
+    };
+    // Defer first paint so open doesn't freeze on animation setup
+    const t = setTimeout(start, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+      loop?.stop();
+    };
+  }, [status, spin, nativeAnim]);
 
   useEffect(() => {
     if (!busy) {
@@ -386,18 +405,18 @@ function EdgesRadar({
           toValue: 1,
           duration: 900,
           easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: nativeAnim,
         }),
         Animated.timing(pulse, {
           toValue: 0,
           duration: 100,
-          useNativeDriver: true,
+          useNativeDriver: nativeAnim,
         }),
       ]),
     );
     loop.start();
     return () => loop.stop();
-  }, [busy, pulse]);
+  }, [busy, pulse, nativeAnim]);
 
   useEffect(() => {
     if (!locked) {
@@ -409,18 +428,18 @@ function EdgesRadar({
         Animated.timing(lock, {
           toValue: 1,
           duration: 650,
-          useNativeDriver: true,
+          useNativeDriver: nativeAnim,
         }),
         Animated.timing(lock, {
           toValue: 0.4,
           duration: 650,
-          useNativeDriver: true,
+          useNativeDriver: nativeAnim,
         }),
       ]),
     );
     loop.start();
     return () => loop.stop();
-  }, [locked, lock]);
+  }, [locked, lock, nativeAnim]);
 
   const rotate = spin.interpolate({
     inputRange: [0, 1],
@@ -613,6 +632,7 @@ function EdgesRadar({
 
 function EnginePhasePulse({ color }: { color: string }) {
   const pulse = useRef(new Animated.Value(0.35)).current;
+  const nativeAnim = Platform.OS !== 'web';
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -620,19 +640,19 @@ function EnginePhasePulse({ color }: { color: string }) {
           toValue: 1,
           duration: 700,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: nativeAnim,
         }),
         Animated.timing(pulse, {
           toValue: 0.35,
           duration: 700,
           easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
+          useNativeDriver: nativeAnim,
         }),
       ]),
     );
     loop.start();
     return () => loop.stop();
-  }, [pulse]);
+  }, [pulse, nativeAnim]);
   return (
     <Animated.View
       style={[
@@ -880,16 +900,20 @@ export function ChartScannerScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        const st = await fetchScanStatus();
-        if (!cancelled) setScanApiLive(Boolean(st.configured));
-      } catch {
-        if (!cancelled) setScanApiLive(false);
-      }
-    })();
+    // Defer network so first paint isn't blocked / frozen on open
+    const kick = setTimeout(() => {
+      void (async () => {
+        try {
+          const st = await fetchScanStatus();
+          if (!cancelled) setScanApiLive(Boolean(st.configured));
+        } catch {
+          if (!cancelled) setScanApiLive(false);
+        }
+      })();
+    }, 0);
     return () => {
       cancelled = true;
+      clearTimeout(kick);
     };
   }, []);
 

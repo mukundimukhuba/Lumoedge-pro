@@ -36,15 +36,22 @@ export type ScanApiResponse = {
 const SCAN_TIMEOUT_MS = 55_000;
 
 export async function fetchScanStatus(): Promise<ScanStatus> {
-  const res = await fetch(`${LUMOEDGE_SCAN_ROOT}/api/scan/status`, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-    cache: 'no-store',
-  });
-  if (!res.ok) {
-    throw new Error(`Scan status ${res.status}`);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch(`${LUMOEDGE_SCAN_ROOT}/api/scan/status`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      throw new Error(`Scan status ${res.status}`);
+    }
+    return (await res.json()) as ScanStatus;
+  } finally {
+    clearTimeout(timer);
   }
-  return (await res.json()) as ScanStatus;
 }
 
 export async function postChartScan(
