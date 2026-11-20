@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Apply supabase/migrations/*.sql using the service role.
+ * Apply supabase/migrations/*.sql using the service role when possible.
  * Env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (never logged).
  * Also accepts legacy alias `supabase` for the service role.
+ * Optional: SUPABASE_ACCESS_TOKEN for Management API migrations.
  */
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
+  normalizeSupabaseUrl,
   readSupabaseServiceRoleKey,
   readSupabaseUrl,
   secretStatus,
@@ -18,9 +20,13 @@ const root = path.join(__dirname, '..');
 
 const url = readSupabaseUrl();
 const serviceKey = readSupabaseServiceRoleKey();
+const accessToken = (process.env.SUPABASE_ACCESS_TOKEN || '').trim();
 const status = secretStatus();
 
 console.log('Secret names:', JSON.stringify(status));
+if (status.urlHadRestPath) {
+  console.log('Note: SUPABASE_URL had /rest/v1 — normalized to project root.');
+}
 
 if (!url || !serviceKey) {
   console.error(
@@ -44,63 +50,135 @@ const sql = files
   .map((f) => fs.readFileSync(path.join(migrationsDir, f), 'utf8'))
   .join('\n\n');
 
-async function applyViaPgMeta() {
-  const base = url.replace(/\/$/, '');
-  const res = await fetch(`${base}/rest/v1/`, {
+function projectRefFromUrl(projectUrl) {
+  try {
+    const host = new URL(projectUrl).hostname;
+    const ref = host.split('.')[0];
+    return ref || null;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureEaPicturesBucket(base) {
+  const res = await fetch(`${base}/storage/v1/bucket`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      id: 'ea-pictures',
+      name: 'ea-pictures',
+      public: true,
+    }),
+  });
+  if (res.ok || res.status === 409) {
+    console.log(
+      res.ok
+        ? 'Storage bucket ea-pictures created (or ensured).'
+        : 'Storage bucket ea-pictures already exists.',
+    );
+    return true;
+  }
+  const text = await res.text();
+  // "already exists" shapes vary
+  if (/already|exists|duplicate/i.test(text)) {
+    console.log('Storage bucket ea-pictures already exists.');
+    return true;
+  }
+  console.warn(`Bucket ensure skipped (HTTP ${res.status}).`);
+  return false;
+}
+
+async function applyViaManagementApi(ref) {
+  if (!accessToken) return false;
+  const res = await fetch(
+    `https://api.supabase.com/v1/projects/${ref}/database/migrations`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: files.join('+'),
+        query: sql,
+      }),
+    },
+  );
+  if (res.ok) {
+    console.log('Schema applied via Management API migrations.');
+    return true;
+  }
+  console.warn(`Management API migrations HTTP ${res.status}.`);
+  return false;
+}
+
+async function applyViaPgMeta(base) {
+  const rest = await fetch(`${base}/rest/v1/`, {
     method: 'GET',
     headers: {
       apikey: serviceKey,
       Authorization: `Bearer ${serviceKey}`,
     },
   });
-  if (!res.ok) {
-    throw new Error(`Supabase REST unreachable (${res.status})`);
+  // Empty schema still returns OpenAPI at /rest/v1/ (200) or PGRST paths
+  if (!(rest.ok || rest.status === 404)) {
+    throw new Error(`Supabase REST unreachable (${rest.status})`);
   }
 
   console.log(
     `REST reachable. Migrations ready (${files.join(', ')}).`,
   );
 
-  // Attempt pg-meta query endpoint (present on some projects / local stacks):
-  const pg = await fetch(`${base}/pg/query`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query: sql }),
-  });
-  if (pg.ok) {
-    console.log('Schema applied via /pg/query');
+  for (const endpoint of ['/pg/query', '/pg/meta/default/query']) {
+    const pg = await fetch(`${base}${endpoint}`, {
+      method: 'POST',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query: sql }),
+    });
+    if (pg.ok) {
+      console.log(`Schema applied via ${endpoint}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+async function main() {
+  const base = normalizeSupabaseUrl(url);
+  const ref = projectRefFromUrl(base);
+
+  await ensureEaPicturesBucket(base);
+
+  if (ref && (await applyViaManagementApi(ref))) {
     return;
   }
 
-  // Some projects expose postgres-meta under /pg/meta/default/query
-  const pgMeta = await fetch(`${base}/pg/meta/default/query`, {
-    method: 'POST',
-    headers: {
-      apikey: serviceKey,
-      Authorization: `Bearer ${serviceKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query: sql }),
-  });
-  if (pgMeta.ok) {
-    console.log('Schema applied via /pg/meta/default/query');
+  if (await applyViaPgMeta(base)) {
     return;
   }
 
   console.warn(
-    `Auto-apply skipped (pg/query ${pg.status}, pg/meta ${pgMeta.status}).`,
+    'Auto-apply of SQL skipped (hosted Supabase has no /pg/query; no SUPABASE_ACCESS_TOKEN).',
   );
   console.warn(
     'Apply manually: Supabase → SQL → New query → paste supabase/migrations/*.sql → Run.',
   );
+  console.warn(
+    'Or add Cloud Agent secret SUPABASE_ACCESS_TOKEN (Management API) and re-run supabase:apply.',
+  );
+  // Soft exit: bucket may already be done; tables still need manual SQL.
   process.exit(0);
 }
 
-applyViaPgMeta().catch((err) => {
+main().catch((err) => {
   console.error(String(err?.message || err));
   process.exit(1);
 });

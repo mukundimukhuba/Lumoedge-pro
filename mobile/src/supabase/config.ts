@@ -15,6 +15,15 @@ function readExtra(): Extra {
   return extra ?? {};
 }
 
+/** Project root URL; strips accidental /rest/v1 pasted into secrets. */
+function normalizeSupabaseUrl(raw: string | null | undefined): string | null {
+  let url = (raw || '').trim().replace(/\/+$/, '');
+  if (!url) return null;
+  url = url.replace(/\/rest\/v1$/i, '').replace(/\/rest$/i, '');
+  url = url.replace(/\/+$/, '');
+  return url || null;
+}
+
 /**
  * Client config from build-time env / app.config extra.
  * Never hardcode keys. Falls back to local-only storage when unset.
@@ -37,7 +46,7 @@ export function getSupabaseConfig(): {
         process.env.SUPABASE_ANON_KEY)) ||
     extra.supabaseAnonKey ||
     null;
-  const cleanUrl = url?.trim() || null;
+  const cleanUrl = normalizeSupabaseUrl(url);
   const cleanKey = anonKey?.trim() || null;
   return {
     url: cleanUrl,
