@@ -32,6 +32,7 @@ import {
   getBrokerRecord,
   getBrokerServers,
 } from './brokers/data';
+import { clearMt5Token, saveMt5Token } from './brokers/mt5Token';
 
 export { BROKERS, filterBrokers, canUseCustomBroker };
 
@@ -400,6 +401,7 @@ export function ConnectBrokerScreen() {
     setPassword('');
     setServerPickerOpen(false);
     setSearchFocused(true);
+    void clearMt5Token();
   };
 
   const onConnect = () => {
@@ -430,7 +432,12 @@ export function ConnectBrokerScreen() {
           return;
         }
         setConnected(true);
-        if (res.sessionId) setSessionId(res.sessionId);
+        // Prefer MT5 token (`token`/`id`) for Auto Scan curl body.id
+        const mt5Id = String(res.token || res.id || res.sessionId || '').trim();
+        if (mt5Id) {
+          setSessionId(res.sessionId || mt5Id);
+          void saveMt5Token(mt5Id);
+        }
         if (res.account) setAccount(res.account);
       } catch {
         setPassword('');
@@ -438,6 +445,7 @@ export function ConnectBrokerScreen() {
         setConnected(false);
         setSessionId(null);
         setAccount(null);
+        void clearMt5Token();
       } finally {
         setConnecting(false);
       }

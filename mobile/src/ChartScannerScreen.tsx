@@ -22,6 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { EdgesBottomDock } from './EdgesBottomDock';
+import { loadMt5Token } from './brokers/mt5Token';
 import {
   fetchScanStatus,
   normalizeScanResult,
@@ -830,6 +831,7 @@ export function ChartScannerScreen() {
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
   const [autoEngineOpen, setAutoEngineOpen] = useState(false);
   const [scanApiLive, setScanApiLive] = useState<boolean | null>(null);
+  const [mt5Token, setMt5Token] = useState<string | null>(null);
   const scanAbort = useRef<AbortController | null>(null);
   const [radarStatus, setRadarStatus] =
     useState<RadarStatus>('INITIALISING');
@@ -885,6 +887,17 @@ export function ChartScannerScreen() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const token = await loadMt5Token();
+      if (!cancelled) setMt5Token(token);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoEngineOpen]);
 
   const clearScanTimers = () => {
     scanTimers.current.forEach(clearTimeout);
@@ -1705,6 +1718,7 @@ export function ChartScannerScreen() {
       <AutoTradeEngineOverlay
         visible={autoEngineOpen}
         accent={accent}
+        mt5Token={mt5Token}
         lotSize={clampLot(parsePositive(lotRaw, 0.01, 1))}
         trades={clampTrades(parsePositive(tradesRaw, 1, 3))}
         onClose={() => setAutoEngineOpen(false)}

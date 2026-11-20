@@ -41,6 +41,9 @@ export type BrokerConnectResponse = {
   message?: string;
   error?: string;
   upstream?: boolean;
+  /** MT5 token for /api/scan/auto body.id */
+  token?: string;
+  id?: string;
   sessionId?: string;
   account?: BrokerAccount | null;
 };

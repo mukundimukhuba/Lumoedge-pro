@@ -102,82 +102,89 @@ export function AutoTradeEngineOverlay({
         let chosenSymbol: string = AUTO_MARKETS[0];
         let chosenTf: string = AUTO_TIMEFRAMES[0];
 
-        // Walk markets × TF order until a tradeable signal
-        outer: for (let mi = 0; mi < AUTO_MARKETS.length; mi++) {
+        // Walk markets; server tries TFs M15→H1→M5→M1.
+        // Body locked to curl: { symbol, id }
+        const token = String(mt5Token || '').trim();
+
+        for (let mi = 0; mi < AUTO_MARKETS.length; mi++) {
           if (ac.signal.aborted || id !== runId.current) return;
           setMarketIdx(mi);
+          setTfIdx(0);
           const symbol = AUTO_MARKETS[mi];
+          setStatus(
+            token
+              ? `Scanning ${symbol}…`
+              : `Preview ${symbol} (connect broker for live)…`,
+          );
+
+          // Show TF pipeline progress in UI while waiting
           for (let ti = 0; ti < AUTO_TIMEFRAMES.length; ti++) {
-            if (ac.signal.aborted || id !== runId.current) return;
             setTfIdx(ti);
-            const timeframe = AUTO_TIMEFRAMES[ti];
-            setStatus(`Scanning ${symbol} · ${timeframe}`);
-
-            const api = await postAutoScan(
-              {
-                symbol,
-                timeframe,
-                timeframes: [...AUTO_TIMEFRAMES],
-                id: mt5Token || undefined,
-                lot: lotSize,
-                trades,
-              },
-              ac.signal,
-            );
-
+            await sleep(120, ac.signal).catch(() => undefined);
             if (ac.signal.aborted || id !== runId.current) return;
+          }
 
-            // MT5 required by live API — fall back to local strategy preview
-            if (
-              !api.ok &&
-              /Connect MetaTrader|Type the symbol/i.test(api.error || '')
-            ) {
-              const candles = synthesizePreviewCandles(symbol, 'bull');
-              const local = evaluateLiveCandles(candles);
-              if (local.trade && local.side) {
-                chosen = {
-                  ok: true,
-                  trade: true,
-                  demo: true,
-                  symbol,
-                  timeframe,
-                  direction: local.side,
-                  accuracy: local.accuracy,
-                  entryPrice: local.entry,
-                  stopLoss: local.stopLoss,
-                  takeProfits: local.takeProfits,
-                  sessionBias: local.sessionBias,
-                  summary: `${local.reason} (preview — link MT5 for live candles)`,
-                };
-                chosenSymbol = symbol;
-                chosenTf = timeframe;
-                break outer;
-              }
-              continue;
-            }
+          let api: AutoScanSignal;
+          if (!token) {
+            api = {
+              ok: false,
+              error:
+                'Connect MetaTrader first. Auto Scan reads the live market on your account.',
+            };
+          } else {
+            api = await postAutoScan({ symbol, id: token }, ac.signal);
+          }
 
-            if (!api.ok) {
-              // Soft-skip unreachable / no-trade markets
-              if (/no trade|skip|flat|reverse/i.test(api.error || '')) {
-                continue;
-              }
-              // Hard error only if nothing else worked later
-              if (!chosen) {
-                setError(api.error || 'Auto Scan failed');
-              }
-              continue;
-            }
+          if (ac.signal.aborted || id !== runId.current) return;
 
-            if (api.skip || api.trade === false) {
-              continue;
-            }
-
-            if (api.direction) {
-              chosen = { ...api, symbol, timeframe };
+          // No MT5 token / connect required — local strategy preview
+          if (
+            !api.ok &&
+            /Connect MetaTrader|Type the symbol/i.test(api.error || '')
+          ) {
+            const candles = synthesizePreviewCandles(symbol, 'bull');
+            const local = evaluateLiveCandles(candles);
+            if (local.trade && local.side) {
+              chosen = {
+                ok: true,
+                trade: true,
+                demo: true,
+                symbol,
+                timeframe: AUTO_TIMEFRAMES[0],
+                direction: local.side,
+                accuracy: local.accuracy,
+                entryPrice: local.entry,
+                stopLoss: local.stopLoss,
+                takeProfits: local.takeProfits,
+                sessionBias: local.sessionBias,
+                summary: `${local.reason} (preview — link MT5 for live candles)`,
+              };
               chosenSymbol = symbol;
-              chosenTf = timeframe;
-              break outer;
+              chosenTf = AUTO_TIMEFRAMES[0];
+              break;
             }
+            continue;
+          }
+
+          if (!api.ok) {
+            if (/no trade|skip|flat|reverse/i.test(api.error || '')) {
+              continue;
+            }
+            if (!chosen) setError(api.error || 'Auto Scan failed');
+            continue;
+          }
+
+          if (api.skip || api.trade === false) continue;
+
+          if (api.direction) {
+            chosen = {
+              ...api,
+              symbol,
+              timeframe: api.timeframe || AUTO_TIMEFRAMES[0],
+            };
+            chosenSymbol = symbol;
+            chosenTf = api.timeframe || AUTO_TIMEFRAMES[0];
+            break;
           }
         }
 
