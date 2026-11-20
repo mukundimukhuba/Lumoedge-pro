@@ -21,9 +21,22 @@ npm run supabase:verify   # confirms managed_eas + license_keys reachable
 
 If verify fails with `PGRST205`, paste `supabase/migrations/*.sql` into the Supabase SQL editor once (or add `SUPABASE_ACCESS_TOKEN` and re-run apply).
 
+## Brokers API
+
+Serverless routes (never commit credentials):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/brokers?q=&limit=` | Search / list brokers |
+| `POST` | `/api/brokers/connect` | Connect `{ broker, server, login, password }` |
+
+Optional Vercel / Cloud secret **`BROKER_API_URL`** (e.g. your private broker host). When set, search + connect proxy upstream; when unset, local catalog + demo connect (password not stored). Never put passwords in chat, git, or client env.
+
+Local: `npm run brokers:dev` → `http://127.0.0.1:8787` (Expo web on `:8081` calls it automatically).
+
 ## Vercel
 
-`vercel.json` builds with `npm run export:web` so `SUPABASE_URL` + `SUPABASE_ANON_KEY` bake into the static client. Set those two on the Vercel project (never the service role).
+`vercel.json` builds with `npm run export:web` so `SUPABASE_URL` + `SUPABASE_ANON_KEY` bake into the static client. Set those two on the Vercel project (never the service role). `/api/*` is served by Vercel functions and excluded from the SPA rewrite.
 
 Local static: `npx serve -s . -l 8099` → `http://127.0.0.1:8099/`
 

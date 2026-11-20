@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -15,6 +15,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { EdgesBottomDock } from './EdgesBottomDock';
+import { connectBrokerApi, searchBrokersApi } from './brokers/api';
 
 const BASE = {
   black: '#000000',
@@ -368,11 +369,37 @@ export function ConnectBrokerScreen() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [apiSuggestions, setApiSuggestions] = useState<string[] | null>(null);
+  const [apiSource, setApiSource] = useState<'local' | 'upstream' | 'offline'>(
+    'local',
+  );
+  const searchGen = useRef(0);
 
-  const suggestions = useMemo(() => filterBrokers(query, 10), [query]);
+  const localSuggestions = useMemo(() => filterBrokers(query, 10), [query]);
+  const suggestions = apiSuggestions ?? localSuggestions;
   const showCustom = useMemo(() => canUseCustomBroker(query), [query]);
   const showSuggest =
     !selected && (searchFocused || query.trim().length > 0);
+
+  useEffect(() => {
+    if (selected) return;
+    const gen = ++searchGen.current;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await searchBrokersApi(query, 10);
+          if (gen !== searchGen.current) return;
+          setApiSuggestions(res.brokers);
+          setApiSource(res.source === 'upstream' ? 'upstream' : 'local');
+        } catch {
+          if (gen !== searchGen.current) return;
+          setApiSuggestions(null);
+          setApiSource('offline');
+        }
+      })();
+    }, 220);
+    return () => clearTimeout(t);
+  }, [query, selected]);
 
   const pickBroker = (name: string) => {
     setSelected(name);
@@ -407,12 +434,30 @@ export function ConnectBrokerScreen() {
     }
     setError(null);
     setConnecting(true);
-    // Demo link only — credentials are not persisted.
-    setTimeout(() => {
-      setConnecting(false);
-      setConnected(true);
-      setPassword('');
-    }, 900);
+    void (async () => {
+      try {
+        const res = await connectBrokerApi({
+          broker: selected,
+          server: server.trim(),
+          login: login.trim(),
+          password,
+        });
+        // Clear password from UI memory immediately after submit.
+        setPassword('');
+        if (!res.ok) {
+          setError(res.error || 'Connect failed.');
+          setConnected(false);
+          return;
+        }
+        setConnected(true);
+      } catch {
+        setPassword('');
+        setError('Broker API unreachable. Try again.');
+        setConnected(false);
+      } finally {
+        setConnecting(false);
+      }
+    })();
   };
 
   const goHome = () => {
@@ -460,9 +505,15 @@ export function ConnectBrokerScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.lead}>
-          Search your broker (fuzzy match), or use a custom name if it is not
-          listed. Then enter MT5 Server, Login, and Password. Demo connect only
-          — credentials are not stored.
+          Search your broker via the brokers API (fuzzy match), or use a custom
+          name if it is not listed. Then enter MT5 Server, Login, and Password.
+          Credentials go only to the brokers API and are not stored
+          {apiSource === 'upstream'
+            ? ' · live upstream'
+            : apiSource === 'offline'
+              ? ' · offline catalog'
+              : ' · local catalog'}
+          .
         </Text>
 
         <Text style={styles.sectionLabel}>Broker</Text>
