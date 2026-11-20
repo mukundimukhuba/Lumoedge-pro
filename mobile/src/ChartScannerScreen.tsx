@@ -295,7 +295,8 @@ function parsePositive(raw: string, fallback: number, max: number) {
   return Math.min(max, Math.round(n * 100) / 100);
 }
 
-async function buildDemoChartUri(
+/** Internal proof chart for ?proof=1 QA — not a product demo mode. */
+async function buildProofChartUri(
   symbol: string,
   timeframe: string,
 ): Promise<string> {
@@ -831,7 +832,7 @@ function LotTradesFields({
 
 export function ChartScannerScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ demo?: string }>();
+  const params = useLocalSearchParams<{ proof?: string; demo?: string }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
   const {
@@ -842,7 +843,7 @@ export function ChartScannerScreen() {
   } = useAppState();
   const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
-  const demoStarted = useRef(false);
+  const proofStarted = useRef(false);
   const ocrGen = useRef(0);
   const scanTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -990,17 +991,18 @@ export function ChartScannerScreen() {
   };
 
   useEffect(() => {
-    if (demoStarted.current) return;
-    if (params.demo !== '1') return;
-    demoStarted.current = true;
+    if (proofStarted.current) return;
+    // Accept legacy ?demo=1 as an alias for internal proof charts only.
+    if (params.proof !== '1' && params.demo !== '1') return;
+    proofStarted.current = true;
     const t = setTimeout(() => {
       void (async () => {
-        const uri = await buildDemoChartUri('XAUUSD', 'H1');
+        const uri = await buildProofChartUri('XAUUSD', 'H1');
         await applyChart(uri);
       })();
     }, 200);
     return () => clearTimeout(t);
-  }, [params.demo]);
+  }, [params.proof, params.demo]);
 
   const pickLibrary = async () => {
     if (picking.current) return;

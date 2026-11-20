@@ -82,7 +82,7 @@ export function PortalLoginScreen() {
         contact: suContact,
         password: suPassword,
       });
-      // Persist + sign in so Profile shows registration details immediately (demo).
+      // Persist + sign in so Profile shows registration details immediately.
       setMentor(session);
       setSuPassword('');
       setSuConfirm('');

@@ -11,7 +11,7 @@ export function ProfilePanel({ mentor }: { mentor: MentorSession }) {
       label: 'ACCOUNT STATUS',
       value:
         mentor.status === 'demo'
-          ? 'Demo mentor'
+          ? 'Live mentor'
           : mentor.status === 'approved'
             ? 'Approved'
             : 'Pending Super Admin approval',

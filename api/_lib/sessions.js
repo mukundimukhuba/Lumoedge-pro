@@ -6,7 +6,7 @@
 
 module.exports = {
   createSession() {
-    throw new Error('Demo sessions disabled — use live MT5 connect');
+    throw new Error('Live MT5 connect required — mock sessions are disabled');
   },
   getSession() {
     return null;

@@ -162,7 +162,7 @@ export function evaluateAutoTradeGate(
     );
   }
   if (!isRealSymbol(input.symbol, input.demo)) {
-    reasons.push('Symbol is demo / invalid');
+    reasons.push('Symbol is invalid for live trading');
   }
   if (
     !input.side ||

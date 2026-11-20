@@ -161,3 +161,39 @@ export async function vaultCatalogPictures<
     ...keys.map((k) => vaultPutKeyPicture(k.id, k.eaPictureUri)),
   ]);
 }
+
+/** List vault keys (ea:… / key:…) for catalog recovery after localStorage wipe. */
+export async function listVaultPictureKeys(): Promise<string[]> {
+  const keys: string[] = [];
+  if (Platform.OS === 'web' && typeof indexedDB !== 'undefined') {
+    try {
+      const db = await openDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readonly');
+        const req = tx.objectStore(STORE).getAllKeys();
+        req.onsuccess = () => {
+          for (const k of req.result || []) {
+            if (typeof k === 'string') keys.push(k);
+          }
+          resolve();
+        };
+        req.onerror = () =>
+          reject(req.error || new Error('idb getAllKeys failed'));
+      });
+      db.close();
+    } catch {
+      /* fall through to AsyncStorage scan */
+    }
+  }
+  try {
+    const all = await AsyncStorage.getAllKeys();
+    for (const k of all) {
+      if (k.startsWith(AS_PREFIX)) {
+        keys.push(k.slice(AS_PREFIX.length));
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return [...new Set(keys)];
+}

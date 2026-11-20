@@ -146,11 +146,7 @@ export function AutoTradeEngineOverlay({
           setMarketIdx(mi);
           setTfIdx(0);
           const symbol = markets[mi];
-          setStatus(
-            token
-              ? `Scanning ${symbol}…`
-              : `Preview ${symbol} (connect broker for live)…`,
-          );
+          setStatus(`Live scan ${symbol}…`);
 
           // Show TF pipeline progress in UI while waiting
           for (let ti = 0; ti < AUTO_TIMEFRAMES.length; ti++) {
@@ -496,7 +492,7 @@ export function AutoTradeEngineOverlay({
               ) : null}
               {signal.demo ? (
                 <Text style={styles.demoNote}>
-                  Preview candles — connect MetaTrader for live Auto Scan
+                  Live MT5 required — reconnect MetaTrader to scan real candles
                 </Text>
               ) : null}
             </View>

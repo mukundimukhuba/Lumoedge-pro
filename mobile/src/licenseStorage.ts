@@ -4,7 +4,9 @@ import { compressCatalogPictures, compressEaPicture } from './eaPicture';
 import {
   hydrateEasFromVault,
   hydrateKeysFromVault,
+  listVaultPictureKeys,
   vaultCatalogPictures,
+  vaultGetPicture,
 } from './pictureVault';
 import { getSupabase, isSupabaseConfigured } from './supabase/client';
 import { persistPictureRemote } from './supabase/eaPictureUpload';
@@ -160,25 +162,27 @@ function rowToKey(row: Record<string, unknown>): StoredLicenseKey {
   };
 }
 
-async function fetchRemoteCatalog(): Promise<{
-  eas: StoredEa[];
-  keys: StoredLicenseKey[];
-} | null> {
+type RemoteFetch =
+  | { ok: true; eas: StoredEa[]; keys: StoredLicenseKey[] }
+  | { ok: false; eas: []; keys: []; error?: string };
+
+async function fetchRemoteCatalog(): Promise<RemoteFetch> {
   const sb = getSupabase();
-  if (!sb) return null;
+  if (!sb) {
+    return { ok: false, eas: [], keys: [], error: 'supabase not configured' };
+  }
   try {
     const [easRes, keysRes] = await Promise.all([
       sb.from('managed_eas').select('*'),
       sb.from('license_keys').select('*'),
     ]);
     if (easRes.error || keysRes.error) {
-      console.warn(
-        '[edges] supabase catalog fetch failed',
-        easRes.error?.message || keysRes.error?.message,
-      );
-      return null;
+      const msg = easRes.error?.message || keysRes.error?.message || 'fetch failed';
+      console.warn('[edges] supabase catalog fetch failed', msg);
+      return { ok: false, eas: [], keys: [], error: msg };
     }
     return {
+      ok: true,
       eas: (easRes.data || []).map((r) => rowToEa(r as Record<string, unknown>)),
       keys: (keysRes.data || []).map((r) =>
         rowToKey(r as Record<string, unknown>),
@@ -186,8 +190,71 @@ async function fetchRemoteCatalog(): Promise<{
     };
   } catch (err) {
     console.warn('[edges] supabase catalog fetch error', err);
-    return null;
+    return {
+      ok: false,
+      eas: [],
+      keys: [],
+      error: err instanceof Error ? err.message : 'fetch error',
+    };
   }
+}
+
+/**
+ * If localStorage was wiped but IndexedDB still has EA pictures,
+ * rebuild stub robots so Manage EAs is not empty.
+ */
+async function recoverEasFromVault(existing: StoredEa[]): Promise<StoredEa[]> {
+  if (existing.length) return existing;
+  try {
+    const vaultKeys = await listVaultPictureKeys();
+    const stubs: StoredEa[] = [];
+    for (const vk of vaultKeys) {
+      if (!vk.startsWith('ea:')) continue;
+      const id = vk.slice(3);
+      if (!id || existing.some((e) => e.id === id)) continue;
+      const pic = await vaultGetPicture(vk);
+      stubs.push({
+        id,
+        name: id.startsWith('ea_') ? id.replace(/^ea_/, '').slice(0, 24) || 'EA' : 'EA',
+        pictureUri: pic,
+        symbols: [],
+        createdAt: new Date().toISOString(),
+      });
+    }
+    return stubs;
+  } catch {
+    return existing;
+  }
+}
+
+async function readDiskCatalog(): Promise<{
+  eas: StoredEa[];
+  keys: StoredLicenseKey[];
+}> {
+  let diskEas: StoredEa[] = [];
+  let diskKeys: StoredLicenseKey[] = [];
+  const easRaw =
+    webLocalGet(EAS_STORAGE_KEY) ?? (await AsyncStorage.getItem(EAS_STORAGE_KEY));
+  const keysRaw =
+    webLocalGet(LICENSE_KEYS_STORAGE_KEY) ??
+    (await AsyncStorage.getItem(LICENSE_KEYS_STORAGE_KEY));
+  try {
+    if (easRaw) {
+      const parsed = JSON.parse(easRaw) as StoredEa[];
+      if (Array.isArray(parsed)) diskEas = parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (keysRaw) {
+      const parsed = JSON.parse(keysRaw) as StoredLicenseKey[];
+      if (Array.isArray(parsed)) diskKeys = parsed;
+    }
+  } catch {
+    /* ignore */
+  }
+  return { eas: diskEas, keys: diskKeys };
 }
 
 async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
@@ -259,36 +326,15 @@ export async function loadLicenseCatalog(): Promise<{
   eas: StoredEa[];
   keys: StoredLicenseKey[];
 }> {
-  let diskEas: StoredEa[] = [];
-  let diskKeys: StoredLicenseKey[] = [];
-
-  const easRaw =
-    webLocalGet(EAS_STORAGE_KEY) ?? (await AsyncStorage.getItem(EAS_STORAGE_KEY));
-  const keysRaw =
-    webLocalGet(LICENSE_KEYS_STORAGE_KEY) ??
-    (await AsyncStorage.getItem(LICENSE_KEYS_STORAGE_KEY));
-
-  try {
-    if (easRaw) {
-      const parsed = JSON.parse(easRaw) as StoredEa[];
-      if (Array.isArray(parsed)) diskEas = parsed;
-    }
-  } catch {
-    /* ignore */
-  }
-  try {
-    if (keysRaw) {
-      const parsed = JSON.parse(keysRaw) as StoredLicenseKey[];
-      if (Array.isArray(parsed)) diskKeys = parsed;
-    }
-  } catch {
-    /* ignore */
-  }
+  const disk = await readDiskCatalog();
+  let diskEas = disk.eas;
+  let diskKeys = disk.keys;
 
   // Remote (cross-device) merges in when Supabase secrets are configured.
+  // Failed fetches must NOT be treated as an empty catalog.
   const remote = await fetchRemoteCatalog();
-  const remoteEas = remote?.eas ?? [];
-  const remoteKeys = remote?.keys ?? [];
+  const remoteEas = remote.ok ? remote.eas : [];
+  const remoteKeys = remote.ok ? remote.keys : [];
 
   // Memory + disk + remote; prefer pictures when merging.
   let eas = mergeEaPreferPicture(memoryEas, diskEas);
@@ -300,9 +346,33 @@ export async function loadLicenseCatalog(): Promise<{
   eas = await hydrateEasFromVault(eas);
   keys = await hydrateKeysFromVault(keys);
 
+  // Last resort: rebuild stub EAs from vault after a localStorage wipe.
+  if (!eas.length) {
+    eas = await recoverEasFromVault(eas);
+  }
+
   memoryEas = eas;
   memoryKeys = keys;
   return { eas, keys };
+}
+
+/**
+ * Accidental empty persist after a failed/empty load was wiping Manage EAs.
+ * Callers that intentionally clear must pass `{ allowEmpty: true }`.
+ * Default: refuse writing [] over a non-empty disk or healthy remote catalog.
+ */
+async function shouldRefuseEmptyWipe(
+  eas: StoredEa[],
+  keys: StoredLicenseKey[],
+  allowEmpty: boolean,
+): Promise<boolean> {
+  if (allowEmpty) return false;
+  if (eas.length || keys.length) return false;
+  const disk = await readDiskCatalog();
+  if (disk.eas.length || disk.keys.length) return true;
+  const remote = await fetchRemoteCatalog();
+  if (remote.ok && (remote.eas.length || remote.keys.length)) return true;
+  return false;
 }
 
 function stripDataUrlPicsFromEas(eas: StoredEa[]): StoredEa[] {
@@ -326,7 +396,15 @@ function stripDataUrlPicsFromKeys(keys: StoredLicenseKey[]): StoredLicenseKey[] 
 export async function saveLicenseCatalog(
   eas: StoredEa[],
   keys: StoredLicenseKey[],
+  opts?: { allowEmpty?: boolean },
 ) {
+  if (await shouldRefuseEmptyWipe(eas, keys, Boolean(opts?.allowEmpty))) {
+    console.warn(
+      '[edges] refused empty catalog save — would wipe existing EAs/keys',
+    );
+    return { eas: memoryEas, keys: memoryKeys };
+  }
+
   // Compress data-URL pictures before any disk write.
   const compressed = await compressCatalogPictures(eas, keys);
   const prepared = prepareForDisk(compressed.eas, compressed.keys);
