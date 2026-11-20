@@ -1582,7 +1582,7 @@ export function ChartScannerScreen() {
             icon="link-outline"
             accent={accent}
             active={false}
-            onPress={() => router.replace('/')}
+            onPress={() => router.push('/connect-broker')}
           />
         </View>
       </View>

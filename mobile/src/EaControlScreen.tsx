@@ -223,6 +223,12 @@ export function EaControlScreen() {
     router.push('/chart-scanner');
   };
 
+  const openConnectBroker = () => {
+    setSheet('none');
+    setBottomTab('broker');
+    router.push('/connect-broker');
+  };
+
   const onBottomTab = (tab: BottomTab) => {
     setBottomTab(tab);
     if (tab === 'home') {
@@ -233,7 +239,7 @@ export function EaControlScreen() {
       openChartScanner();
       return;
     }
-    setSheet('broker');
+    openConnectBroker();
   };
 
   const onSettingsPress = () => setSheet('settings');
