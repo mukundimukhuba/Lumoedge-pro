@@ -1,11 +1,15 @@
 const { applyCors, json, readJsonBody } = require('../_lib/cors');
 const { brokerApiBase, upstreamConnect } = require('../_lib/upstream');
+const {
+  createSession,
+  publicAccount,
+} = require('../_lib/sessions');
 
 /**
  * POST /api/brokers/connect
  * Body: { broker, server, login, password }
  * Never logs password. Forwards to BROKER_API_URL when configured;
- * otherwise returns a local demo-linked success (credentials not stored).
+ * otherwise returns a local demo-linked success + account snapshot.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -58,6 +62,8 @@ module.exports = async function handler(req, res) {
         upstream: true,
       });
     }
+    const upstreamSession =
+      result.data?.sessionId || result.data?.session || null;
     return json(res, 200, {
       ok: true,
       broker,
@@ -66,11 +72,12 @@ module.exports = async function handler(req, res) {
       linked: true,
       source: 'upstream',
       message: result.data?.message || `${broker} linked via broker API`,
-      // never echo password
+      sessionId: upstreamSession ? `up_${upstreamSession}` : undefined,
+      account: result.data?.account || null,
     });
   }
 
-  // Local demo path — accept shape, do not persist credentials.
+  const session = createSession({ broker, server, login });
   return json(res, 200, {
     ok: true,
     broker,
@@ -78,6 +85,8 @@ module.exports = async function handler(req, res) {
     login,
     linked: true,
     source: 'local-demo',
-    message: `${broker} linked · demo session ready (no live upstream)`,
+    message: `${broker} linked · demo session ready`,
+    sessionId: session.id,
+    account: publicAccount(session),
   });
 };

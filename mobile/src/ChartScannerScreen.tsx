@@ -20,7 +20,24 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
+import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { EdgesBottomDock } from './EdgesBottomDock';
+import {
+  fetchScanStatus,
+  normalizeScanResult,
+  postChartScan,
+} from './scan/api';
+import {
+  AUTO_TRADE_MIN_ACCURACY,
+  advisoryLevelsForSide,
+  buildTpLadder,
+  clampLot,
+  clampTrades,
+  evaluateAutoTradeGate,
+  formatPrice,
+  strategyBlurb,
+  type Side,
+} from './scan/strategy';
 
 const BASE = {
   black: '#000000',
@@ -73,6 +90,12 @@ type ScanOutcome = {
   timeframe: string;
   tp: string;
   sl: string;
+  entry?: string;
+  tps?: string[];
+  autoTradeAllowed?: boolean;
+  autoTradeReasons?: string[];
+  demo?: boolean;
+  source?: 'api' | 'local';
 };
 
 const ENGINE_STAGES: {
@@ -226,34 +249,6 @@ function hashSeed(s: string) {
   return h;
 }
 
-function advisoryLevels(symbol: string, bias: string, seed: number) {
-  const base =
-    symbol.includes('XAU')
-      ? 2650
-      : symbol.includes('BTC')
-        ? 68000
-        : symbol.includes('NAS') ||
-            symbol.includes('US30') ||
-            symbol.includes('US500')
-          ? 18500
-          : symbol.includes('JPY')
-            ? 150
-            : 1.08;
-  const step =
-    base > 1000 ? base * 0.0025 : base > 50 ? base * 0.004 : 0.0012;
-  const jitter = ((seed % 17) + 3) * step * 0.15;
-  const entry = base + jitter;
-  const fmt = (n: number) =>
-    base >= 100 ? n.toFixed(2) : base >= 10 ? n.toFixed(3) : n.toFixed(5);
-  if (bias === 'Buy') {
-    return { tp: fmt(entry + step * 2.4), sl: fmt(entry - step * 1.2) };
-  }
-  if (bias === 'Sell') {
-    return { tp: fmt(entry - step * 2.4), sl: fmt(entry + step * 1.2) };
-  }
-  return { tp: fmt(entry + step), sl: fmt(entry - step) };
-}
-
 function buildExplanation(
   symbol: string,
   timeframe: string,
@@ -261,10 +256,15 @@ function buildExplanation(
   confidence: number,
   lotSize: number,
   trades: number,
+  summary?: string,
 ): string {
   const sizeNote = `${lotSize} lot × ${trades} trade${trades === 1 ? '' : 's'}`;
   const tf = timeframe || 'chart';
-  return `${symbol} ${tf}: local chart match favors ${bias.toLowerCase()} (${sizeNote}, ${confidence}% confidence). Advisory only — EXECUTE/CONFIRM wait for a live trade engine.`;
+  const side = bias.toLowerCase() === 'sell' ? 'sell' : 'buy';
+  const base =
+    summary ||
+    `${symbol} ${tf}: right-edge favors ${bias} (${sizeNote}, ${confidence}%).`;
+  return `${base} ${strategyBlurb(side as Side)}`;
 }
 
 function pickWebFile(accept: string, capture?: string): Promise<string | null> {
@@ -822,12 +822,15 @@ export function ChartScannerScreen() {
 
   const [symbol, setSymbol] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<string | null>(null);
-  const [lotRaw, setLotRaw] = useState('0.10');
+  const [lotRaw, setLotRaw] = useState('0.01');
   const [tradesRaw, setTradesRaw] = useState('1');
   const [scansLeft, setScansLeft] = useState(12);
   const [chartUri, setChartUri] = useState<string | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const [autoEngineOpen, setAutoEngineOpen] = useState(false);
+  const [scanApiLive, setScanApiLive] = useState<boolean | null>(null);
+  const scanAbort = useRef<AbortController | null>(null);
   const [radarStatus, setRadarStatus] =
     useState<RadarStatus>('INITIALISING');
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
@@ -867,6 +870,21 @@ export function ChartScannerScreen() {
       return () => clearTimeout(t);
     }
   }, [chartUri, radarStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const st = await fetchScanStatus();
+        if (!cancelled) setScanApiLive(Boolean(st.configured));
+      } catch {
+        if (!cancelled) setScanApiLive(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const clearScanTimers = () => {
     scanTimers.current.forEach(clearTimeout);
@@ -1015,16 +1033,13 @@ export function ChartScannerScreen() {
 
   const runScan = () => {
     if (stage3 === 'active' || stage4 === 'active') return;
-    if (!symbol || !chartUri || stage2 !== 'done') {
+    if (!chartUri || stage2 !== 'done') {
       setDetectError('Upload an MT5 chart first so the symbol can be read.');
       return;
     }
     setScanPromptOpen(false);
-    const lotSize = parsePositive(lotRaw, 0.1, 50);
-    const trades = Math.max(
-      1,
-      Math.min(20, Math.round(parsePositive(tradesRaw, 1, 20))),
-    );
+    const lotSize = clampLot(parsePositive(lotRaw, 0.01, 1));
+    const trades = clampTrades(parsePositive(tradesRaw, 1, 3));
     setLotRaw(String(lotSize));
     setTradesRaw(String(trades));
 
@@ -1035,43 +1050,116 @@ export function ChartScannerScreen() {
     }
 
     clearScanTimers();
+    scanAbort.current?.abort();
+    const ac = new AbortController();
+    scanAbort.current = ac;
+
     setOutcome(null);
+    setDetectError(null);
     setStage3('active');
     setStage4('idle');
     setRadarStatus('ANALYSING');
     setScansLeft((n) => Math.max(0, n - 1));
 
-    const seed = hashSeed(symbol + (timeframe || '') + chartUri.slice(0, 80));
-    const bias = (['Buy', 'Sell', 'Range'] as const)[seed % 3];
-    const confidence = 68 + (seed % 28);
-    const tf = timeframe || '—';
-    const sym = symbol;
     const uriSnap = chartUri;
-    const levels = advisoryLevels(sym, bias, seed);
-    const explanation = buildExplanation(
-      sym,
-      tf,
-      bias,
-      confidence,
-      lotSize,
-      trades,
-    );
+    const ocrSym = symbol;
+    const ocrTf = timeframe || '—';
 
-    // ~5s scanning/analyzing animation on the chart inside the radar.
-    // ANALYSING (~3s) → DETECTING/MATCH (~2s) → SIGNAL DETECTED
     const t1 = setTimeout(() => {
       setStage3('done');
       setStage4('active');
       setRadarStatus('DETECTING');
-    }, 3000);
-    const t2 = setTimeout(() => {
+    }, 2200);
+
+    void (async () => {
+      const started = Date.now();
+      const apiRes = await postChartScan(uriSnap, ac.signal);
+      const wait = Math.max(0, 4800 - (Date.now() - started));
+      if (wait) await new Promise((r) => setTimeout(r, wait));
+      if (ac.signal.aborted) return;
+
+      if (!apiRes.ok) {
+        setStage3('error');
+        setStage4('error');
+        setRadarStatus('INITIALISING');
+        setDetectError(apiRes.error || 'Scan failed.');
+        return;
+      }
+
+      const norm = normalizeScanResult(apiRes);
+      if (!norm.direction || !norm.symbol) {
+        setStage3('error');
+        setStage4('error');
+        setRadarStatus('INITIALISING');
+        setDetectError(
+          norm.error ||
+            'Could not determine BUY/SELL from this chart. Try another screenshot.',
+        );
+        return;
+      }
+
+      const side = norm.direction;
+      const bias = side === 'sell' ? 'Sell' : 'Buy';
+      const confidence = norm.accuracy || 0;
+      const sym = norm.symbol || ocrSym || '—';
+      const tf = norm.timeframe || ocrTf;
+      setSymbol(sym);
+      if (norm.timeframe) setTimeframe(norm.timeframe);
+
+      let entry = norm.entryPrice;
+      let stop = norm.stopLoss;
+      let tps: number[] = [];
+      if (entry != null && stop != null) {
+        tps = buildTpLadder(entry, stop, side, 3).tps;
+      } else {
+        const adv = advisoryLevelsForSide(
+          sym,
+          side,
+          hashSeed(sym + tf + uriSnap.slice(0, 40)),
+        );
+        entry = adv.entry;
+        stop = adv.stopLoss;
+        tps = adv.tps;
+      }
+
+      const gate = evaluateAutoTradeGate({
+        accuracy: confidence,
+        side,
+        symbol: sym,
+        demo: norm.demo,
+        entryPrice: entry,
+        stopLoss: stop,
+        lotSize,
+        trades,
+      });
+
+      const explanation = buildExplanation(
+        sym,
+        tf || '—',
+        bias,
+        confidence,
+        lotSize,
+        trades,
+        norm.summary,
+      );
+
+      const tpStr = tps.map((t) => formatPrice(t, entry!)).join(' / ');
+      const slStr = formatPrice(stop!, entry!);
+      const entryStr = formatPrice(entry!);
+
       setOutcome({
         bias,
         confidence,
-        timeframe: tf,
-        tp: levels.tp,
-        sl: levels.sl,
+        timeframe: tf || '—',
+        tp: tpStr,
+        sl: slStr,
+        entry: entryStr,
+        tps: tps.map((t) => formatPrice(t, entry!)),
         explanation,
+        autoTradeAllowed: gate.allowed,
+        autoTradeReasons: gate.reasons,
+        demo: norm.demo,
+        source: 'api',
       });
       setStage4('done');
       setRadarStatus('SIGNAL DETECTED');
@@ -1080,31 +1168,31 @@ export function ChartScannerScreen() {
           {
             id: `scan_${Date.now()}`,
             symbol: sym,
-            timeframe: tf,
+            timeframe: tf || '—',
             bias,
             confidence,
             message: explanation,
             lotSize,
             trades,
-            tp: levels.tp,
-            sl: levels.sl,
+            tp: tpStr,
+            sl: slStr,
             chartUri: uriSnap,
             at: new Date().toISOString(),
           },
           ...prev,
         ].slice(0, 24),
       );
-      // Never fake EXECUTE/CONFIRM without a live backend.
-      if (liveEngine) {
-        setStage5('active');
-        setStage5('error');
-        setStage6('blocked');
+
+      if (gate.allowed) {
+        setStage5('done');
+        setStage6('idle');
       } else {
         setStage5('blocked');
         setStage6('blocked');
       }
-    }, 5000);
-    scanTimers.current = [t1, t2];
+    })();
+
+    scanTimers.current = [t1];
   };
 
   const goHome = () => {
@@ -1317,19 +1405,91 @@ export function ChartScannerScreen() {
                 ]}
               />
             </View>
-            <View style={styles.levelRow}>
-              <View style={styles.levelCell}>
-                <Text style={styles.levelKey}>TP</Text>
-                <Text style={styles.levelVal}>{outcome.tp}</Text>
+            {outcome.entry ? (
+              <View style={styles.levelRow}>
+                <View style={styles.levelCell}>
+                  <Text style={styles.levelKey}>Entry</Text>
+                  <Text style={styles.levelVal}>{outcome.entry}</Text>
+                </View>
+                <View style={styles.levelCell}>
+                  <Text style={styles.levelKey}>SL</Text>
+                  <Text style={styles.levelVal}>{outcome.sl}</Text>
+                </View>
               </View>
-              <View style={styles.levelCell}>
-                <Text style={styles.levelKey}>SL</Text>
-                <Text style={styles.levelVal}>{outcome.sl}</Text>
+            ) : (
+              <View style={styles.levelRow}>
+                <View style={styles.levelCell}>
+                  <Text style={styles.levelKey}>TP</Text>
+                  <Text style={styles.levelVal}>{outcome.tp}</Text>
+                </View>
+                <View style={styles.levelCell}>
+                  <Text style={styles.levelKey}>SL</Text>
+                  <Text style={styles.levelVal}>{outcome.sl}</Text>
+                </View>
               </View>
-            </View>
+            )}
+            {outcome.tps && outcome.tps.length > 0 ? (
+              <View style={styles.tpLadderRow}>
+                {outcome.tps.map((tp, i) => (
+                  <View key={`tp-${i}`} style={styles.tpChip}>
+                    <Text style={styles.tpChipKey}>{i + 1}R</Text>
+                    <Text style={styles.tpChipVal}>{tp}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
             <Text style={styles.resultNote}>{outcome.explanation}</Text>
+            <Text
+              style={[
+                styles.gateNote,
+                {
+                  color: outcome.autoTradeAllowed
+                    ? BASE.green
+                    : BASE.muted,
+                },
+              ]}
+            >
+              {outcome.autoTradeAllowed
+                ? `Auto-trade gate passed (≥${AUTO_TRADE_MIN_ACCURACY}%, valid prices, real symbol)`
+                : `Auto-trade blocked: ${(outcome.autoTradeReasons || ['gate']).join(' · ')}`}
+            </Text>
           </View>
         ) : null}
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Start Auto Trade Engine"
+          onPress={() => setAutoEngineOpen(true)}
+          style={({ pressed }) => [
+            styles.autoStartBtn,
+            {
+              borderColor: accent,
+              opacity: pressed ? 0.85 : 1,
+            },
+          ]}
+        >
+          <LinearGradient
+            colors={[
+              hexToRgba(accent, 0.55),
+              hexToRgba(accent, 0.18),
+              '#0A0000',
+            ]}
+            start={{ x: 0.15, y: 0 }}
+            end={{ x: 0.85, y: 1 }}
+            style={styles.autoStartGrad}
+          >
+            <Ionicons name="flash-outline" size={18} color={BASE.white} />
+            <Text style={styles.autoStartText}>Start Auto Trade</Text>
+          </LinearGradient>
+        </Pressable>
+        <Text style={styles.autoHint}>
+          Auto Trade Engine · XAUUSD–XAGUSD · M15→H1→M5→M1 · 8s countdown
+          {scanApiLive === true
+            ? ' · scan API live'
+            : scanApiLive === false
+              ? ' · scan API offline'
+              : ''}
+        </Text>
 
         {history.length > 0 ? (
           <View style={styles.historyBlock}>
@@ -1541,6 +1701,14 @@ export function ChartScannerScreen() {
           ) : null}
         </View>
       </Modal>
+
+      <AutoTradeEngineOverlay
+        visible={autoEngineOpen}
+        accent={accent}
+        lotSize={clampLot(parsePositive(lotRaw, 0.01, 1))}
+        trades={clampTrades(parsePositive(tradesRaw, 1, 3))}
+        onClose={() => setAutoEngineOpen(false)}
+      />
 
       <EdgesBottomDock />
     </View>
@@ -1869,6 +2037,47 @@ const styles = StyleSheet.create({
   resultMetaKey: { color: BASE.muted, fontSize: 13 },
   resultMetaVal: { color: BASE.white, fontSize: 15, fontWeight: '700' },
   resultNote: { color: BASE.muted, fontSize: 13, lineHeight: 18 },
+  gateNote: { fontSize: 11, fontWeight: '700', marginTop: 4 },
+  tpLadderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  tpChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(0,200,83,0.35)',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(0,200,83,0.08)',
+    gap: 2,
+  },
+  tpChipKey: {
+    color: BASE.muted,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  tpChipVal: { color: BASE.white, fontSize: 13, fontWeight: '800' },
+  autoStartBtn: {
+    borderRadius: 14,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+  autoStartGrad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+  },
+  autoStartText: {
+    color: BASE.white,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  autoHint: {
+    color: BASE.dim,
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: -4,
+  },
   historyBlock: { gap: 8 },
   historyRow: {
     flexDirection: 'row',
