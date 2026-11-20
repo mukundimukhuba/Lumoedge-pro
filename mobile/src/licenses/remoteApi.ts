@@ -40,6 +40,8 @@ export async function fetchLicenseStatus(): Promise<{
   urlConfigured?: boolean;
   serviceRoleConfigured?: boolean;
   anonConfigured?: boolean;
+  missingEnvNames?: string[];
+  hint?: string;
   tables?: Record<string, string>;
   storageFallback?: boolean;
   error?: string;
@@ -55,6 +57,10 @@ export async function fetchLicenseStatus(): Promise<{
       urlConfigured: Boolean(data.urlConfigured),
       serviceRoleConfigured: Boolean(data.serviceRoleConfigured),
       anonConfigured: Boolean(data.anonConfigured),
+      missingEnvNames: Array.isArray(data.missingEnvNames)
+        ? (data.missingEnvNames as string[])
+        : undefined,
+      hint: data.hint ? String(data.hint) : undefined,
       tables: (data.tables as Record<string, string>) || undefined,
       storageFallback: Boolean(data.storageFallback),
       error: data.error ? String(data.error) : undefined,

@@ -28,8 +28,19 @@ export function LicenseKeysPanel() {
       const st = await fetchLicenseStatus();
       if (cancelled) return;
       if (!st.urlConfigured || !st.serviceRoleConfigured) {
+        const names =
+          st.missingEnvNames?.length
+            ? st.missingEnvNames.join(', ')
+            : [
+                !st.urlConfigured ? 'SUPABASE_URL' : null,
+                !st.serviceRoleConfigured
+                  ? 'SUPABASE_SERVICE_ROLE_KEY'
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(', ');
         setEnvLine(
-          'Supabase env incomplete on server — Generate Key cannot sync remotely.',
+          `Supabase env incomplete on Vercel — missing: ${names || 'SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY'}. Set in Vercel → Settings → Environment Variables, then redeploy. Cursor secrets do not bind to Vercel.`,
         );
         return;
       }
