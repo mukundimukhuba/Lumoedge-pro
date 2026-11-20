@@ -1,7 +1,7 @@
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   FlatList,
@@ -22,6 +22,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccessGateScreen } from './AccessGateScreen';
+import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
+import { loadMt5Token } from './brokers/mt5Token';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
 import { useAppState, ACCENTS, SYMBOLS } from './AppState';
@@ -127,6 +129,24 @@ export function EaControlScreen() {
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
   const [brokerConnected, setBrokerConnected] = useState(false);
+  const [autoEngineOpen, setAutoEngineOpen] = useState(false);
+  const [mt5Token, setMt5Token] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = () => {
+      void (async () => {
+        const t = await loadMt5Token();
+        if (!cancelled) setMt5Token(t);
+      })();
+    };
+    refresh();
+    const iv = setInterval(refresh, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [sheet, autoEngineOpen]);
   /** Prefer on-layout height (phone chrome / real device) over window. */
   const [layoutH, setLayoutH] = useState(windowH);
   /**
@@ -168,15 +188,18 @@ export function EaControlScreen() {
     at: 0,
   });
 
-  const isActive = status === 'running';
-  const statusLabel =
-    status === 'running' ? 'running' : status === 'stopped' ? 'stopped' : 'removed';
-  const statusColor =
-    status === 'running'
-      ? BASE.green
-      : status === 'stopped'
-        ? accent
-        : BASE.muted;
+  /** Lit Start/Stop follows the Auto Trade engine, not a stale status flag. */
+  const isActive = autoEngineOpen;
+  const statusLabel = autoEngineOpen
+    ? 'running'
+    : status === 'removed'
+      ? 'removed'
+      : 'stopped';
+  const statusColor = autoEngineOpen
+    ? BASE.green
+    : status === 'removed'
+      ? BASE.muted
+      : accent;
 
   const filtered = useMemo(() => {
     const q = query.trim().toUpperCase();
@@ -246,12 +269,41 @@ export function EaControlScreen() {
     );
   };
 
+  const haltAutoTrade = () => {
+    setAutoEngineOpen(false);
+    setStatus('stopped');
+  };
+
   const onToggleRun = () => {
-    if (status === 'removed') {
-      setStatus('running');
+    if (autoEngineOpen) {
+      haltAutoTrade();
       return;
     }
-    setStatus(status === 'running' ? 'stopped' : 'running');
+    if (selected.length === 0) {
+      const msg =
+        'Select symbols in Quotes first. Auto Trade only scans your selected list.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(msg);
+      } else {
+        Alert.alert('Quotes required', msg);
+      }
+      setQuery('');
+      setSheet('quotes');
+      return;
+    }
+    if (!String(mt5Token || '').trim()) {
+      const msg =
+        'Connect your broker (live MT5) first. Auto Trade sends scans to the linked account.';
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.alert(msg);
+      } else {
+        Alert.alert('MT5 required', msg);
+      }
+      router.push('/connect-broker');
+      return;
+    }
+    setStatus('running');
+    setAutoEngineOpen(true);
   };
 
   const onRemove = () => {
@@ -703,6 +755,17 @@ export function EaControlScreen() {
                 filtered={filtered}
                 selected={selected}
                 toggleSymbol={toggleSymbol}
+                addCustomSymbol={(sym) => {
+                  const s = String(sym || '')
+                    .trim()
+                    .replace(/\s+/g, '')
+                    .toUpperCase();
+                  if (!s) return;
+                  if (!selected.includes(s)) setSelected([...selected, s]);
+                }}
+                removeSymbol={(sym) =>
+                  setSelected(selected.filter((x) => x !== sym))
+                }
                 onDone={closeSheet}
               />
             ) : null}
@@ -906,6 +969,17 @@ export function EaControlScreen() {
           </Glass>
         </View>
       </Modal>
+
+      <AutoTradeEngineOverlay
+        visible={autoEngineOpen}
+        accent={accent}
+        mt5Token={mt5Token}
+        symbols={selected}
+        onClose={haltAutoTrade}
+        onExecuted={() => {
+          setStatus('running');
+        }}
+      />
     </View>
   );
 }
@@ -917,6 +991,8 @@ function QuotesPanel({
   filtered,
   selected,
   toggleSymbol,
+  addCustomSymbol,
+  removeSymbol,
   onDone,
 }: {
   accent: string;
@@ -925,16 +1001,90 @@ function QuotesPanel({
   filtered: string[];
   selected: string[];
   toggleSymbol: (s: string) => void;
+  addCustomSymbol: (s: string) => void;
+  removeSymbol: (s: string) => void;
   onDone: () => void;
 }) {
+  const [custom, setCustom] = useState('');
+  const catalog = filtered.filter((s) => !selected.includes(s));
+
+  const submitCustom = () => {
+    const s = custom.trim().replace(/\s+/g, '').toUpperCase();
+    if (!s) return;
+    addCustomSymbol(s);
+    setCustom('');
+    setQuery('');
+  };
+
   return (
     <>
+      <Text style={styles.quotesSectionLabel}>Selected symbols</Text>
+      {selected.length === 0 ? (
+        <Text style={styles.empty}>
+          None yet — tap a symbol below or type a custom MT5 symbol
+        </Text>
+      ) : (
+        <View style={styles.selectedWrap}>
+          {selected.map((sym) => (
+            <Pressable
+              key={sym}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${sym}`}
+              onPress={() => removeSymbol(sym)}
+              style={[
+                styles.selectedChip,
+                { borderColor: hexToRgba(accent, 0.55) },
+              ]}
+            >
+              <Text style={styles.selectedChipText}>{sym}</Text>
+              <Ionicons name="close-circle" size={16} color={accent} />
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      <Text style={[styles.quotesSectionLabel, { marginTop: 10 }]}>
+        Add custom MT5 symbol
+      </Text>
+      <View style={[styles.searchBox, { borderColor: accent }]}>
+        <Ionicons name="create-outline" size={16} color={accent} />
+        <TextInput
+          value={custom}
+          onChangeText={setCustom}
+          placeholder="e.g. XAUUSD.r · NAS100 · BTCUSD"
+          placeholderTextColor={BASE.muted}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          autoComplete="off"
+          style={styles.searchInput}
+          onSubmitEditing={submitCustom}
+          returnKeyType="done"
+          accessibilityLabel="Custom MT5 symbol"
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Add custom symbol"
+          onPress={submitCustom}
+          hitSlop={8}
+          disabled={!custom.trim()}
+        >
+          <Ionicons
+            name="add-circle"
+            size={22}
+            color={custom.trim() ? accent : BASE.muted}
+          />
+        </Pressable>
+      </View>
+
+      <Text style={[styles.quotesSectionLabel, { marginTop: 10 }]}>
+        Symbols
+      </Text>
       <View style={[styles.searchBox, { borderColor: accent }]}>
         <Ionicons name="search" size={16} color={BASE.muted} />
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="search symbols"
+          placeholder="search catalog"
           placeholderTextColor={BASE.muted}
           autoCapitalize="characters"
           autoCorrect={false}
@@ -943,33 +1093,29 @@ function QuotesPanel({
         />
       </View>
       <FlatList
-        data={filtered}
+        data={catalog}
         keyExtractor={(item) => item}
         style={styles.symbolList}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
-          <Text style={styles.empty}>no symbols match</Text>
+          <Text style={styles.empty}>
+            {query.trim()
+              ? 'No catalog match — use Add custom above'
+              : 'All catalog symbols are selected'}
+          </Text>
         }
-        renderItem={({ item }) => {
-          const on = selected.includes(item);
-          return (
-            <Pressable
-              onPress={() => toggleSymbol(item)}
-              style={({ pressed }) => [
-                styles.symbolRow,
-                on && { backgroundColor: hexToRgba(accent, 0.12) },
-                pressed && { opacity: 0.8 },
-              ]}
-            >
-              <Text style={styles.symbolCode}>{item}</Text>
-              <Ionicons
-                name={on ? 'checkmark-circle' : 'ellipse-outline'}
-                size={20}
-                color={on ? BASE.green : BASE.muted}
-              />
-            </Pressable>
-          );
-        }}
+        renderItem={({ item }) => (
+          <Pressable
+            onPress={() => toggleSymbol(item)}
+            style={({ pressed }) => [
+              styles.symbolRow,
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={styles.symbolCode}>{item}</Text>
+            <Ionicons name="add-circle-outline" size={20} color={accent} />
+          </Pressable>
+        )}
       />
       <Pressable
         style={[
@@ -982,7 +1128,7 @@ function QuotesPanel({
         onPress={onDone}
       >
         <Text style={styles.doneText}>
-          done · {selected.length} selected
+          done · {selected.length} selected · Auto Trade uses these
         </Text>
       </Pressable>
     </>
@@ -1482,7 +1628,37 @@ const styles = StyleSheet.create({
       ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
       : null),
   },
-  symbolList: { maxHeight: 300 },
+  quotesSectionLabel: {
+    color: BASE.muted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  selectedWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+  selectedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  selectedChipText: {
+    color: BASE.white,
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  symbolList: { maxHeight: 220 },
   symbolRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1501,7 +1677,9 @@ const styles = StyleSheet.create({
   empty: {
     color: BASE.muted,
     textAlign: 'center',
-    paddingVertical: 24,
+    paddingVertical: 16,
+    fontSize: 13,
+    lineHeight: 18,
   },
   doneBtn: {
     marginTop: 4,

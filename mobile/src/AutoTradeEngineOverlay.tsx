@@ -8,15 +8,10 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  AUTO_MARKETS,
   AUTO_TIMEFRAMES,
   postAutoScan,
   type AutoScanSignal,
 } from './scan/autoApi';
-import {
-  evaluateLiveCandles,
-  synthesizePreviewCandles,
-} from './scan/autoStrategy';
 import { buildTpLadder, formatPrice } from './scan/strategy';
 
 const BASE = {
@@ -49,6 +44,8 @@ type Props = {
   accent: string;
   /** Optional MT5 token (API `id`) when broker/MT5 is linked */
   mt5Token?: string | null;
+  /** Symbols from Home Quotes selection — scans ONLY these */
+  symbols?: string[] | null;
   lotSize?: number;
   trades?: number;
   onClose: () => void;
@@ -63,6 +60,7 @@ export function AutoTradeEngineOverlay({
   visible,
   accent,
   mt5Token,
+  symbols,
   lotSize = 0.01,
   trades = 1,
   onClose,
@@ -71,6 +69,7 @@ export function AutoTradeEngineOverlay({
   const [phase, setPhase] = useState<Phase>('scanning');
   const [marketIdx, setMarketIdx] = useState(0);
   const [tfIdx, setTfIdx] = useState(0);
+  const [scanMarkets, setScanMarkets] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(8);
   const [status, setStatus] = useState('Starting Auto Trade Engine…');
   const [signal, setSignal] = useState<AutoScanSignal | null>(null);
@@ -94,23 +93,42 @@ export function AutoTradeEngineOverlay({
     setCountdown(8);
     setSignal(null);
     setError(null);
-    setStatus('Scanning live markets…');
+    setStatus('Scanning selected Quotes…');
 
     void (async () => {
       try {
         let chosen: AutoScanSignal | null = null;
-        let chosenSymbol: string = AUTO_MARKETS[0];
+        let chosenSymbol: string = '';
         let chosenTf: string = AUTO_TIMEFRAMES[0];
 
-        // Walk markets; server tries TFs M15→H1→M5→M1.
+        // Walk Quotes-selected symbols only; server tries TFs M15→H1→M5→M1.
         // Body locked to curl: { symbol, id }
         const token = String(mt5Token || '').trim();
+        const markets = (symbols || [])
+          .map((s) => String(s || '').trim().toUpperCase())
+          .filter(Boolean);
+        setScanMarkets(markets);
+        if (markets.length === 0) {
+          setPhase('error');
+          setError('Select symbols in Quotes on Home, then Start.');
+          setStatus('No Quotes selected');
+          return;
+        }
+        if (!token) {
+          setPhase('error');
+          setError(
+            'Connect MetaTrader first. Auto Trade sends scans to your linked MT5.',
+          );
+          setStatus('MT5 not linked');
+          return;
+        }
+        chosenSymbol = markets[0];
 
-        for (let mi = 0; mi < AUTO_MARKETS.length; mi++) {
+        for (let mi = 0; mi < markets.length; mi++) {
           if (ac.signal.aborted || id !== runId.current) return;
           setMarketIdx(mi);
           setTfIdx(0);
-          const symbol = AUTO_MARKETS[mi];
+          const symbol = markets[mi];
           setStatus(
             token
               ? `Scanning ${symbol}…`
@@ -124,47 +142,9 @@ export function AutoTradeEngineOverlay({
             if (ac.signal.aborted || id !== runId.current) return;
           }
 
-          let api: AutoScanSignal;
-          if (!token) {
-            api = {
-              ok: false,
-              error:
-                'Connect MetaTrader first. Auto Scan reads the live market on your account.',
-            };
-          } else {
-            api = await postAutoScan({ symbol, id: token }, ac.signal);
-          }
+          const api = await postAutoScan({ symbol, id: token }, ac.signal);
 
           if (ac.signal.aborted || id !== runId.current) return;
-
-          // No MT5 token / connect required — local strategy preview
-          if (
-            !api.ok &&
-            /Connect MetaTrader|Type the symbol/i.test(api.error || '')
-          ) {
-            const candles = synthesizePreviewCandles(symbol, 'bull');
-            const local = evaluateLiveCandles(candles);
-            if (local.trade && local.side) {
-              chosen = {
-                ok: true,
-                trade: true,
-                demo: true,
-                symbol,
-                timeframe: AUTO_TIMEFRAMES[0],
-                direction: local.side,
-                accuracy: local.accuracy,
-                entryPrice: local.entry,
-                stopLoss: local.stopLoss,
-                takeProfits: local.takeProfits,
-                sessionBias: local.sessionBias,
-                summary: `${local.reason} (preview — link MT5 for live candles)`,
-              };
-              chosenSymbol = symbol;
-              chosenTf = AUTO_TIMEFRAMES[0];
-              break;
-            }
-            continue;
-          }
 
           if (!api.ok) {
             if (/no trade|skip|flat|reverse/i.test(api.error || '')) {
@@ -260,7 +240,7 @@ export function AutoTradeEngineOverlay({
       ac.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [visible, mt5Token, symbols]);
 
   const phaseLabel =
     phase === 'scanning'
@@ -372,8 +352,9 @@ export function AutoTradeEngineOverlay({
 
           {phase === 'scanning' ? (
             <Text style={styles.meta}>
-              {AUTO_MARKETS[marketIdx]} · {AUTO_TIMEFRAMES[tfIdx]} · session 20 /
-              bounce 8
+              {scanMarkets[marketIdx] || '—'} · {AUTO_TIMEFRAMES[tfIdx]} ·
+              Quotes {marketIdx + 1}/{Math.max(scanMarkets.length, 1)} · session
+              20 / bounce 8
             </Text>
           ) : null}
 

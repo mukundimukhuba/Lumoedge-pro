@@ -1,6 +1,9 @@
 /**
  * Live MT5 via https://lumoedge.com/api/mt5* (droplet bridge).
  * Never logs passwords. No mock balances/trades.
+ *
+ * OpenedOrders: mt5Api returns a raw array (see openedOrders()).
+ * mt5rest fields are typically PascalCase (Ticket, Symbol, Lots, Profit, …).
  */
 
 const LUMOEDGE_MT5 = (
@@ -112,43 +115,158 @@ function num(v, fallback = null) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function pick(raw, keys) {
+  for (const k of keys) {
+    if (raw[k] != null && raw[k] !== '') return raw[k];
+  }
+  return undefined;
+}
+
+/**
+ * Map one OpenedOrders row. Keep rows that have a ticket even if Symbol is odd —
+ * never silently drop live positions.
+ */
 function mapOrder(raw, i = 0) {
   if (!raw || typeof raw !== 'object') return null;
-  const symbol = String(
-    raw.Symbol || raw.symbol || raw.Instrument || raw.instrument || '',
-  ).trim();
-  if (!symbol) return null;
-  const typeRaw = String(
-    raw.Type || raw.type || raw.OrderType || raw.orderType || raw.Side || raw.side || '',
-  ).toLowerCase();
-  const side = typeRaw.includes('sell')
-    ? 'Sell'
-    : typeRaw.includes('buy')
-      ? 'Buy'
-      : typeRaw
-        ? typeRaw
-        : 'Buy';
-  const lots = num(
-    raw.Lots ?? raw.lots ?? raw.Volume ?? raw.volume ?? raw.LotsVolume,
-    0,
-  );
-  const openPrice = num(
-    raw.OpenPrice ??
-      raw.openPrice ??
-      raw.PriceOpen ??
-      raw.priceOpen ??
-      raw.Price ??
-      raw.price,
-    0,
-  );
-  const pnl = num(
-    raw.Profit ?? raw.profit ?? raw.PnL ?? raw.pnl ?? raw.Floating ?? raw.floating,
-    0,
-  );
+
   const id = String(
-    raw.Ticket ?? raw.ticket ?? raw.Order ?? raw.order ?? raw.id ?? `ord_${i}`,
+    pick(raw, [
+      'Ticket',
+      'ticket',
+      'Order',
+      'order',
+      'Position',
+      'position',
+      'Deal',
+      'deal',
+      'id',
+      'Id',
+    ]) ?? `ord_${i}`,
   );
+
+  let symbol = String(
+    pick(raw, [
+      'Symbol',
+      'symbol',
+      'Instrument',
+      'instrument',
+      'Name',
+      'name',
+      'currency',
+      'Currency',
+    ]) ?? '',
+  ).trim();
+  if (!symbol) symbol = id.startsWith('ord_') ? '' : `#${id}`;
+  if (!symbol) return null;
+
+  const typeVal = pick(raw, [
+    'Type',
+    'type',
+    'OrderType',
+    'orderType',
+    'Side',
+    'side',
+    'Cmd',
+    'cmd',
+    'Action',
+    'action',
+  ]);
+  const typeRaw = String(typeVal ?? '').toLowerCase();
+  let side = 'Buy';
+  if (
+    typeRaw === '1' ||
+    typeRaw === 'sell' ||
+    typeRaw.includes('sell') ||
+    typeRaw === 'op_sell'
+  ) {
+    side = 'Sell';
+  } else if (
+    typeRaw === '0' ||
+    typeRaw === 'buy' ||
+    typeRaw.includes('buy') ||
+    typeRaw === 'op_buy'
+  ) {
+    side = 'Buy';
+  } else if (typeof typeVal === 'number') {
+    side = typeVal === 1 ? 'Sell' : 'Buy';
+  }
+
+  let lots = num(
+    pick(raw, ['Lots', 'lots', 'VolumeLots', 'volumeLots', 'Lot', 'lot']),
+    null,
+  );
+  if (lots == null) {
+    const vol = num(
+      pick(raw, ['Volume', 'volume', 'LotsVolume', 'vol']),
+      null,
+    );
+    if (vol != null) {
+      // Integer volumes ≥1 are often lots×100 (0.01 lot → 1)
+      lots = Number.isInteger(vol) && vol >= 1 ? vol / 100 : vol;
+    } else {
+      lots = 0;
+    }
+  }
+
+  const openPrice = num(
+    pick(raw, [
+      'OpenPrice',
+      'openPrice',
+      'PriceOpen',
+      'priceOpen',
+      'Price',
+      'price',
+      'Open',
+      'open',
+    ]),
+    0,
+  );
+
+  const pnl = num(
+    pick(raw, [
+      'Profit',
+      'profit',
+      'ProfitOpen',
+      'profitOpen',
+      'PnL',
+      'pnl',
+      'Floating',
+      'floating',
+      'Unrealized',
+      'unrealized',
+    ]),
+    0,
+  );
+
   return { id, symbol, side, lots, openPrice, pnl };
+}
+
+function extractOrdersList(data) {
+  // mt5Api: Array.isArray(n) ? n : []
+  if (Array.isArray(data)) return data;
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      return extractOrdersList(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (!data || typeof data !== 'object') return null;
+  // Error payload from bridge
+  if (data.code || data.message || data.error) return null;
+  const list =
+    data.orders ||
+    data.Orders ||
+    data.positions ||
+    data.Positions ||
+    data.OpenedOrders ||
+    data.openedOrders ||
+    data.items ||
+    data.data ||
+    data.result ||
+    null;
+  return Array.isArray(list) ? list : null;
 }
 
 /**
@@ -203,20 +321,33 @@ async function fetchLiveAccount(id) {
   }
 
   let trades = [];
+  let ordersOk = false;
   const ordersRes = await mt5Get(
     `/OpenedOrders?id=${encodeURIComponent(token)}`,
   );
-  if (ordersRes.ok && Array.isArray(ordersRes.data)) {
-    trades = ordersRes.data.map(mapOrder).filter(Boolean);
-  } else if (ordersRes.ok && ordersRes.data && typeof ordersRes.data === 'object') {
-    const list =
-      ordersRes.data.orders ||
-      ordersRes.data.Orders ||
-      ordersRes.data.items ||
-      [];
-    if (Array.isArray(list)) trades = list.map(mapOrder).filter(Boolean);
+  if (ordersRes.ok) {
+    const list = extractOrdersList(ordersRes.data);
+    if (list) {
+      ordersOk = true;
+      trades = list.map(mapOrder).filter(Boolean);
+    } else if (ordersRes.data == null) {
+      ordersOk = true;
+      trades = [];
+    } else if (
+      typeof ordersRes.data === 'object' &&
+      !Array.isArray(ordersRes.data) &&
+      !ordersRes.data.code &&
+      !ordersRes.data.message &&
+      !ordersRes.data.error &&
+      Object.keys(ordersRes.data).length === 0
+    ) {
+      ordersOk = true;
+      trades = [];
+    }
   }
-  // If OpenedOrders fails, still return account with empty trades (honest)
+
+  const bal = balance ?? equity ?? 0;
+  const eq = equity ?? balance ?? 0;
 
   return {
     ok: true,
@@ -225,12 +356,13 @@ async function fetchLiveAccount(id) {
       sessionId: token,
       login: login || undefined,
       currency: currency || undefined,
-      balance: balance ?? equity ?? 0,
-      equity: equity ?? balance ?? 0,
+      balance: bal,
+      equity: eq,
       margin: margin ?? undefined,
       freeMargin: freeMargin ?? undefined,
       leverage: leverage ?? undefined,
       trades,
+      ordersOk,
       updatedAt: new Date().toISOString(),
       source: 'mt5-live',
     },
@@ -241,4 +373,6 @@ module.exports = {
   connectLiveMt5,
   fetchLiveAccount,
   mt5Root,
+  mapOrder,
+  extractOrdersList,
 };

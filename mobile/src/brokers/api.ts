@@ -31,6 +31,8 @@ export type BrokerAccount = {
   freeMargin?: number;
   leverage?: number;
   trades: BrokerTrade[];
+  /** true when OpenedOrders returned a parseable list (may be empty) */
+  ordersOk?: boolean;
   updatedAt?: string;
   source?: string;
 };
@@ -147,6 +149,7 @@ export async function fetchBrokerAccount(
     ...data,
     currency,
     trades: Array.isArray(data.trades) ? data.trades : [],
+    ordersOk: data.ordersOk === true,
     balance: Number(data.balance),
     equity: Number(data.equity),
     source: data.source || 'mt5-live',
