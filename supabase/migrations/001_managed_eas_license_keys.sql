@@ -49,7 +49,7 @@ create policy license_keys_anon_all
   using (true)
   with check (true);
 
--- Optional helper for Activate lookups
+-- Optional helper for Activate lookups (OCR-safe: O→0, I/L→1)
 create or replace function public.lookup_license_key(p_key text)
 returns setof public.license_keys
 language sql
@@ -57,9 +57,25 @@ stable
 security definer
 set search_path = public
 as $$
-  select *
-  from public.license_keys
-  where key_normalized = upper(regexp_replace(trim(p_key), '\s+', '', 'g'));
+  with q as (
+    select translate(
+      upper(regexp_replace(trim(p_key), '\s+', '', 'g')),
+      'OIL',
+      '011'
+    ) as norm
+  )
+  select lk.*
+  from public.license_keys lk, q
+  where translate(
+    upper(regexp_replace(trim(lk.key_normalized), '\s+', '', 'g')),
+    'OIL',
+    '011'
+  ) = q.norm
+     or translate(
+    upper(regexp_replace(trim(lk.key), '\s+', '', 'g')),
+    'OIL',
+    '011'
+  ) = q.norm;
 $$;
 
 grant execute on function public.lookup_license_key(text) to anon, authenticated;

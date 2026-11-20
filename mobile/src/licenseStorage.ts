@@ -40,8 +40,73 @@ export type StoredLicenseKey = {
 let memoryEas: StoredEa[] = [];
 let memoryKeys: StoredLicenseKey[] = [];
 
+/**
+ * Canonical form for compare / Supabase `key_normalized`.
+ * Folds OCR lookalikes: O→0, I/L→1 so mentor screenshots and typed keys match.
+ */
 export function normalizeLicenseKey(raw: string) {
-  return raw.trim().toUpperCase().replace(/\s+/g, '');
+  return raw
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/O/g, '0')
+    .replace(/[IL]/g, '1');
+}
+
+/** True when two keys match after OCR-safe normalize (hyphens/spacing ignored equally). */
+export function licenseKeysMatch(a: string, b: string) {
+  return normalizeLicenseKey(a) === normalizeLicenseKey(b);
+}
+
+const CATALOG_SYNC_CHANNEL = 'edges-license-catalog-v1';
+
+/** Notify same-origin listeners (Activate / other tabs) that the catalog changed. */
+export function broadcastCatalogUpdated() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new Event('edges-catalog-updated'));
+  } catch {
+    /* ignore */
+  }
+  try {
+    const bc = new BroadcastChannel(CATALOG_SYNC_CHANNEL);
+    bc.postMessage({ type: 'catalog-updated', at: Date.now() });
+    bc.close();
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+}
+
+export function subscribeCatalogUpdated(onUpdate: () => void): () => void {
+  if (typeof window === 'undefined') return () => undefined;
+  const onCustom = () => onUpdate();
+  const onStorage = (ev: StorageEvent) => {
+    if (
+      ev.key === LICENSE_KEYS_STORAGE_KEY ||
+      ev.key === EAS_STORAGE_KEY ||
+      ev.key === null
+    ) {
+      onUpdate();
+    }
+  };
+  window.addEventListener('edges-catalog-updated', onCustom);
+  window.addEventListener('storage', onStorage);
+  let bc: BroadcastChannel | null = null;
+  try {
+    bc = new BroadcastChannel(CATALOG_SYNC_CHANNEL);
+    bc.onmessage = () => onUpdate();
+  } catch {
+    bc = null;
+  }
+  return () => {
+    window.removeEventListener('edges-catalog-updated', onCustom);
+    window.removeEventListener('storage', onStorage);
+    try {
+      bc?.close();
+    } catch {
+      /* ignore */
+    }
+  };
 }
 
 function webLocalGet(key: string): string | null {
@@ -396,7 +461,7 @@ function stripDataUrlPicsFromKeys(keys: StoredLicenseKey[]): StoredLicenseKey[] 
 export async function saveLicenseCatalog(
   eas: StoredEa[],
   keys: StoredLicenseKey[],
-  opts?: { allowEmpty?: boolean },
+  opts?: { allowEmpty?: boolean; broadcast?: boolean },
 ) {
   if (await shouldRefuseEmptyWipe(eas, keys, Boolean(opts?.allowEmpty))) {
     console.warn(
@@ -469,8 +534,90 @@ export async function saveLicenseCatalog(
     await pushRemoteCatalog(prepared.eas, prepared.keys);
   }
 
+  // Skip broadcast on quiet persists (refresh/hydrate) to avoid sync loops.
+  if (opts?.broadcast !== false) {
+    broadcastCatalogUpdated();
+  }
+
   // Return in-memory catalog WITH pictures (never return stripped copies).
   return prepared;
+}
+
+async function attachRemoteEa(
+  sb: NonNullable<ReturnType<typeof getSupabase>>,
+  key: StoredLicenseKey,
+  eas: StoredEa[],
+) {
+  try {
+    const eaRes = await sb
+      .from('managed_eas')
+      .select('*')
+      .eq('id', key.eaId)
+      .maybeSingle();
+    if (!eaRes.error && eaRes.data) {
+      const remoteEa = rowToEa(eaRes.data as Record<string, unknown>);
+      memoryEas = mergeEaPreferPicture([remoteEa], eas);
+    }
+  } catch {
+    /* local eas still returned below */
+  }
+}
+
+async function lookupKeyOnSupabase(
+  normalized: string,
+): Promise<StoredLicenseKey | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+
+  // 1) security-definer RPC (folds O/I/L when migration 002 is applied)
+  try {
+    const { data, error } = await sb.rpc('lookup_license_key', {
+      p_key: normalized,
+    });
+    if (!error && Array.isArray(data) && data.length) {
+      return rowToKey(data[0] as Record<string, unknown>);
+    }
+  } catch (err) {
+    console.warn('[edges] lookup_license_key rpc failed', err);
+  }
+
+  // 2) Direct table read by key_normalized (anon RLS allows select)
+  try {
+    const { data, error } = await sb
+      .from('license_keys')
+      .select('*')
+      .eq('key_normalized', normalized)
+      .limit(1);
+    if (!error && Array.isArray(data) && data.length) {
+      return rowToKey(data[0] as Record<string, unknown>);
+    }
+  } catch (err) {
+    console.warn('[edges] license_keys select failed', err);
+  }
+
+  // 3) Legacy rows stored before OCR fold — scan a page and match client-side
+  try {
+    const { data, error } = await sb
+      .from('license_keys')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (!error && Array.isArray(data)) {
+      const hit = data.find(
+        (row) =>
+          normalizeLicenseKey(String((row as { key?: string }).key || '')) ===
+            normalized ||
+          normalizeLicenseKey(
+            String((row as { key_normalized?: string }).key_normalized || ''),
+          ) === normalized,
+      );
+      if (hit) return rowToKey(hit as Record<string, unknown>);
+    }
+  } catch (err) {
+    console.warn('[edges] license_keys scan failed', err);
+  }
+
+  return null;
 }
 
 export async function findIssuedLicense(
@@ -481,38 +628,32 @@ export async function findIssuedLicense(
   keys: StoredLicenseKey[];
 } | null> {
   const normalized = normalizeLicenseKey(rawKey);
-  const { eas, keys } = await loadLicenseCatalog();
-  const matches = keys.filter((k) => normalizeLicenseKey(k.key) === normalized);
-  let key = matches[0];
+  if (!normalized.startsWith('EDGES-') || normalized.length < 20) {
+    return null;
+  }
 
-  // Cross-device: if local/remote catalog miss, hit security-definer RPC.
+  const { eas, keys } = await loadLicenseCatalog();
+  let key =
+    keys.find((k) => licenseKeysMatch(k.key, normalized)) ||
+    memoryKeys.find((k) => licenseKeysMatch(k.key, normalized));
+
+  // Cross-device / wiped localStorage: Supabase RPC + table + OCR scan.
   if (!key) {
-    const sb = getSupabase();
-    if (sb) {
+    const remoteKey = await lookupKeyOnSupabase(normalized);
+    if (remoteKey) {
+      key = remoteKey;
+      memoryKeys = mergeKeysByKeyString([key], keys);
+      const sb = getSupabase();
+      if (sb) await attachRemoteEa(sb, key, eas);
+      // Persist so same-device Activate works offline next time.
       try {
-        const { data, error } = await sb.rpc('lookup_license_key', {
-          p_key: rawKey,
-        });
-        if (!error && Array.isArray(data) && data.length) {
-          key = rowToKey(data[0] as Record<string, unknown>);
-          memoryKeys = mergeKeysByKeyString([key], keys);
-          // Pull the linked EA row when possible so Activate gets picture/name.
-          try {
-            const eaRes = await sb
-              .from('managed_eas')
-              .select('*')
-              .eq('id', key.eaId)
-              .maybeSingle();
-            if (!eaRes.error && eaRes.data) {
-              const remoteEa = rowToEa(eaRes.data as Record<string, unknown>);
-              memoryEas = mergeEaPreferPicture([remoteEa], eas);
-            }
-          } catch {
-            /* local eas still returned below */
-          }
-        }
-      } catch (err) {
-        console.warn('[edges] lookup_license_key rpc failed', err);
+        await saveLicenseCatalog(
+          memoryEas.length ? memoryEas : eas,
+          memoryKeys,
+          { broadcast: false },
+        );
+      } catch {
+        /* memory still holds the key for this session */
       }
     }
   }

@@ -11,14 +11,14 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { MentorSession } from './auth/mentorAuth';
 import {
-  EAS_STORAGE_KEY,
-  LICENSE_KEYS_STORAGE_KEY,
   compressEaPicture,
   findIssuedLicense,
+  licenseKeysMatch,
   loadLicenseCatalog,
   normalizeLicenseKey,
   saveLicenseCatalog,
   sessionFromLicenseKey,
+  subscribeCatalogUpdated,
 } from './licenseStorage';
 import {
   eaPictureVaultKey,
@@ -169,16 +169,17 @@ function uid(prefix: string) {
     .slice(2, 8)}`;
 }
 
+/** Unambiguous alphabet — no 0/O/1/I/L so mentor screenshots type cleanly. */
+const LICENSE_KEY_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+
 function makeLicenseKey() {
   const block = () => {
     let s = '';
     while (s.length < 4) {
-      s += Math.random()
-        .toString(36)
-        .toUpperCase()
-        .replace(/[^A-Z0-9]/g, '');
+      const i = Math.floor(Math.random() * LICENSE_KEY_ALPHABET.length);
+      s += LICENSE_KEY_ALPHABET[i]!;
     }
-    return s.slice(0, 4);
+    return s;
   };
   return `EDGES-${block()}-${block()}-${block()}-${block()}`;
 }
@@ -213,8 +214,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const catalog = await loadLicenseCatalog();
     applyCatalog(catalog.eas, catalog.keys);
     // Only re-persist when there is something to keep — never rewrite empty.
+    // Quiet: do not broadcast (would re-enter this refresh via sync listeners).
     if (catalog.eas.length || catalog.keys.length) {
-      await saveLicenseCatalog(catalog.eas, catalog.keys);
+      await saveLicenseCatalog(catalog.eas, catalog.keys, {
+        broadcast: false,
+      });
     }
   }, []);
 
@@ -236,7 +240,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         applyCatalog(catalog.eas, catalog.keys);
         // Persist merged remote+local only when non-empty (no silent wipe).
         if (catalog.eas.length || catalog.keys.length) {
-          await saveLicenseCatalog(catalog.eas, catalog.keys);
+          await saveLicenseCatalog(catalog.eas, catalog.keys, {
+            broadcast: false,
+          });
         }
         let loadedSetups: QuoteSetup[] = [];
         if (setupsRaw) {
@@ -301,28 +307,31 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Keep portal + activate in sync across same-origin tabs / route focus (web).
+  // Keep portal + Activate in sync (same tab custom event, BroadcastChannel,
+  // cross-tab storage, and window focus).
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const onStorage = (ev: StorageEvent) => {
-      if (
-        ev.key === LICENSE_KEYS_STORAGE_KEY ||
-        ev.key === EAS_STORAGE_KEY ||
-        ev.key === null
-      ) {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const kick = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
         void refreshLicenseCatalog();
-      }
+      }, 50);
     };
-    const onFocus = () => {
-      void refreshLicenseCatalog();
+    const unsub = subscribeCatalogUpdated(kick);
+    const onFocus = () => kick();
+    const onVis = () => {
+      if (document.visibilityState === 'visible') kick();
     };
-    window.addEventListener('storage', onStorage);
     window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVis);
     return () => {
-      window.removeEventListener('storage', onStorage);
+      unsub();
+      if (timer) clearTimeout(timer);
       window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVis);
     };
-  }, []);
+  }, [refreshLicenseCatalog]);
 
   const unlockEaAccess: AppStateValue['unlockEaAccess'] = async ({
     email,
@@ -472,14 +481,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: 'Enter a valid EDGES-XXXX-XXXX-XXXX-XXXX key' };
     }
 
-    // 1) Shared disk/localStorage catalog
+    // 1) Shared disk/localStorage + Supabase (OCR-safe normalize)
     let found = await findIssuedLicense(key);
 
     // 2) Same-SPA React memory (portal just generated the key this session)
     if (!found) {
-      const memKey = keysRef.current.find(
-        (k) => normalizeLicenseKey(k.key) === key,
-      );
+      const memKey = keysRef.current.find((k) => licenseKeysMatch(k.key, key));
       if (memKey) {
         found = {
           key: memKey,
@@ -489,16 +496,29 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // 3) Force reload from disk/remote then retry (same-device race after Generate)
     if (!found) {
       await refreshLicenseCatalog();
-      found = await findIssuedLicense(key);
+      const memKey = keysRef.current.find((k) => licenseKeysMatch(k.key, key));
+      if (memKey) {
+        found = {
+          key: memKey,
+          eas: easRef.current,
+          keys: keysRef.current,
+        };
+      } else {
+        found = await findIssuedLicense(key);
+      }
     }
 
     if (!found) {
+      const localHint =
+        keysRef.current.length > 0
+          ? ` ${keysRef.current.length} key(s) on this device — check O vs 0 and I vs 1.`
+          : ' Keys sync on this device and via Supabase when configured.';
       return {
         ok: false,
-        error:
-          'License key not found. Ask your mentor to generate one for your EA, then Activate again (keys sync via Supabase when configured).',
+        error: `License key not found.${localHint}`,
       };
     }
 
