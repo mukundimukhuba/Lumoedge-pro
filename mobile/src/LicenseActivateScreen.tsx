@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { TripleTapLogo } from './TripleTapLogo';
 
@@ -23,6 +24,7 @@ const BG = '#000000';
  * Copy matches license-copy-ref.jpg exactly.
  */
 export function LicenseActivateScreen() {
+  const insets = useSafeAreaInsets();
   const { activateLicenseKey, refreshLicenseCatalog, licenseKeys } =
     useAppState();
   const [key, setKey] = useState('');
@@ -33,6 +35,26 @@ export function LicenseActivateScreen() {
   useEffect(() => {
     void refreshLicenseCatalog();
   }, [refreshLicenseCatalog]);
+
+  // RN-web Stack card defaults to #f2f2f2 — paint it black so no white top strip.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const paint = () => {
+      document.querySelectorAll('div').forEach((el) => {
+        const bg = getComputedStyle(el).backgroundColor;
+        if (bg === 'rgb(242, 242, 242)' || bg === 'rgb(255, 255, 255)') {
+          (el as HTMLElement).style.setProperty(
+            'background-color',
+            '#000000',
+            'important',
+          );
+        }
+      });
+    };
+    paint();
+    const id = window.setInterval(paint, 400);
+    return () => window.clearInterval(id);
+  }, []);
 
   const onActivate = async () => {
     setError('');
@@ -48,12 +70,21 @@ export function LicenseActivateScreen() {
   return (
     <View style={styles.root}>
       <KeyboardAvoidingView
-        style={{ flex: 1 }}
+        style={{ flex: 1, backgroundColor: BG }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          contentContainerStyle={styles.scroll}
+          style={styles.scrollView}
+          contentContainerStyle={[
+            styles.scroll,
+            {
+              paddingTop: Math.max(insets.top, 24) + 24,
+              paddingBottom: Math.max(insets.bottom, 24) + 16,
+            },
+          ]}
           keyboardShouldPersistTaps="handled"
+          bounces={false}
+          overScrollMode="never"
         >
           <TripleTapLogo size={96} borderColor={RED} />
           <Text style={styles.heading}>
@@ -106,14 +137,24 @@ export function LicenseActivateScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BG },
+  root: {
+    flex: 1,
+    backgroundColor: BG,
+    ...Platform.select({
+      web: { minHeight: '100%' as unknown as number },
+      default: {},
+    }),
+  },
+  scrollView: {
+    flex: 1,
+    backgroundColor: BG,
+  },
   scroll: {
     flexGrow: 1,
     paddingHorizontal: 24,
-    paddingTop: 48,
-    paddingBottom: 40,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: BG,
   },
   heading: {
     color: '#FFFFFF',

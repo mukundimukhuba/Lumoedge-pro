@@ -25,8 +25,16 @@ export default function Root({ children }: PropsWithChildren) {
                 margin: 0;
                 padding: 0;
                 overflow: hidden;
-                background: #000;
+                background: #000000;
                 overscroll-behavior: none;
+                color-scheme: dark;
+              }
+              /* Kill Expo Router / RN-web default #f2f2f2 stack card (white top strip). */
+              #root, #root > div, body > div {
+                background-color: #000000 !important;
+              }
+              #root div[class*="r-position-u8s1d"][class*="r-bottom-1p0dtai"] {
+                background-color: #000000 !important;
               }
             `,
           }}
