@@ -5,6 +5,7 @@
   "description": "Edges / Lumo Edge Pro EA control + Mentors Portal (Expo web)",
   "scripts": {
     "export:web": "cd mobile && npx expo export --platform web --output-dir ../dist-web && node ../scripts/publish-static.js",
-    "start:static": "npx --yes serve -s . -l 8099"
+    "start:static": "npx --yes serve -s . -l 8099",
+    "supabase:apply": "node scripts/apply-supabase-schema.mjs"
   }
 }

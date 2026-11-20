@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { compressCatalogPictures, compressEaPicture } from './eaPicture';
+import { getSupabase, isSupabaseConfigured } from './supabase/client';
 
 /** Shared storage keys — portal License Keys + app Activate MUST use these. */
 export const EAS_STORAGE_KEY = 'edges-managed-eas-v1';
@@ -129,6 +130,108 @@ export function setMemoryCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
   memoryKeys = keys;
 }
 
+function rowToEa(row: Record<string, unknown>): StoredEa {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? ''),
+    pictureUri: (row.picture_uri as string | null) ?? null,
+    symbols: Array.isArray(row.symbols) ? (row.symbols as string[]) : [],
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+function rowToKey(row: Record<string, unknown>): StoredLicenseKey {
+  return {
+    id: String(row.id),
+    eaId: String(row.ea_id),
+    eaName: String(row.ea_name ?? ''),
+    key: String(row.key),
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+    eaPictureUri: (row.ea_picture_uri as string | null) ?? null,
+    eaSymbols: Array.isArray(row.ea_symbols)
+      ? (row.ea_symbols as string[])
+      : [],
+  };
+}
+
+async function fetchRemoteCatalog(): Promise<{
+  eas: StoredEa[];
+  keys: StoredLicenseKey[];
+} | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  try {
+    const [easRes, keysRes] = await Promise.all([
+      sb.from('managed_eas').select('*'),
+      sb.from('license_keys').select('*'),
+    ]);
+    if (easRes.error || keysRes.error) {
+      console.warn(
+        '[edges] supabase catalog fetch failed',
+        easRes.error?.message || keysRes.error?.message,
+      );
+      return null;
+    }
+    return {
+      eas: (easRes.data || []).map((r) => rowToEa(r as Record<string, unknown>)),
+      keys: (keysRes.data || []).map((r) =>
+        rowToKey(r as Record<string, unknown>),
+      ),
+    };
+  } catch (err) {
+    console.warn('[edges] supabase catalog fetch error', err);
+    return null;
+  }
+}
+
+async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
+  const sb = getSupabase();
+  if (!sb) return false;
+  try {
+    const eaRows = eas.map((e) => ({
+      id: e.id,
+      name: e.name,
+      picture_uri: e.pictureUri,
+      symbols: e.symbols ?? [],
+      created_at: e.createdAt,
+      updated_at: new Date().toISOString(),
+    }));
+    const keyRows = keys.map((k) => ({
+      id: k.id,
+      ea_id: k.eaId,
+      ea_name: k.eaName,
+      key: k.key,
+      key_normalized: normalizeLicenseKey(k.key),
+      created_at: k.createdAt,
+      ea_picture_uri: k.eaPictureUri,
+      ea_symbols: k.eaSymbols ?? [],
+    }));
+
+    if (eaRows.length) {
+      const { error } = await sb.from('managed_eas').upsert(eaRows, {
+        onConflict: 'id',
+      });
+      if (error) {
+        console.warn('[edges] supabase eas upsert failed', error.message);
+        return false;
+      }
+    }
+    if (keyRows.length) {
+      const { error } = await sb.from('license_keys').upsert(keyRows, {
+        onConflict: 'id',
+      });
+      if (error) {
+        console.warn('[edges] supabase keys upsert failed', error.message);
+        return false;
+      }
+    }
+    return true;
+  } catch (err) {
+    console.warn('[edges] supabase catalog push error', err);
+    return false;
+  }
+}
+
 export async function loadLicenseCatalog(): Promise<{
   eas: StoredEa[];
   keys: StoredLicenseKey[];
@@ -159,9 +262,16 @@ export async function loadLicenseCatalog(): Promise<{
     /* ignore */
   }
 
-  // Memory wins; prefer whichever side still has the uploaded picture.
-  const eas = mergeEaPreferPicture(memoryEas, diskEas);
-  const keys = mergeKeysByKeyString(memoryKeys, diskKeys);
+  // Remote (cross-device) merges in when Supabase secrets are configured.
+  const remote = await fetchRemoteCatalog();
+  const remoteEas = remote?.eas ?? [];
+  const remoteKeys = remote?.keys ?? [];
+
+  // Memory + disk + remote; prefer pictures when merging.
+  let eas = mergeEaPreferPicture(memoryEas, diskEas);
+  eas = mergeEaPreferPicture(eas, remoteEas);
+  let keys = mergeKeysByKeyString(memoryKeys, diskKeys);
+  keys = mergeKeysByKeyString(keys, remoteKeys);
   memoryEas = eas;
   memoryKeys = keys;
   return { eas, keys };
@@ -229,6 +339,10 @@ export async function saveLicenseCatalog(
       '[edges] license catalog disk write failed; using in-memory bridge',
       { keysOk, easOk, keysBytes: keysJson.length, easBytes: easJson.length },
     );
+  }
+
+  if (isSupabaseConfigured()) {
+    await pushRemoteCatalog(prepared.eas, prepared.keys);
   }
 
   return prepared;

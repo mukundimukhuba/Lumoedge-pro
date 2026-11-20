@@ -324,7 +324,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return {
         ok: false,
         error:
-          'License key not found. Ask your mentor to generate one for your EA on this device, then Activate.',
+          'License key not found. Ask your mentor to generate one for your EA, then Activate again (keys sync via Supabase when configured).',
       };
     }
 

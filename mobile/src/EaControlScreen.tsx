@@ -262,6 +262,31 @@ export function EaControlScreen() {
     );
   };
 
+  /** Leave this EA session and open Activate for another license key. */
+  const onAddAnotherEa = () => {
+    const go = () => {
+      setStatus('stopped');
+      void clearActiveEa();
+    };
+    if (Platform.OS === 'web') {
+      const ok =
+        typeof window !== 'undefined' &&
+        window.confirm(
+          'Activate a different license key for another Expert Advisor?',
+        );
+      if (ok) go();
+      return;
+    }
+    Alert.alert(
+      'Add another EA',
+      'Activate a different license key for another Expert Advisor?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Continue', onPress: go },
+      ],
+    );
+  };
+
   const runScan = () => {
     const bias = ['buy', 'sell', 'range'][Math.floor(Math.random() * 3)];
     const conf = 62 + Math.floor(Math.random() * 33);
@@ -404,31 +429,61 @@ export function EaControlScreen() {
             )}
           </View>
 
-          <Glass
-            accent={accent}
-            style={styles.statusGlass}
-            contentStyle={styles.statusRow}
-          >
-            <Pressable
-              onPress={onLogoPress}
-              accessibilityRole="button"
-              accessibilityLabel="Edges logo — triple tap for Mentors Portal"
-              hitSlop={8}
+          <View style={styles.statusBlock}>
+            <Glass
+              accent={accent}
+              style={styles.statusGlass}
+              contentStyle={styles.statusRow}
             >
-              <Image
-                source={eaPicture}
-                style={[styles.statusThumb, { borderColor: accent }]}
-              />
+              <Pressable
+                onPress={onLogoPress}
+                accessibilityRole="button"
+                accessibilityLabel="Edges logo — triple tap for Mentors Portal"
+                hitSlop={8}
+              >
+                <Image
+                  source={eaPicture}
+                  style={[styles.statusThumb, { borderColor: accent }]}
+                />
+              </Pressable>
+              <View style={styles.statusText}>
+                <Text style={styles.statusTitle} numberOfLines={1}>
+                  {eaTitle}
+                </Text>
+                <Text style={[styles.statusState, { color: statusColor }]}>
+                  {statusLabel}
+                </Text>
+              </View>
+            </Glass>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Add another EA"
+              onPress={onAddAnotherEa}
+              style={({ pressed }) => [
+                styles.addEaBtn,
+                { borderColor: accent },
+                Platform.OS === 'web'
+                  ? ({
+                      boxShadow: `0 0 12px ${hexToRgba(accent, 0.4)}`,
+                    } as object)
+                  : null,
+                pressed && { opacity: 0.85 },
+              ]}
+            >
+              <View
+                style={[
+                  styles.addEaIcon,
+                  { backgroundColor: hexToRgba(accent, 0.18) },
+                ]}
+              >
+                <Ionicons name="add" size={18} color={accent} />
+              </View>
+              <Text style={[styles.addEaLabel, { color: accent }]}>
+                Add another EA
+              </Text>
             </Pressable>
-            <View style={styles.statusText}>
-              <Text style={styles.statusTitle} numberOfLines={1}>
-                {eaTitle}
-              </Text>
-              <Text style={[styles.statusState, { color: statusColor }]}>
-                {statusLabel}
-              </Text>
-            </View>
-          </Glass>
+          </View>
         </View>
       </ScrollView>
 
@@ -1279,6 +1334,11 @@ const styles = StyleSheet.create({
     maxWidth: 340,
     textAlign: 'center',
   },
+  statusBlock: {
+    width: '100%',
+    maxWidth: 420,
+    gap: 8,
+  },
   statusGlass: {
     marginTop: 0,
     marginBottom: 0,
@@ -1311,6 +1371,30 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     textTransform: 'lowercase',
+  },
+  addEaBtn: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(8, 8, 8, 0.78)',
+  },
+  addEaIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addEaLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   modalBackdrop: {
     flex: 1,
