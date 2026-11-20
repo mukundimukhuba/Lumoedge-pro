@@ -405,9 +405,46 @@ export async function findIssuedLicense(
   const normalized = normalizeLicenseKey(rawKey);
   const { eas, keys } = await loadLicenseCatalog();
   const matches = keys.filter((k) => normalizeLicenseKey(k.key) === normalized);
-  const key = matches[0];
+  let key = matches[0];
+
+  // Cross-device: if local/remote catalog miss, hit security-definer RPC.
+  if (!key) {
+    const sb = getSupabase();
+    if (sb) {
+      try {
+        const { data, error } = await sb.rpc('lookup_license_key', {
+          p_key: rawKey,
+        });
+        if (!error && Array.isArray(data) && data.length) {
+          key = rowToKey(data[0] as Record<string, unknown>);
+          memoryKeys = mergeKeysByKeyString([key], keys);
+          // Pull the linked EA row when possible so Activate gets picture/name.
+          try {
+            const eaRes = await sb
+              .from('managed_eas')
+              .select('*')
+              .eq('id', key.eaId)
+              .maybeSingle();
+            if (!eaRes.error && eaRes.data) {
+              const remoteEa = rowToEa(eaRes.data as Record<string, unknown>);
+              memoryEas = mergeEaPreferPicture([remoteEa], eas);
+            }
+          } catch {
+            /* local eas still returned below */
+          }
+        }
+      } catch (err) {
+        console.warn('[edges] lookup_license_key rpc failed', err);
+      }
+    }
+  }
+
   if (!key) return null;
-  return { key, eas, keys };
+  return {
+    key,
+    eas: memoryEas.length ? memoryEas : eas,
+    keys: memoryKeys.length ? memoryKeys : keys,
+  };
 }
 
 /**

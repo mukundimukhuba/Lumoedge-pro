@@ -2,16 +2,25 @@
 /**
  * Apply supabase/migrations/*.sql using the service role.
  * Env: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (never logged).
+ * Also accepts legacy alias `supabase` for the service role.
  */
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  readSupabaseServiceRoleKey,
+  readSupabaseUrl,
+  secretStatus,
+} from './supabase-env.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, '..');
 
-const url = (process.env.SUPABASE_URL || '').trim();
-const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const url = readSupabaseUrl();
+const serviceKey = readSupabaseServiceRoleKey();
+const status = secretStatus();
+
+console.log('Secret names:', JSON.stringify(status));
 
 if (!url || !serviceKey) {
   console.error(
@@ -35,16 +44,9 @@ const sql = files
   .map((f) => fs.readFileSync(path.join(migrationsDir, f), 'utf8'))
   .join('\n\n');
 
-const endpoint = `${url.replace(/\/$/, '')}/rest/v1/rpc/`;
-// Prefer PostgREST isn't ideal for raw SQL — use the SQL API via pg meta if available.
-// Supabase Management SQL: /pg/query on the project (service role via fetch to db).
-// Use the standard approach: POST to https://api.supabase.com is account-level.
-// For project, execute via postgres REST isn't exposed. Use supabase-js rpc or
-// the database URL. Fallback: print instructions if fetch to pg fails.
-
 async function applyViaPgMeta() {
-  // Hosted Supabase SQL endpoint used by dashboard (pg-meta):
-  const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, {
+  const base = url.replace(/\/$/, '');
+  const res = await fetch(`${base}/rest/v1/`, {
     method: 'GET',
     headers: {
       apikey: serviceKey,
@@ -55,17 +57,12 @@ async function applyViaPgMeta() {
     throw new Error(`Supabase REST unreachable (${res.status})`);
   }
 
-  // Execute migration statements one-by-one through rpc if a helper exists —
-  // otherwise tell the operator to paste SQL in the SQL editor.
   console.log(
-    'REST reachable. Applying via supabase SQL editor is required if /pg/query is unavailable.',
+    `REST reachable. Migrations ready (${files.join(', ')}).`,
   );
-  console.log(`Migrations ready (${files.join(', ')}).`);
-  console.log(
-    'Open Supabase → SQL → New query, paste supabase/migrations/001_managed_eas_license_keys.sql, Run.',
-  );
-  // Attempt pg-meta query endpoint (present on some projects):
-  const pg = await fetch(`${url.replace(/\/$/, '')}/pg/query`, {
+
+  // Attempt pg-meta query endpoint (present on some projects / local stacks):
+  const pg = await fetch(`${base}/pg/query`, {
     method: 'POST',
     headers: {
       apikey: serviceKey,
@@ -78,8 +75,27 @@ async function applyViaPgMeta() {
     console.log('Schema applied via /pg/query');
     return;
   }
+
+  // Some projects expose postgres-meta under /pg/meta/default/query
+  const pgMeta = await fetch(`${base}/pg/meta/default/query`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query: sql }),
+  });
+  if (pgMeta.ok) {
+    console.log('Schema applied via /pg/meta/default/query');
+    return;
+  }
+
   console.warn(
-    `Auto-apply skipped (pg/query ${pg.status}). Apply the SQL file manually in the dashboard.`,
+    `Auto-apply skipped (pg/query ${pg.status}, pg/meta ${pgMeta.status}).`,
+  );
+  console.warn(
+    'Apply manually: Supabase → SQL → New query → paste supabase/migrations/*.sql → Run.',
   );
   process.exit(0);
 }

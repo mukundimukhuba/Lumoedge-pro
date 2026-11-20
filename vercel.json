@@ -1,5 +1,6 @@
 {
-  "buildCommand": null,
+  "installCommand": "npm install --prefix mobile",
+  "buildCommand": "npm run export:web",
   "outputDirectory": ".",
   "rewrites": [
     { "source": "/portal", "destination": "/portal/index.html" },

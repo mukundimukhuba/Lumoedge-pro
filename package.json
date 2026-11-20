@@ -6,6 +6,8 @@
   "scripts": {
     "export:web": "cd mobile && npx expo export --platform web --output-dir ../dist-web && node ../scripts/publish-static.js",
     "start:static": "npx --yes serve -s . -l 8099",
-    "supabase:apply": "node scripts/apply-supabase-schema.mjs"
+    "supabase:apply": "node scripts/apply-supabase-schema.mjs",
+    "supabase:verify": "node scripts/verify-supabase-tables.mjs",
+    "supabase:status": "node -e \"import('./scripts/supabase-env.mjs').then(m=>console.log(JSON.stringify(m.secretStatus())))\""
   }
 }
