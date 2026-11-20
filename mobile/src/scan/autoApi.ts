@@ -1,7 +1,8 @@
 /**
  * Auto Scan client → POST https://lumoedge.com/api/scan/auto
- * Live candles on the linked MetaTrader account (id = MT5 token).
- * User may refine curl body later — keep payload flexible.
+ *
+ * Exact body (locked to curl contract):
+ *   { "symbol": "XAUUSD", "id": "MT5_TOKEN_FROM_CONNECT" }
  */
 
 import { LUMOEDGE_SCAN_ROOT } from './api';
@@ -19,22 +20,14 @@ export const AUTO_MARKETS = [
 
 export type AutoMarket = (typeof AUTO_MARKETS)[number];
 
-/** TF priority: M15 → H1 → M5 → M1 */
+/** TF priority used by engine UI / local strategy: M15 → H1 → M5 → M1 */
 export const AUTO_TIMEFRAMES = ['M15', 'H1', 'M5', 'M1'] as const;
 
+/** Locked request body — matches production curl. */
 export type AutoScanRequest = {
   symbol: string;
-  /** MT5 session token (API field name: id) */
-  id?: string;
-  timeframe?: string;
-  timeframes?: string[];
-  lot?: number;
-  trades?: number;
-  /** Strategy tags for servers that accept them */
-  strategy?: string;
-  sessionBars?: number;
-  bounceBars?: number;
-  [key: string]: unknown;
+  /** MT5 token from broker connect */
+  id: string;
 };
 
 export type AutoScanSignal = {
@@ -68,18 +61,20 @@ export async function postAutoScan(
     .trim()
     .replace(/\s+/g, '')
     .toUpperCase();
+  const id = String(body.id || '').trim();
+
   if (!symbol) {
     return { ok: false, error: 'Type the symbol from your broker.' };
   }
+  if (!id) {
+    return {
+      ok: false,
+      error: 'Connect MetaTrader first. Auto Scan reads the live market on your account.',
+    };
+  }
 
-  const payload: AutoScanRequest = {
-    ...body,
-    symbol,
-    timeframes: body.timeframes || [...AUTO_TIMEFRAMES],
-    strategy: body.strategy || 'live-bounce',
-    sessionBars: body.sessionBars ?? 20,
-    bounceBars: body.bounceBars ?? 8,
-  };
+  // Exact curl body — nothing else.
+  const payload: AutoScanRequest = { symbol, id };
 
   const controller = new AbortController();
   const onAbort = () => controller.abort();

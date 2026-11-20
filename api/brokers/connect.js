@@ -62,8 +62,15 @@ module.exports = async function handler(req, res) {
         upstream: true,
       });
     }
-    const upstreamSession =
-      result.data?.sessionId || result.data?.session || null;
+    // MT5 bridge returns `token`; other upstreams may use sessionId.
+    // Auto Scan curl uses this as body.id
+    const mt5Token = String(
+      result.data?.token ||
+        result.data?.id ||
+        result.data?.sessionId ||
+        result.data?.session ||
+        '',
+    ).trim();
     return json(res, 200, {
       ok: true,
       broker,
@@ -72,12 +79,20 @@ module.exports = async function handler(req, res) {
       linked: true,
       source: 'upstream',
       message: result.data?.message || `${broker} linked via broker API`,
-      sessionId: upstreamSession ? `up_${upstreamSession}` : undefined,
+      token: mt5Token || undefined,
+      id: mt5Token || undefined,
+      sessionId: mt5Token
+        ? mt5Token.startsWith('up_')
+          ? mt5Token
+          : `up_${mt5Token}`
+        : undefined,
       account: result.data?.account || null,
     });
   }
 
   const session = createSession({ broker, server, login });
+  // Local demo: session id doubles as account poll key; Auto Scan still needs
+  // a real MT5 token from production connect for live candles.
   return json(res, 200, {
     ok: true,
     broker,
@@ -86,6 +101,8 @@ module.exports = async function handler(req, res) {
     linked: true,
     source: 'local-demo',
     message: `${broker} linked · demo session ready`,
+    token: session.id,
+    id: session.id,
     sessionId: session.id,
     account: publicAccount(session),
   });
