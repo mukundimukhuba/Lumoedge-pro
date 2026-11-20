@@ -212,7 +212,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const refreshLicenseCatalog = useCallback(async () => {
     const catalog = await loadLicenseCatalog();
     applyCatalog(catalog.eas, catalog.keys);
-    await saveLicenseCatalog(catalog.eas, catalog.keys);
+    // Only re-persist when there is something to keep — never rewrite empty.
+    if (catalog.eas.length || catalog.keys.length) {
+      await saveLicenseCatalog(catalog.eas, catalog.keys);
+    }
   }, []);
 
   useEffect(() => {
@@ -231,7 +234,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           if (parsed?.email && parsed?.name) setEaAccess(parsed);
         }
         applyCatalog(catalog.eas, catalog.keys);
-        await saveLicenseCatalog(catalog.eas, catalog.keys);
+        // Persist merged remote+local only when non-empty (no silent wipe).
+        if (catalog.eas.length || catalog.keys.length) {
+          await saveLicenseCatalog(catalog.eas, catalog.keys);
+        }
         let loadedSetups: QuoteSetup[] = [];
         if (setupsRaw) {
           try {

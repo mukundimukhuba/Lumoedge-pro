@@ -147,7 +147,7 @@ export function evaluateLiveCandles(
   };
 }
 
-/** Deterministic preview candles when MT5 is not linked (UI/demo only). */
+/** Deterministic candle stub (unused in live Auto Trade — kept for unit tests). */
 export function synthesizePreviewCandles(
   symbol: string,
   bias: 'bull' | 'bear' | 'flat' = 'bull',

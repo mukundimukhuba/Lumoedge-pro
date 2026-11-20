@@ -329,27 +329,6 @@ export const BROKER_RECORDS: BrokerRecord[] = [
     servers: s('LiteFinance-Live', 'LiteFinance-Demo'),
   },
   {
-    name: 'MetaQuotes Demo',
-    domain: 'metaquotes.net',
-    region: 'global',
-    color: '#4A90D9',
-    servers: s('MetaQuotes-Demo', 'MetaQuotes-Demo2'),
-  },
-  {
-    name: 'MetaTrader 4 Demo',
-    domain: 'metatrader4.com',
-    region: 'global',
-    color: '#4A90D9',
-    servers: s('MetaQuotes-Demo'),
-  },
-  {
-    name: 'MetaTrader 5 Demo',
-    domain: 'metatrader5.com',
-    region: 'global',
-    color: '#4A90D9',
-    servers: s('AccessServer', 'MetaQuotes-Demo'),
-  },
-  {
     name: 'MultiBank Group',
     domain: 'multibankfx.com',
     region: 'global',

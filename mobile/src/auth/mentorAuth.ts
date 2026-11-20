@@ -1,5 +1,5 @@
 /**
- * Demo-only mentor auth helpers.
+ * Mentors Portal auth helpers (seed login + local session).
  * Plaintext passwords are NEVER stored here — only a salted SHA-256 digest.
  */
 import * as Crypto from 'expo-crypto';
@@ -8,7 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const DEMO_SALT = 'edges-ea-demo-v1';
 const PROFILES_KEY = 'edges-mentor-profiles-v1';
 
-/** Demo mentor email (identifier only). */
+/** Seed mentor email (identifier only). */
 export const DEMO_MENTOR_EMAIL = 'mukundimukhuba8@gmail.com';
 
 /**
@@ -85,7 +85,7 @@ export async function verifyDemoMentor(
     normalized === DEMO_MENTOR_EMAIL &&
     digest === DEMO_MENTOR_PASSWORD_SHA256
   ) {
-    // Prefer any locally edited/registered overlay for the demo email
+    // Prefer any locally edited/registered overlay for the seed email
     const map = await loadProfiles();
     const stored = map[normalized];
     if (stored) {
