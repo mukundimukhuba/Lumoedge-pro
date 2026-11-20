@@ -20,9 +20,10 @@ import {
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccessGateScreen } from './AccessGateScreen';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
-import { useAppState, ACCENTS, SYMBOLS, type BotStatus } from './AppState';
+import { useAppState, ACCENTS, SYMBOLS } from './AppState';
 
 type Sheet =
   | 'none'
@@ -102,6 +103,7 @@ export function EaControlRoot() {
 export function EaControlScreen() {
   const router = useRouter();
   const { height: windowH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const {
     status,
     setStatus,
@@ -133,13 +135,31 @@ export function EaControlScreen() {
   /** Prefer on-layout height (phone chrome / real device) over window. */
   const [layoutH, setLayoutH] = useState(windowH);
   /**
-   * Hero fills upper phone real-estate without the old half-screen poster.
-   * Remainder is a dense controls→status column above the sticky dock.
+   * Viewport-scaled phone stack: smaller hero, compact controls, no dead gaps.
+   * Target: one iPhone-tall frame without forced scroll.
    */
-  const heroH = Math.max(148, Math.min(Math.round(layoutH * 0.34), 248));
-  /** Sticky dock approx height — keep lower body filling above it. */
-  const dockH = 62;
-  const bodyMinH = Math.max(220, layoutH - heroH - dockH);
+  // Keep dock fully above home-indicator / browser safe area.
+  const safeBottom = Math.max(
+    insets.bottom,
+    Platform.OS === 'web' ? 12 : 8,
+  );
+  const safeTop = Math.max(insets.top, Platform.OS === 'web' ? 8 : 0);
+  const scale = Math.min(1.05, Math.max(0.82, layoutH / 844));
+  /**
+   * Smaller proportional hero vs old ~34%/248cap — ~28% fills the phone
+   * without leaving a dead mid-gap; lower stack stays dense under it.
+   */
+  const heroH = Math.max(124, Math.min(Math.round(layoutH * 0.28), 210));
+  const dockPad = Math.max(6, 2 + safeBottom);
+  const dockH = Math.round(46 * scale) + dockPad;
+  const gapSm = Math.max(2, Math.round(3 * scale));
+  const gapMd = Math.max(4, Math.round(6 * scale));
+  const titleSize = Math.max(14, Math.round(16 * scale));
+  const controlPadV = Math.max(4, Math.round(5 * scale));
+  const ringSm = Math.max(30, Math.round(34 * scale));
+  const ringLg = Math.max(38, Math.round(42 * scale));
+  const iconSm = Math.max(14, Math.round(16 * scale));
+  const iconLg = Math.max(18, Math.round(20 * scale));
   /** Triple-tap the logo (hero image) → Mentors Portal — not Settings. */
   const logoTaps = useRef<{ count: number; at: number }>({
     count: 0,
@@ -309,7 +329,7 @@ export function EaControlScreen() {
         onPress={onSettingsPress}
         style={({ pressed }) => [
           styles.settingsBtn,
-          { borderColor: accent },
+          { borderColor: accent, top: safeTop + 2 },
           Platform.OS === 'web'
             ? ({ boxShadow: `0 0 12px ${hexToRgba(accent, 0.55)}` } as object)
             : null,
@@ -317,15 +337,19 @@ export function EaControlScreen() {
         ]}
         hitSlop={12}
       >
-        <Ionicons name="settings-outline" size={16} color={BASE.white} />
+        <Ionicons name="settings-outline" size={iconSm} color={BASE.white} />
       </Pressable>
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(6, Math.round(8 * scale)) },
+        ]}
         showsVerticalScrollIndicator={false}
-        bounces
-        alwaysBounceVertical
+        bounces={false}
+        alwaysBounceVertical={false}
+        overScrollMode="never"
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
       >
@@ -362,21 +386,38 @@ export function EaControlScreen() {
             style={styles.heroFade}
             pointerEvents="none"
           />
-          <Text style={styles.title} pointerEvents="none" numberOfLines={1}>
+          <Text
+            style={[styles.title, { fontSize: titleSize, bottom: gapSm }]}
+            pointerEvents="none"
+            numberOfLines={1}
+          >
             {eaTitle}
           </Text>
         </View>
 
-        <View style={[styles.lower, { minHeight: bodyMinH }]}>
-          <View style={styles.lowerTop}>
+        <View
+          style={[
+            styles.lower,
+            {
+              paddingTop: gapSm,
+              paddingBottom: gapSm,
+              gap: gapMd,
+            },
+          ]}
+        >
+          <View style={[styles.lowerTop, { gap: gapSm }]}>
             <Glass
               accent={accent}
               style={styles.controlGlass}
-              contentStyle={styles.controlRow}
+              contentStyle={[
+                styles.controlRow,
+                { paddingVertical: controlPadV },
+              ]}
             >
               <Control
                 accent={accent}
                 label="quotes"
+                size={ringSm}
                 onPress={() => {
                   setQuery('');
                   setSheet('quotes');
@@ -384,7 +425,7 @@ export function EaControlScreen() {
                 icon={
                   <MaterialCommunityIcons
                     name="chart-line"
-                    size={18}
+                    size={iconSm}
                     color={accent}
                   />
                 }
@@ -393,12 +434,12 @@ export function EaControlScreen() {
                 accent={accent}
                 label={isActive ? 'stop' : 'start'}
                 onPress={onToggleRun}
-                large
+                size={ringLg}
                 lit={isActive}
                 icon={
                   <Ionicons
                     name={isActive ? 'stop' : 'play'}
-                    size={22}
+                    size={iconLg}
                     color={accent}
                   />
                 }
@@ -406,14 +447,19 @@ export function EaControlScreen() {
               <Control
                 accent={accent}
                 label="remove"
+                size={ringSm}
                 onPress={onRemove}
                 icon={
-                  <Ionicons name="trash-outline" size={18} color={accent} />
+                  <Ionicons
+                    name="trash-outline"
+                    size={iconSm}
+                    color={accent}
+                  />
                 }
               />
             </Glass>
 
-            <Text style={styles.powered}>
+            <Text style={[styles.powered, { fontSize: Math.max(9, Math.round(10 * scale)) }]}>
               powered by{' '}
               <Text style={[styles.poweredBrand, { color: accent }]}>
                 lumo edge pro
@@ -421,19 +467,38 @@ export function EaControlScreen() {
             </Text>
 
             {selected.length > 0 ? (
-              <Text style={styles.symbolHint} numberOfLines={1}>
+              <Text
+                style={[
+                  styles.symbolHint,
+                  { fontSize: Math.max(9, Math.round(10 * scale)) },
+                ]}
+                numberOfLines={1}
+              >
                 {selected.join(' · ')}
               </Text>
             ) : (
-              <Text style={styles.symbolHint}>no symbols selected</Text>
+              <Text
+                style={[
+                  styles.symbolHint,
+                  { fontSize: Math.max(9, Math.round(10 * scale)) },
+                ]}
+              >
+                no symbols selected
+              </Text>
             )}
           </View>
 
-          <View style={styles.statusBlock}>
+          <View style={[styles.statusBlock, { gap: gapMd }]}>
             <Glass
               accent={accent}
               style={styles.statusGlass}
-              contentStyle={styles.statusRow}
+              contentStyle={[
+                styles.statusRow,
+                {
+                  paddingVertical: Math.max(4, Math.round(5 * scale)),
+                  gap: Math.max(6, Math.round(8 * scale)),
+                },
+              ]}
             >
               <Pressable
                 onPress={onLogoPress}
@@ -443,14 +508,36 @@ export function EaControlScreen() {
               >
                 <Image
                   source={eaPicture}
-                  style={[styles.statusThumb, { borderColor: accent }]}
+                  style={[
+                    styles.statusThumb,
+                    {
+                      borderColor: accent,
+                      width: Math.max(28, Math.round(32 * scale)),
+                      height: Math.max(28, Math.round(32 * scale)),
+                      borderRadius: Math.max(14, Math.round(16 * scale)),
+                    },
+                  ]}
                 />
               </Pressable>
               <View style={styles.statusText}>
-                <Text style={styles.statusTitle} numberOfLines={1}>
+                <Text
+                  style={[
+                    styles.statusTitle,
+                    { fontSize: Math.max(12, Math.round(13 * scale)) },
+                  ]}
+                  numberOfLines={1}
+                >
                   {eaTitle}
                 </Text>
-                <Text style={[styles.statusState, { color: statusColor }]}>
+                <Text
+                  style={[
+                    styles.statusState,
+                    {
+                      color: statusColor,
+                      fontSize: Math.max(10, Math.round(11 * scale)),
+                    },
+                  ]}
+                >
                   {statusLabel}
                 </Text>
               </View>
@@ -462,7 +549,11 @@ export function EaControlScreen() {
               onPress={onAddAnotherEa}
               style={({ pressed }) => [
                 styles.addEaBtn,
-                { borderColor: accent },
+                {
+                  borderColor: accent,
+                  paddingVertical: Math.max(5, Math.round(6 * scale)),
+                  gap: Math.max(6, Math.round(8 * scale)),
+                },
                 Platform.OS === 'web'
                   ? ({
                       boxShadow: `0 0 12px ${hexToRgba(accent, 0.4)}`,
@@ -474,12 +565,29 @@ export function EaControlScreen() {
               <View
                 style={[
                   styles.addEaIcon,
-                  { backgroundColor: hexToRgba(accent, 0.18) },
+                  {
+                    backgroundColor: hexToRgba(accent, 0.18),
+                    width: Math.max(22, Math.round(24 * scale)),
+                    height: Math.max(22, Math.round(24 * scale)),
+                    borderRadius: Math.max(11, Math.round(12 * scale)),
+                  },
                 ]}
               >
-                <Ionicons name="add" size={18} color={accent} />
+                <Ionicons
+                  name="add"
+                  size={Math.max(14, Math.round(16 * scale))}
+                  color={accent}
+                />
               </View>
-              <Text style={[styles.addEaLabel, { color: accent }]}>
+              <Text
+                style={[
+                  styles.addEaLabel,
+                  {
+                    color: accent,
+                    fontSize: Math.max(11, Math.round(12 * scale)),
+                  },
+                ]}
+              >
                 Add another EA
               </Text>
             </Pressable>
@@ -487,7 +595,16 @@ export function EaControlScreen() {
         </View>
       </ScrollView>
 
-      <View style={styles.bottomDock}>
+      <View
+        style={[
+          styles.bottomDock,
+          {
+            paddingBottom: dockPad,
+            paddingTop: Math.max(2, Math.round(2 * scale)),
+            minHeight: dockH,
+          },
+        ]}
+      >
         <View
           style={[
             styles.bottomBar,
@@ -504,6 +621,7 @@ export function EaControlScreen() {
             active={bottomTab === 'home'}
             label="Home"
             icon="home-outline"
+            scale={scale}
             onPress={() => onBottomTab('home')}
           />
           <BottomNavItem
@@ -511,6 +629,7 @@ export function EaControlScreen() {
             active={bottomTab === 'scanner'}
             label="Chart scanner"
             icon="scan-outline"
+            scale={scale}
             onPress={() => onBottomTab('scanner')}
           />
           <BottomNavItem
@@ -518,6 +637,7 @@ export function EaControlScreen() {
             active={bottomTab === 'broker'}
             label="Connect your broker"
             icon="link-outline"
+            scale={scale}
             onPress={() => onBottomTab('broker')}
           />
         </View>
@@ -942,13 +1062,16 @@ function BottomNavItem({
   label,
   icon,
   onPress,
+  scale = 1,
 }: {
   accent: string;
   active: boolean;
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
+  scale?: number;
 }) {
+  const iconSize = Math.max(15, Math.round(17 * scale));
   return (
     <Pressable
       onPress={onPress}
@@ -957,18 +1080,23 @@ function BottomNavItem({
       accessibilityState={{ selected: active }}
       style={({ pressed }) => [
         styles.bottomItem,
+        { minHeight: Math.max(34, Math.round(36 * scale)) },
         pressed && { opacity: 0.75 },
       ]}
     >
       <Ionicons
         name={icon}
-        size={18}
+        size={iconSize}
         color={active ? accent : BASE.muted}
       />
       <Text
         style={[
           styles.bottomLabel,
-          { color: active ? accent : BASE.muted },
+          {
+            color: active ? accent : BASE.muted,
+            fontSize: Math.max(8, Math.round(9 * scale)),
+            lineHeight: Math.max(10, Math.round(11 * scale)),
+          },
         ]}
         numberOfLines={2}
       >
@@ -1051,18 +1179,18 @@ function Control({
   label,
   icon,
   onPress,
-  large = false,
+  size = 34,
   lit = false,
   accent,
 }: {
   label: string;
   icon: ReactNode;
   onPress: () => void;
-  large?: boolean;
+  size?: number;
   lit?: boolean;
   accent: string;
 }) {
-  const size = large ? 50 : 40;
+  const ring = size + 5;
   return (
     <Pressable
       accessibilityRole="button"
@@ -1074,17 +1202,17 @@ function Control({
         style={[
           styles.ring,
           {
-            width: size + 6,
-            height: size + 6,
-            borderRadius: (size + 6) / 2,
+            width: ring,
+            height: ring,
+            borderRadius: ring / 2,
             borderColor: accent,
             backgroundColor: hexToRgba(accent, lit ? 0.22 : 0.1),
           },
           Platform.OS === 'web'
             ? ({
                 boxShadow: lit
-                  ? `0 0 16px ${hexToRgba(accent, 0.85)}`
-                  : `0 0 10px ${hexToRgba(accent, 0.55)}`,
+                  ? `0 0 14px ${hexToRgba(accent, 0.85)}`
+                  : `0 0 8px ${hexToRgba(accent, 0.55)}`,
               } as object)
             : null,
         ]}
@@ -1159,15 +1287,23 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.28)',
     zIndex: 20,
   },
-  root: { flex: 1, backgroundColor: BASE.black },
-  scroll: { flex: 1 },
+  root: {
+    flex: 1,
+    backgroundColor: BASE.black,
+    overflow: 'hidden',
+    width: '100%',
+    maxWidth: '100%',
+  },
+  scroll: { flex: 1, width: '100%', maxWidth: '100%' },
   scrollContent: {
     flexGrow: 1,
-    // Modest slack so users can still scroll past hero + controls.
-    paddingBottom: 56,
+    width: '100%',
+    maxWidth: '100%',
+    paddingBottom: 8,
   },
   hero: {
     width: '100%',
+    maxWidth: '100%',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'flex-end',
@@ -1187,12 +1323,12 @@ const styles = StyleSheet.create({
   heroFade: { ...StyleSheet.absoluteFill },
   title: {
     position: 'absolute',
-    bottom: 6,
-    left: 16,
-    right: 16,
+    bottom: 4,
+    left: 14,
+    right: 14,
     textAlign: 'center',
     color: BASE.white,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     letterSpacing: 0.2,
     textTransform: 'lowercase',
@@ -1206,37 +1342,40 @@ const styles = StyleSheet.create({
     right: 10,
     zIndex: 30,
     elevation: 30,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.55)',
     borderWidth: 1.5,
   },
   lower: {
-    flexGrow: 1,
     backgroundColor: BASE.black,
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     paddingHorizontal: 12,
     paddingTop: 2,
-    paddingBottom: 4,
+    paddingBottom: 2,
     gap: 6,
     alignSelf: 'stretch',
     width: '100%',
+    maxWidth: '100%',
   },
   lowerTop: {
     width: '100%',
+    maxWidth: '100%',
     alignItems: 'center',
-    gap: 3,
+    gap: 2,
   },
   bottomDock: {
     width: '100%',
+    maxWidth: '100%',
     paddingHorizontal: 10,
-    paddingBottom: Platform.OS === 'web' ? 4 : 4,
+    paddingBottom: 4,
     paddingTop: 2,
     backgroundColor: BASE.black,
+    borderTopWidth: 0,
   },
   bottomBar: {
     width: '100%',
@@ -1246,7 +1385,7 @@ const styles = StyleSheet.create({
     alignItems: 'stretch',
     justifyContent: 'space-between',
     gap: 2,
-    paddingVertical: 5,
+    paddingVertical: 4,
     paddingHorizontal: 4,
     borderRadius: 14,
     borderWidth: 1.5,
@@ -1256,10 +1395,10 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 2,
+    gap: 1,
     paddingVertical: 1,
     paddingHorizontal: 2,
-    minHeight: 40,
+    minHeight: 36,
   },
   bottomLabel: {
     fontSize: 9,
@@ -1299,29 +1438,29 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
   glassInner: { zIndex: 1 },
-  controlGlass: { borderRadius: 999, maxWidth: 420 },
+  controlGlass: { borderRadius: 999, maxWidth: 420, alignSelf: 'stretch' },
   controlRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
-    paddingVertical: 8,
-    paddingHorizontal: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 4,
   },
-  control: { alignItems: 'center', minWidth: 56 },
+  control: { alignItems: 'center', minWidth: 48 },
   ring: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
   sheen: {
     position: 'absolute',
     top: 0,
-    left: 10,
-    right: 10,
+    left: 8,
+    right: 8,
     height: '40%',
     borderBottomLeftRadius: 40,
     borderBottomRightRadius: 40,
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
   controlLabel: {
-    marginTop: 4,
-    fontSize: 11,
+    marginTop: 2,
+    fontSize: 10,
     fontWeight: '600',
     textTransform: 'lowercase',
   },
@@ -1337,7 +1476,7 @@ const styles = StyleSheet.create({
   statusBlock: {
     width: '100%',
     maxWidth: 420,
-    gap: 8,
+    gap: 6,
   },
   statusGlass: {
     marginTop: 0,
@@ -1350,16 +1489,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 9,
+    paddingVertical: 5,
+    paddingHorizontal: 8,
   },
   statusThumb: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 1.5,
   },
-  statusText: { flex: 1 },
+  statusText: { flex: 1, minWidth: 0 },
   statusTitle: {
     color: BASE.white,
     fontSize: 13,
@@ -1377,22 +1516,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1.5,
     backgroundColor: 'rgba(8, 8, 8, 0.78)',
   },
   addEaIcon: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   addEaLabel: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     letterSpacing: 0.2,
   },
