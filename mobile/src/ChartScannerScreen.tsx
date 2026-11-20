@@ -75,14 +75,105 @@ type ScanOutcome = {
   sl: string;
 };
 
-const ENGINE_STAGES: { id: EngineStageId; label: string }[] = [
-  { id: 1, label: 'CAPTURE' },
-  { id: 2, label: 'DETECT' },
-  { id: 3, label: 'ANALYSE' },
-  { id: 4, label: 'MATCH' },
-  { id: 5, label: 'EXECUTE' },
-  { id: 6, label: 'CONFIRM' },
+const ENGINE_STAGES: {
+  id: EngineStageId;
+  label: string;
+  activeLabel: string;
+  hint: string;
+}[] = [
+  { id: 1, label: 'Capture', activeLabel: 'Capturing', hint: 'Chart in radar' },
+  { id: 2, label: 'Reading', activeLabel: 'Reading', hint: 'OCR from image' },
+  {
+    id: 3,
+    label: 'Analyzing',
+    activeLabel: 'Analyzing',
+    hint: 'Local chart pulse',
+  },
+  { id: 4, label: 'Match', activeLabel: 'Matching', hint: 'Bias + levels' },
+  {
+    id: 5,
+    label: 'Execute',
+    activeLabel: 'Executing',
+    hint: 'Needs live engine',
+  },
+  {
+    id: 6,
+    label: 'Confirm',
+    activeLabel: 'Confirming',
+    hint: 'Needs live engine',
+  },
 ];
+
+type EnginePhase =
+  | 'idle'
+  | 'reading'
+  | 'analyzing'
+  | 'matching'
+  | 'signal'
+  | 'blocked'
+  | 'error';
+
+function deriveEnginePhase(
+  stages: Record<EngineStageId, StageState>,
+): { phase: EnginePhase; title: string; detail: string } {
+  if (stages[2] === 'error' || stages[3] === 'error' || stages[4] === 'error') {
+    return {
+      phase: 'error',
+      title: 'Pipeline error',
+      detail: 'Fix the chart or try again',
+    };
+  }
+  if (stages[2] === 'active') {
+    return {
+      phase: 'reading',
+      title: 'Reading',
+      detail: 'Extracting symbol from chart',
+    };
+  }
+  if (stages[3] === 'active') {
+    return {
+      phase: 'analyzing',
+      title: 'Analyzing',
+      detail: 'Running sequential chart analysis',
+    };
+  }
+  if (stages[4] === 'active') {
+    return {
+      phase: 'matching',
+      title: 'Matching',
+      detail: 'Locking bias and advisory levels',
+    };
+  }
+  if (stages[4] === 'done') {
+    return {
+      phase: stages[5] === 'blocked' ? 'blocked' : 'signal',
+      title: 'Signal ready',
+      detail:
+        stages[5] === 'blocked'
+          ? 'Execute / Confirm wait for a live engine'
+          : 'Pipeline complete',
+    };
+  }
+  if (stages[1] === 'done' && stages[2] === 'done') {
+    return {
+      phase: 'idle',
+      title: 'Ready to analyze',
+      detail: 'Symbol locked — run scan when ready',
+    };
+  }
+  if (stages[1] === 'done') {
+    return {
+      phase: 'idle',
+      title: 'Chart captured',
+      detail: 'Waiting for symbol read',
+    };
+  }
+  return {
+    phase: 'idle',
+    title: 'Idle',
+    detail: 'Upload an MT5 chart to start',
+  };
+}
 
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '');
@@ -519,6 +610,38 @@ function EdgesRadar({
   );
 }
 
+function EnginePhasePulse({ color }: { color: string }) {
+  const pulse = useRef(new Animated.Value(0.35)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.35,
+          duration: 700,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <Animated.View
+      style={[
+        styles.engineLiveDot,
+        { backgroundColor: color, opacity: pulse },
+      ]}
+    />
+  );
+}
+
 function TradeEnginePanel({
   accent,
   stages,
@@ -528,21 +651,72 @@ function TradeEnginePanel({
   stages: Record<EngineStageId, StageState>;
   liveEngine: boolean;
 }) {
+  const { phase, title, detail } = deriveEnginePhase(stages);
+  const doneCount = ENGINE_STAGES.filter((s) => stages[s.id] === 'done').length;
+  const progress = doneCount / ENGINE_STAGES.length;
+  const phaseColor =
+    phase === 'error'
+      ? accent
+      : phase === 'signal'
+        ? BASE.green
+        : phase === 'reading' || phase === 'analyzing' || phase === 'matching'
+          ? accent
+          : phase === 'blocked'
+            ? BASE.muted
+            : BASE.muted;
+  const isLive =
+    phase === 'reading' || phase === 'analyzing' || phase === 'matching';
+
   return (
-    <View style={[styles.enginePanel, { borderColor: hexToRgba(accent, 0.55) }]}>
-      <View style={styles.engineHeader}>
-        <Text style={styles.engineEyebrow}>Trade Engine</Text>
-        <Text style={styles.engineSub}>
-          {liveEngine
-            ? 'Live backend connected'
-            : 'Sequential pipeline — EXECUTE/CONFIRM need a live engine'}
-        </Text>
+    <View
+      style={[styles.enginePanel, { borderColor: hexToRgba(accent, 0.45) }]}
+      accessibilityLabel={`Trade Engine ${title}`}
+    >
+      <View style={styles.engineTop}>
+        <View style={styles.engineTitleCol}>
+          <Text style={styles.engineEyebrow}>Trade Engine</Text>
+          <Text style={styles.engineSub}>
+            {liveEngine
+              ? 'Live backend connected'
+              : 'Sequential · Execute/Confirm need live engine'}
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.enginePhasePill,
+            {
+              borderColor: hexToRgba(phaseColor, 0.65),
+              backgroundColor: hexToRgba(phaseColor, isLive ? 0.18 : 0.08),
+            },
+          ]}
+        >
+          {isLive ? <EnginePhasePulse color={phaseColor} /> : null}
+          <Text style={[styles.enginePhaseText, { color: phaseColor }]}>
+            {title}
+          </Text>
+        </View>
       </View>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.engineRow}
-      >
+
+      <Text style={styles.enginePhaseDetail}>{detail}</Text>
+
+      <View style={styles.engineTrack}>
+        <View
+          style={[
+            styles.engineTrackFill,
+            {
+              width: `${Math.max(4, Math.round(progress * 100))}%`,
+              backgroundColor:
+                phase === 'error'
+                  ? accent
+                  : progress >= 4 / 6
+                    ? BASE.green
+                    : accent,
+            },
+          ]}
+        />
+      </View>
+
+      <View style={styles.engineList}>
         {ENGINE_STAGES.map((s, i) => {
           const state = stages[s.id];
           const done = state === 'done';
@@ -557,52 +731,106 @@ function TradeEnginePanel({
                 ? accent
                 : blocked
                   ? BASE.dim
-                  : BASE.dim;
+                  : BASE.muted;
+          const label = active ? s.activeLabel : s.label;
+          const last = i === ENGINE_STAGES.length - 1;
           return (
-            <View key={s.id} style={styles.engineStep}>
-              {i > 0 ? (
+            <View key={s.id} style={styles.engineItem}>
+              <View style={styles.engineTimeline}>
                 <View
                   style={[
-                    styles.engineRail,
+                    styles.engineNode,
                     {
-                      backgroundColor:
-                        stages[ENGINE_STAGES[i - 1].id] === 'done'
-                          ? hexToRgba(BASE.green, 0.55)
-                          : hexToRgba(accent, 0.2),
+                      borderColor: color,
+                      backgroundColor: done
+                        ? hexToRgba(BASE.green, 0.22)
+                        : active
+                          ? hexToRgba(accent, 0.28)
+                          : err
+                            ? hexToRgba(accent, 0.18)
+                            : '#0A0A0A',
                     },
                   ]}
-                />
-              ) : null}
-              <View
-                style={[
-                  styles.engineDot,
-                  {
-                    borderColor: color,
-                    backgroundColor: done
-                      ? hexToRgba(BASE.green, 0.2)
-                      : active
-                        ? hexToRgba(accent, 0.22)
-                        : 'transparent',
-                  },
-                ]}
-              >
-                {done ? (
-                  <Ionicons name="checkmark" size={12} color={BASE.green} />
-                ) : err ? (
-                  <Ionicons name="close" size={12} color={accent} />
-                ) : blocked ? (
-                  <Ionicons name="remove" size={12} color={BASE.dim} />
-                ) : (
-                  <Text style={[styles.engineNum, { color }]}>{s.id}</Text>
-                )}
+                >
+                  {done ? (
+                    <Ionicons name="checkmark" size={12} color={BASE.green} />
+                  ) : err ? (
+                    <Ionicons name="close" size={12} color={accent} />
+                  ) : blocked ? (
+                    <Ionicons name="lock-closed" size={10} color={BASE.dim} />
+                  ) : active ? (
+                    <EnginePhasePulse color={accent} />
+                  ) : (
+                    <Text style={[styles.engineNum, { color }]}>{s.id}</Text>
+                  )}
+                </View>
+                {!last ? (
+                  <View
+                    style={[
+                      styles.engineStem,
+                      {
+                        backgroundColor: done
+                          ? hexToRgba(BASE.green, 0.55)
+                          : hexToRgba(accent, 0.18),
+                      },
+                    ]}
+                  />
+                ) : null}
               </View>
-              <Text style={[styles.engineLabel, { color }]} numberOfLines={1}>
-                {s.label}
-              </Text>
+              <View style={styles.engineItemBody}>
+                <View style={styles.engineItemRow}>
+                  <Text
+                    style={[
+                      styles.engineLabel,
+                      {
+                        color: active || done ? BASE.white : color,
+                        fontWeight: active ? '800' : '700',
+                      },
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.engineStateTag,
+                      {
+                        color: active
+                          ? accent
+                          : done
+                            ? BASE.green
+                            : blocked
+                              ? BASE.dim
+                              : BASE.muted,
+                      },
+                    ]}
+                  >
+                    {active
+                      ? 'LIVE'
+                      : done
+                        ? 'DONE'
+                        : err
+                          ? 'FAIL'
+                          : blocked
+                            ? 'LOCKED'
+                            : 'WAIT'}
+                  </Text>
+                </View>
+                <Text style={styles.engineHint}>
+                  {active
+                    ? s.id === 2
+                      ? 'Reading symbol & timeframe from the chart…'
+                      : s.id === 3
+                        ? 'Analyzing structure for bias and confidence…'
+                        : s.hint
+                    : blocked
+                      ? 'Locked until a live trade engine is connected'
+                      : s.hint}
+                </Text>
+              </View>
             </View>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -1167,7 +1395,7 @@ export function ChartScannerScreen() {
               color={BASE.white}
             />
             <Text style={styles.runText}>
-              {stage3 === 'active' ? 'Analysing…' : 'Run scan'}
+              {stage3 === 'active' ? 'Analyzing…' : 'Run scan'}
             </Text>
           </LinearGradient>
         </Pressable>
@@ -1557,56 +1785,112 @@ const styles = StyleSheet.create({
   },
   enginePanel: {
     borderWidth: 1.5,
-    borderRadius: 16,
+    borderRadius: 18,
     backgroundColor: BASE.panel,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     gap: 10,
   },
-  engineHeader: { gap: 2, paddingHorizontal: 4 },
+  engineTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  engineTitleCol: { flex: 1, gap: 2 },
   engineEyebrow: {
     color: BASE.white,
     fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.4,
+    letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
-  engineSub: { color: BASE.muted, fontSize: 11 },
-  engineRow: {
+  engineSub: { color: BASE.muted, fontSize: 11, lineHeight: 15 },
+  enginePhasePill: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: 2,
-    gap: 2,
-  },
-  engineStep: {
-    width: 58,
     alignItems: 'center',
-    gap: 5,
-    position: 'relative',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
-  engineDot: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+  enginePhaseText: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  enginePhaseDetail: {
+    color: BASE.muted,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  engineLiveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  engineTrack: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+  },
+  engineTrackFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  engineList: { gap: 0, marginTop: 2 },
+  engineItem: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: 12,
+    minHeight: 44,
+  },
+  engineTimeline: {
+    width: 22,
+    alignItems: 'center',
+  },
+  engineNode: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 2,
-    backgroundColor: '#0A0A0A',
   },
-  engineNum: { fontSize: 11, fontWeight: '800' },
+  engineStem: {
+    flex: 1,
+    width: 2,
+    marginVertical: 3,
+    borderRadius: 1,
+    minHeight: 12,
+  },
+  engineItemBody: {
+    flex: 1,
+    paddingBottom: 10,
+    gap: 2,
+  },
+  engineItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  engineNum: { fontSize: 10, fontWeight: '800' },
   engineLabel: {
-    fontSize: 8,
-    fontWeight: '800',
+    fontSize: 13,
     letterSpacing: 0.2,
   },
-  engineRail: {
-    position: 'absolute',
-    top: 12,
-    right: '50%',
-    width: 34,
-    height: 2,
-    zIndex: 1,
+  engineStateTag: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  engineHint: {
+    color: BASE.dim,
+    fontSize: 11,
+    lineHeight: 15,
   },
   radarBlock: {
     alignItems: 'center',
