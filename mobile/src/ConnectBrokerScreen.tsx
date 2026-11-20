@@ -25,13 +25,18 @@ const BASE = {
   green: '#00C853',
 };
 
-/** Popular MT4/MT5 brokers — search / auto-suggest only. */
+/** Expanded MT4/MT5 / CFD broker catalog for search + auto-suggest. */
 export const BROKERS = [
   'IC Markets',
   'Pepperstone',
   'XM',
+  'XM Global',
   'Exness',
   'FTMO',
+  'FundingPips',
+  'The Funded Trader',
+  'FundedNext',
+  'MyForexFunds',
   'RoboForex',
   'Tickmill',
   'FP Markets',
@@ -40,14 +45,18 @@ export const BROKERS = [
   'IG',
   'Plus500',
   'Admiral Markets',
+  'Admirals',
   'BlackBull Markets',
   'Fusion Markets',
   'Eightcap',
   'HFM',
+  'HF Markets',
   'FBS',
   'ThinkMarkets',
   'Vantage',
+  'Vantage Markets',
   'Axi',
+  'AxiTrader',
   'CMC Markets',
   'Forex.com',
   'Interactive Brokers',
@@ -61,13 +70,189 @@ export const BROKERS = [
   'Raw Trading',
   'JustMarkets',
   'Octa',
+  'OctaFX',
   'LiteFinance',
   'InstaForex',
   'Alpari',
   'FXTM',
   'HotForex',
   'Dukascopy',
+  'Swissquote',
+  'TD365',
+  'City Index',
+  'Spreadex',
+  'Markets.com',
+  'XTB',
+  'ActivTrades',
+  'ADSS',
+  'AMarkets',
+  'IronFX',
+  'FXCM',
+  'FXOpen',
+  'FXPro',
+  'FxPig',
+  'Gbe brokers',
+  'GMI',
+  'HYCM',
+  'ICM Capital',
+  'IFC Markets',
+  'Infinox',
+  'Ironbeam',
+  'LegacyFX',
+  'Libertex',
+  'LMAX',
+  'London Capital Group',
+  'NPBFX',
+  'Olymp Trade',
+  'Orbex',
+  'Pacific Union',
+  'Phenix Capital',
+  'PhillipCapital',
+  'PrimeXBT',
+  'Purple Trading',
+  'Rakuten Securities',
+  'Refresh Capital',
+  'Scope Markets',
+  'Skilling',
+  'Spread Co',
+  'Sterling Markets',
+  'StoneX',
+  'Supercharts',
+  'T4Trade',
+  'TeleTrade',
+  'TenX Prime',
+  'TMGM',
+  'Tradier',
+  'Tradovate',
+  'Traders Way',
+  'Tradeview Markets',
+  'TriumphFX',
+  'Ubermarkets',
+  'Umarkets',
+  'UniFee',
+  'Valutrades',
+  'Vantage International',
+  'Vertex Markets',
+  'VT Markets',
+  'Windsor Brokers',
+  'XBTFX',
+  'Yapikredi Invest',
+  'ZuluTrade',
+  'StarTrader',
+  'MultiBank Group',
+  'DooPrime',
+  'PuPrime',
+  'Ultima Markets',
+  'Moneta Markets',
+  'ACYpartners',
+  'Opofinance',
+  'Errante',
+  'Blueberry',
+  'ATFX',
+  'BDSwiss',
+  'NordFX',
+  'Just2Trade',
+  'NordFX',
+  'Tickmill UK',
+  'Tickmill EU',
+  'IC Markets AU',
+  'IC Markets Global',
+  'Pepperstone UK',
+  'Pepperstone AU',
+  'MetaQuotes Demo',
+  'MetaTrader 5 Demo',
+  'MetaTrader 4 Demo',
+  'Deriv',
+  'Binary.com',
+  'Pocket Option',
+  'IQ Option',
+  'Quotex',
+  'FreshForex',
+  'Grand Capital',
+  'Gerchik & Co',
+  'Amarkets',
+  'Weltrade',
+  'FiboGroup',
+  'RoboForex EU',
+  'RoboForex Ltd',
+  'AvaTrade EU',
+  'AvaTrade Global',
+  'Fxview',
+  'E8 Markets',
+  'The5ers',
+  'SurgeTrader',
+  'Maven Trading',
+  'Earn2Trade',
+  'Apex Trader Funding',
+  'Topstep',
+  'Bulenox',
+  'Leeloo Trading',
+  'City Traders Imperium',
+  'Funded Trading Plus',
+  'True Forex Funds',
+  'Goat Funded Trader',
 ] as const;
+
+/** Common misspellings / short names → catalog entry. */
+const BROKER_ALIASES: Record<string, string> = {
+  icmarkets: 'IC Markets',
+  icmarket: 'IC Markets',
+  icm: 'IC Markets',
+  pepper: 'Pepperstone',
+  pepperston: 'Pepperstone',
+  xmtrading: 'XM',
+  xmglobal: 'XM Global',
+  exnes: 'Exness',
+  ftmoo: 'FTMO',
+  roboforex: 'RoboForex',
+  'robo forex': 'RoboForex',
+  tickmil: 'Tickmill',
+  fpmarkets: 'FP Markets',
+  avatrade: 'AvaTrade',
+  oanda: 'OANDA',
+  plus500: 'Plus500',
+  admiral: 'Admiral Markets',
+  admirals: 'Admirals',
+  blackbull: 'BlackBull Markets',
+  fusion: 'Fusion Markets',
+  eightcap: 'Eightcap',
+  hfm: 'HFM',
+  hfmarkets: 'HF Markets',
+  thinkmarkets: 'ThinkMarkets',
+  vantagemarkets: 'Vantage Markets',
+  axitrader: 'AxiTrader',
+  cmc: 'CMC Markets',
+  ibkr: 'Interactive Brokers',
+  ib: 'Interactive Brokers',
+  saxo: 'Saxo Bank',
+  capitalcom: 'Capital.com',
+  trading212: 'Trading 212',
+  etoro: 'eToro',
+  blueberry: 'Blueberry Markets',
+  gomarkets: 'GO Markets',
+  globalprime: 'Global Prime',
+  justmarkets: 'JustMarkets',
+  octafx: 'OctaFX',
+  liteforex: 'LiteFinance',
+  insta: 'InstaForex',
+  hotforex: 'HotForex',
+  dukas: 'Dukascopy',
+  fxcm: 'FXCM',
+  fxpro: 'FXPro',
+  fxopen: 'FXOpen',
+  fundedpips: 'FundingPips',
+  tft: 'The Funded Trader',
+  fundednext: 'FundedNext',
+  mff: 'MyForexFunds',
+  tmgm: 'TMGM',
+  vtmarkets: 'VT Markets',
+  puprime: 'PuPrime',
+  dooprime: 'DooPrime',
+  multibank: 'MultiBank Group',
+  mt5demo: 'MetaTrader 5 Demo',
+  mt4demo: 'MetaTrader 4 Demo',
+  metaquotes: 'MetaQuotes Demo',
+};
 
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '');
@@ -79,14 +264,92 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-export function filterBrokers(query: string, limit = 8): string[] {
+/** Lowercase + strip spaces/punctuation for fuzzy compare. */
+export function normalizeBrokerKey(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const row = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) row[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let prev = i - 1;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = row[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
+      prev = cur;
+    }
+  }
+  return row[b.length];
+}
+
+function scoreBroker(query: string, name: string): number {
   const q = query.trim().toLowerCase();
+  const qKey = normalizeBrokerKey(query);
+  const n = name.toLowerCase();
+  const nKey = normalizeBrokerKey(name);
+  if (!qKey) return 0;
+  if (n === q || nKey === qKey) return 1000;
+  if (n.startsWith(q) || nKey.startsWith(qKey)) return 900 - Math.min(qKey.length, 40);
+  if (n.includes(q) || nKey.includes(qKey)) return 750 - Math.min(nKey.indexOf(qKey), 40);
+  // subsequence / typo tolerance
+  const dist = levenshtein(qKey, nKey.slice(0, Math.max(qKey.length + 2, qKey.length)));
+  const maxLen = Math.max(qKey.length, 1);
+  if (dist <= Math.max(1, Math.floor(maxLen / 3))) {
+    return 600 - dist * 40;
+  }
+  // token overlap
+  const qTokens = q.split(/[^a-z0-9]+/).filter(Boolean);
+  const nTokens = n.split(/[^a-z0-9]+/).filter(Boolean);
+  let hits = 0;
+  for (const t of qTokens) {
+    if (nTokens.some((nt) => nt.startsWith(t) || t.startsWith(nt))) hits += 1;
+  }
+  if (hits > 0) return 400 + hits * 50;
+  return 0;
+}
+
+export function filterBrokers(query: string, limit = 10): string[] {
+  const q = query.trim();
   if (!q) return [...BROKERS].slice(0, limit);
-  const starts = BROKERS.filter((b) => b.toLowerCase().startsWith(q));
-  const contains = BROKERS.filter(
-    (b) => !b.toLowerCase().startsWith(q) && b.toLowerCase().includes(q),
+
+  const qKey = normalizeBrokerKey(q);
+  const aliasHit = BROKER_ALIASES[qKey] || BROKER_ALIASES[q.toLowerCase()];
+  const scored = BROKERS.map((name) => ({
+    name,
+    score: scoreBroker(q, name),
+  }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+  const out: string[] = [];
+  if (aliasHit && !scored.some((s) => s.name === aliasHit && s.score >= 750)) {
+    out.push(aliasHit);
+  }
+  for (const s of scored) {
+    if (!out.includes(s.name)) out.push(s.name);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** True when typed name is not an exact catalog match (offer custom). */
+export function canUseCustomBroker(query: string): boolean {
+  const q = query.trim();
+  if (q.length < 2) return false;
+  const exact = BROKERS.some(
+    (b) => b.toLowerCase() === q.toLowerCase() || normalizeBrokerKey(b) === normalizeBrokerKey(q),
   );
-  return [...starts, ...contains].slice(0, limit);
+  return !exact;
 }
 
 export function ConnectBrokerScreen() {
@@ -106,7 +369,8 @@ export function ConnectBrokerScreen() {
   const [error, setError] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
 
-  const suggestions = useMemo(() => filterBrokers(query, 8), [query]);
+  const suggestions = useMemo(() => filterBrokers(query, 10), [query]);
+  const showCustom = useMemo(() => canUseCustomBroker(query), [query]);
   const showSuggest =
     !selected && (searchFocused || query.trim().length > 0);
 
@@ -197,8 +461,9 @@ export function ConnectBrokerScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.lead}>
-          Search your broker, then enter MT5 Server, Login, and Password.
-          Demo connect only — credentials are not stored.
+          Search your broker (fuzzy match), or use a custom name if it is not
+          listed. Then enter MT5 Server, Login, and Password. Demo connect only
+          — credentials are not stored.
         </Text>
 
         <Text style={styles.sectionLabel}>Broker</Text>
@@ -252,44 +517,75 @@ export function ConnectBrokerScreen() {
               { borderColor: hexToRgba(accent, 0.35) },
             ]}
           >
-            {suggestions.length === 0 ? (
-              <Text style={styles.suggestEmpty}>No brokers match</Text>
-            ) : (
-              suggestions.map((name, i) => (
-                <Pressable
-                  key={name}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Select ${name}`}
-                  onPress={() => pickBroker(name)}
-                  style={({ pressed }) => [
-                    styles.suggestRow,
-                    i > 0
-                      ? {
-                          borderTopWidth: StyleSheet.hairlineWidth,
-                          borderTopColor: hexToRgba(accent, 0.2),
-                        }
-                      : null,
-                    {
-                      backgroundColor: pressed
-                        ? hexToRgba(accent, 0.12)
-                        : 'transparent',
-                    },
-                  ]}
-                >
-                  <Ionicons
-                    name="business-outline"
-                    size={16}
-                    color={accent}
-                  />
-                  <Text style={styles.suggestName}>{name}</Text>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={16}
-                    color={BASE.dim}
-                  />
-                </Pressable>
-              ))
-            )}
+            {suggestions.length === 0 && !showCustom ? (
+              <Text style={styles.suggestEmpty}>
+                No brokers match — type a name to use custom
+              </Text>
+            ) : null}
+            {suggestions.map((name, i) => (
+              <Pressable
+                key={name}
+                accessibilityRole="button"
+                accessibilityLabel={`Select ${name}`}
+                onPress={() => pickBroker(name)}
+                style={({ pressed }) => [
+                  styles.suggestRow,
+                  i > 0
+                    ? {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: hexToRgba(accent, 0.2),
+                      }
+                    : null,
+                  {
+                    backgroundColor: pressed
+                      ? hexToRgba(accent, 0.12)
+                      : 'transparent',
+                  },
+                ]}
+              >
+                <Ionicons name="business-outline" size={16} color={accent} />
+                <Text style={styles.suggestName}>{name}</Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={BASE.dim}
+                />
+              </Pressable>
+            ))}
+            {showCustom ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Use custom broker ${query.trim()}`}
+                onPress={() => pickBroker(query.trim())}
+                style={({ pressed }) => [
+                  styles.suggestRow,
+                  suggestions.length > 0
+                    ? {
+                        borderTopWidth: StyleSheet.hairlineWidth,
+                        borderTopColor: hexToRgba(accent, 0.2),
+                      }
+                    : null,
+                  {
+                    backgroundColor: pressed
+                      ? hexToRgba(accent, 0.12)
+                      : hexToRgba(accent, 0.06),
+                  },
+                ]}
+              >
+                <Ionicons name="create-outline" size={16} color={accent} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.suggestName}>
+                    Use “{query.trim()}”
+                  </Text>
+                  <Text style={styles.suggestHint}>Custom broker name</Text>
+                </View>
+                <Ionicons
+                  name="chevron-forward"
+                  size={16}
+                  color={BASE.dim}
+                />
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -644,6 +940,11 @@ const styles = StyleSheet.create({
     color: BASE.white,
     fontSize: 15,
     fontWeight: '600',
+  },
+  suggestHint: {
+    color: BASE.muted,
+    fontSize: 11,
+    marginTop: 2,
   },
   formBlock: { gap: 12 },
   pickedRow: {
