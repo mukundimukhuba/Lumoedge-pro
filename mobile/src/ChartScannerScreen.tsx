@@ -818,6 +818,7 @@ export function ChartScannerScreen() {
     accent,
     selected: quoteSymbols,
     quoteSetups,
+    activeEa,
   } = useAppState();
   const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
@@ -1729,6 +1730,7 @@ export function ChartScannerScreen() {
         mt5Token={mt5Token}
         symbols={quoteSymbols}
         quoteSetups={quoteSetups}
+        botName={activeEa?.name}
         lotSize={clampLot(parsePositive(lotRaw, 0.01, 1))}
         trades={clampTrades(parsePositive(tradesRaw, 1, 3))}
         onClose={() => setAutoEngineOpen(false)}

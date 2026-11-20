@@ -13,7 +13,10 @@ import {
   type AutoScanSignal,
 } from './scan/autoApi';
 import { buildTpLadder, formatPrice } from './scan/strategy';
-import { sendBrokerOrder } from './brokers/api';
+import {
+  formatOrderSendComment,
+  sendBrokerOrder,
+} from './brokers/api';
 import type { QuoteSetup } from './AppState';
 import { normalizeQuoteSetup } from './AppState';
 
@@ -54,6 +57,8 @@ type Props = {
   /** Fallback when no per-symbol setup */
   lotSize?: number;
   trades?: number;
+  /** Active EA / bot name for MT5 OrderSend comment */
+  botName?: string | null;
   onClose: () => void;
   onExecuted?: (result: {
     symbol: string;
@@ -70,6 +75,7 @@ export function AutoTradeEngineOverlay({
   quoteSetups,
   lotSize = 0.01,
   trades = 1,
+  botName,
   onClose,
   onExecuted,
 }: Props) {
@@ -259,7 +265,7 @@ export function AutoTradeEngineOverlay({
             volume: sendLots,
             stopLoss: sl,
             takeProfit: tp,
-            comment: 'Lumo Edge Auto',
+            comment: formatOrderSendComment(botName),
             slippage: 10000,
           });
           if (ac.signal.aborted || id !== runId.current) return;
@@ -311,7 +317,7 @@ export function AutoTradeEngineOverlay({
       ac.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, mt5Token, symbols, quoteSetups, lotSize, trades]);
+  }, [visible, mt5Token, symbols, quoteSetups, lotSize, trades, botName]);
 
   const phaseLabel =
     phase === 'scanning'
