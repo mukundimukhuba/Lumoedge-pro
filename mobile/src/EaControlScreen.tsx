@@ -22,7 +22,6 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccessGateScreen } from './AccessGateScreen';
-import { ChartScannerPanel } from './ChartScannerPanel';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
 import { useAppState, ACCENTS, SYMBOLS } from './AppState';
 
@@ -30,7 +29,6 @@ type Sheet =
   | 'none'
   | 'quotes'
   | 'settings'
-  | 'scanner'
   | 'calendar'
   | 'broker';
 
@@ -128,7 +126,6 @@ export function EaControlScreen() {
   const [sheet, setSheet] = useState<Sheet>('none');
   const [bottomTab, setBottomTab] = useState<BottomTab>('home');
   const [query, setQuery] = useState('');
-  const [scanSymbol, setScanSymbol] = useState('XAUUSD');
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
   const [brokerConnected, setBrokerConnected] = useState(false);
@@ -208,19 +205,23 @@ export function EaControlScreen() {
   const sheetTitle =
     sheet === 'quotes'
       ? 'quotes'
-      : sheet === 'scanner'
-        ? 'chart scanner'
-        : sheet === 'calendar'
-          ? 'events calendar'
-          : sheet === 'broker'
-            ? 'connect your broker'
-            : 'settings';
+      : sheet === 'calendar'
+        ? 'events calendar'
+        : sheet === 'broker'
+          ? 'connect your broker'
+          : 'settings';
 
   const closeSheet = () => {
     setSheet('none');
     setBottomTab('home');
   };
   const backToSettings = () => setSheet('settings');
+
+  const openChartScanner = () => {
+    setSheet('none');
+    setBottomTab('scanner');
+    router.push('/chart-scanner');
+  };
 
   const onBottomTab = (tab: BottomTab) => {
     setBottomTab(tab);
@@ -229,7 +230,7 @@ export function EaControlScreen() {
       return;
     }
     if (tab === 'scanner') {
-      setSheet('scanner');
+      openChartScanner();
       return;
     }
     setSheet('broker');
@@ -684,22 +685,17 @@ export function EaControlScreen() {
         <View style={styles.modalBackdrop}>
           <Glass
             accent={accent}
-            style={[
-              styles.sheet,
-              sheet === 'scanner' ? styles.sheetTall : null,
-            ]}
+            style={styles.sheet}
             contentStyle={styles.sheetBody}
           >
 
               <View style={styles.sheetHeader}>
                 <View style={styles.sheetHeaderLeft}>
-                  {sheet === 'scanner' ||
-                  sheet === 'calendar' ||
-                  sheet === 'broker' ? (
+                  {sheet === 'calendar' || sheet === 'broker' ? (
                     <Pressable
                       accessibilityLabel="back"
                       onPress={() => {
-                        if (sheet === 'scanner' || sheet === 'broker') {
+                        if (sheet === 'broker') {
                           closeSheet();
                         } else {
                           backToSettings();
@@ -776,8 +772,8 @@ export function EaControlScreen() {
                   accent={accent}
                   icon="scan-outline"
                   title="chart scanner"
-                  subtitle="radar · upload · camera · mock bias"
-                  onPress={() => setSheet('scanner')}
+                  subtitle="full-page radar · upload · camera"
+                  onPress={openChartScanner}
                 />
                 <SettingsLink
                   accent={accent}
@@ -805,15 +801,6 @@ export function EaControlScreen() {
                   <Text style={styles.doneText}>close</Text>
                 </Pressable>
               </ScrollView>
-            ) : null}
-
-            {sheet === 'scanner' ? (
-              <ChartScannerPanel
-                accent={accent}
-                symbol={scanSymbol}
-                setSymbol={setScanSymbol}
-                onClose={closeSheet}
-              />
             ) : null}
 
             {sheet === 'broker' ? (
@@ -1521,7 +1508,6 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   sheet: { borderRadius: 28, maxHeight: '82%' },
-  sheetTall: { maxHeight: '92%' },
   sheetBody: { padding: 16, gap: 12 },
   sheetHeader: {
     flexDirection: 'row',
