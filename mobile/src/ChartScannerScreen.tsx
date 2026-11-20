@@ -1626,7 +1626,7 @@ const styles = StyleSheet.create({
   historyBias: { fontSize: 14, fontWeight: '800' },
   historyConf: { color: BASE.muted, fontSize: 12, fontWeight: '600' },
   centerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.72)',
     justifyContent: 'center',
     alignItems: 'center',
