@@ -127,6 +127,28 @@ export async function connectBrokerApi(input: {
   return data;
 }
 
+/** MT5 OrderSend comment max length */
+export const MT5_COMMENT_MAX = 31;
+const ORDER_COMMENT_SUFFIX = ' ~ Lumoedge/pro';
+
+/**
+ * OrderSend comment: `{bot name} ~ Lumoedge/pro`
+ * e.g. `unlimitedbull ~ Lumoedge/pro` (fits MT5 31-char limit).
+ */
+export function formatOrderSendComment(botName?: string | null): string {
+  const raw = String(botName || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    // Drop any prior Lumoedge / Lumo Edge branding on the name
+    .replace(/\s*~?\s*Lumo\s*edge(?:\/?\s*pro)?.*$/i, '')
+    .trim();
+  const name = (raw || 'Edges').slice(
+    0,
+    Math.max(1, MT5_COMMENT_MAX - ORDER_COMMENT_SUFFIX.length),
+  );
+  return `${name}${ORDER_COMMENT_SUFFIX}`.slice(0, MT5_COMMENT_MAX);
+}
+
 export type BrokerOrderRequest = {
   id: string;
   symbol: string;

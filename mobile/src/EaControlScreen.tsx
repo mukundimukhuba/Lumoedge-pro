@@ -967,6 +967,7 @@ export function EaControlScreen() {
         mt5Token={mt5Token}
         symbols={selected}
         quoteSetups={quoteSetups}
+        botName={activeEa?.name}
         onClose={haltAutoTrade}
         onExecuted={() => {
           setStatus('running');
