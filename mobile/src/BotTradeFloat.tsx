@@ -1,15 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ImageSourcePropType,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -21,6 +24,38 @@ import {
   loadAutoTradeHistory,
   type AutoTradeHistoryEntry,
 } from './autoTradeHistory';
+
+const FAB_SIZE = 64;
+const POS_KEY = 'edges-bot-float-pos-v1';
+const TAP_SLOP = 10;
+
+type FabPos = { x: number; y: number };
+
+async function loadFabPos(): Promise<FabPos | null> {
+  try {
+    const raw = await AsyncStorage.getItem(POS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as FabPos;
+    if (
+      parsed &&
+      Number.isFinite(parsed.x) &&
+      Number.isFinite(parsed.y)
+    ) {
+      return { x: Number(parsed.x), y: Number(parsed.y) };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+async function saveFabPos(pos: FabPos): Promise<void> {
+  try {
+    await AsyncStorage.setItem(POS_KEY, JSON.stringify(pos));
+  } catch {
+    /* ignore */
+  }
+}
 
 const BASE = {
   black: '#000000',
@@ -77,8 +112,8 @@ type Props = {
 };
 
 /**
- * Floating bot avatar (bottom-right). Tap opens Auto trade history +
- * currently open / running trades — red/black Edges panel.
+ * Floating bot avatar — drag anywhere (position persisted).
+ * Short tap still opens Auto trade history + open trades.
  */
 export function BotTradeFloat({
   accent,
@@ -88,16 +123,108 @@ export function BotTradeFloat({
   historyTick = 0,
 }: Props) {
   const insets = useSafeAreaInsets();
+  const { width: winW, height: winH } = useWindowDimensions();
   const [open, setOpen] = useState(false);
   const [history, setHistory] = useState<AutoTradeHistoryEntry[]>([]);
   const [trades, setTrades] = useState<BrokerTrade[]>([]);
   const [currency, setCurrency] = useState<string | undefined>();
   const [loadingOpen, setLoadingOpen] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [pos, setPos] = useState<FabPos | null>(null);
+  const [dragging, setDragging] = useState(false);
 
-  /** Dock ≈ 58 content + safe pad — keep FAB clearly above it. */
+  const safeTop = Math.max(insets.top, Platform.OS === 'web' ? 8 : 0);
   const safeBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 12 : 8);
-  const dockLift = safeBottom + 64 + 14;
+  const pad = 8;
+
+  const clampPos = useCallback(
+    (p: FabPos): FabPos => {
+      const maxX = Math.max(pad, winW - FAB_SIZE - pad);
+      const maxY = Math.max(safeTop + pad, winH - FAB_SIZE - safeBottom - pad);
+      return {
+        x: Math.min(maxX, Math.max(pad, p.x)),
+        y: Math.min(maxY, Math.max(safeTop + pad, p.y)),
+      };
+    },
+    [winW, winH, safeTop, safeBottom],
+  );
+
+  const defaultPos = useCallback((): FabPos => {
+    return clampPos({
+      x: winW - FAB_SIZE - 14,
+      y: winH - FAB_SIZE - (safeBottom + 64 + 14),
+    });
+  }, [clampPos, winW, winH, safeBottom]);
+
+  const posRef = useRef<FabPos>(defaultPos());
+  const dragOrigin = useRef<FabPos>({ x: 0, y: 0 });
+  const movedRef = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const saved = await loadFabPos();
+      if (cancelled) return;
+      const next = clampPos(saved || defaultPos());
+      posRef.current = next;
+      setPos(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clampPos, defaultPos]);
+
+  // Re-clamp when window / insets change
+  useEffect(() => {
+    setPos((prev) => {
+      const next = clampPos(prev || defaultPos());
+      posRef.current = next;
+      return next;
+    });
+  }, [clampPos, defaultPos]);
+
+  const openPanel = useCallback(() => setOpen(true), []);
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_, g) =>
+          Math.abs(g.dx) > 2 || Math.abs(g.dy) > 2,
+        onPanResponderGrant: () => {
+          movedRef.current = false;
+          dragOrigin.current = { ...posRef.current };
+          setDragging(true);
+        },
+        onPanResponderMove: (_, g) => {
+          if (Math.abs(g.dx) > TAP_SLOP || Math.abs(g.dy) > TAP_SLOP) {
+            movedRef.current = true;
+          }
+          const next = clampPos({
+            x: dragOrigin.current.x + g.dx,
+            y: dragOrigin.current.y + g.dy,
+          });
+          posRef.current = next;
+          setPos(next);
+        },
+        onPanResponderRelease: () => {
+          setDragging(false);
+          const final = clampPos(posRef.current);
+          posRef.current = final;
+          setPos(final);
+          void saveFabPos(final);
+          if (!movedRef.current) openPanel();
+        },
+        onPanResponderTerminate: () => {
+          setDragging(false);
+          const final = clampPos(posRef.current);
+          posRef.current = final;
+          setPos(final);
+          void saveFabPos(final);
+        },
+      }),
+    [clampPos, openPanel],
+  );
 
   const refreshHistory = useCallback(async () => {
     const rows = await loadAutoTradeHistory();
@@ -142,6 +269,8 @@ export function BotTradeFloat({
     return () => clearInterval(iv);
   }, [open, refreshHistory, refreshOpenTrades]);
 
+  const fabPos = pos || defaultPos();
+
   return (
     <>
       {/* Full-screen overlay layer — always above ScrollView + dock */}
@@ -151,30 +280,34 @@ export function BotTradeFloat({
         // @ts-expect-error web stacking
         dataSet={{ botFloat: 'host' }}
       >
-        <Pressable
+        <View
           accessibilityRole="button"
-          accessibilityLabel="Open bot trades panel"
+          accessibilityLabel="Bot trades — drag to move, tap to open"
           testID="bot-trade-float"
           // @ts-expect-error web-only marker for proofs
           dataSet={{ botFloat: 'fab' }}
-          onPress={() => setOpen(true)}
-          style={({ pressed }) => [
+          {...panResponder.panHandlers}
+          style={[
             styles.fab,
             {
-              bottom: dockLift,
+              left: fabPos.x,
+              top: fabPos.y,
               borderColor: accent,
               shadowColor: accent,
-              opacity: pressed ? 0.9 : 1,
+              opacity: dragging ? 0.92 : 1,
+              transform: [{ scale: dragging ? 1.06 : 1 }],
               ...(Platform.OS === 'web'
                 ? ({
                     boxShadow: `0 0 0 2px ${hexToRgba(accent, 0.35)}, 0 8px 22px ${hexToRgba(accent, 0.55)}`,
-                    cursor: 'pointer',
+                    cursor: dragging ? 'grabbing' : 'grab',
+                    touchAction: 'none',
+                    userSelect: 'none',
                   } as object)
                 : null),
             },
           ]}
         >
-          <View style={styles.fabImgWrap}>
+          <View style={styles.fabImgWrap} pointerEvents="none">
             <Image
               source={botImage}
               style={styles.fabImg}
@@ -186,9 +319,10 @@ export function BotTradeFloat({
             <View
               style={[styles.fabLive, { backgroundColor: BASE.green }]}
               accessibilityLabel="Auto Trade running"
+              pointerEvents="none"
             />
           ) : null}
-        </Pressable>
+        </View>
       </View>
 
       <Modal
@@ -387,10 +521,9 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    right: 14,
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: FAB_SIZE,
+    height: FAB_SIZE,
+    borderRadius: FAB_SIZE / 2,
     borderWidth: 2.5,
     overflow: 'hidden',
     backgroundColor: '#1A0000',
