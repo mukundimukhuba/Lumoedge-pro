@@ -588,8 +588,10 @@ export function EaControlScreen() {
                 styles.addEaBtn,
                 {
                   borderColor: accent,
-                  paddingVertical: Math.max(5, Math.round(6 * scale)),
-                  gap: Math.max(6, Math.round(8 * scale)),
+                  paddingVertical: Math.max(11, Math.round(12 * scale)),
+                  paddingHorizontal: Math.max(14, Math.round(16 * scale)),
+                  gap: Math.max(8, Math.round(10 * scale)),
+                  minHeight: Math.max(48, Math.round(52 * scale)),
                 },
                 Platform.OS === 'web'
                   ? ({
@@ -604,15 +606,15 @@ export function EaControlScreen() {
                   styles.addEaIcon,
                   {
                     backgroundColor: hexToRgba(accent, 0.18),
-                    width: Math.max(22, Math.round(24 * scale)),
-                    height: Math.max(22, Math.round(24 * scale)),
-                    borderRadius: Math.max(11, Math.round(12 * scale)),
+                    width: Math.max(28, Math.round(30 * scale)),
+                    height: Math.max(28, Math.round(30 * scale)),
+                    borderRadius: Math.max(14, Math.round(15 * scale)),
                   },
                 ]}
               >
                 <Ionicons
                   name="add"
-                  size={Math.max(14, Math.round(16 * scale))}
+                  size={Math.max(18, Math.round(20 * scale))}
                   color={accent}
                 />
               </View>
@@ -621,7 +623,7 @@ export function EaControlScreen() {
                   styles.addEaLabel,
                   {
                     color: accent,
-                    fontSize: Math.max(11, Math.round(12 * scale)),
+                    fontSize: Math.max(13, Math.round(14 * scale)),
                   },
                 ]}
               >
@@ -1557,22 +1559,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    minHeight: 52,
     borderRadius: 999,
     borderWidth: 1.5,
     backgroundColor: 'rgba(8, 8, 8, 0.78)',
   },
   addEaIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
   },
   addEaLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '700',
     letterSpacing: 0.2,
   },
