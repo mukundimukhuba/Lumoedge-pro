@@ -41,7 +41,7 @@ export type BrokerConnectResponse = {
   server?: string;
   login?: string;
   linked?: boolean;
-  source?: 'mt5-live' | 'local-demo' | 'upstream';
+  source?: 'mt5-live' | 'upstream';
   message?: string;
   error?: string;
   upstream?: boolean;
