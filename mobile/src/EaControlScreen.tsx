@@ -22,6 +22,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccessGateScreen } from './AccessGateScreen';
+import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
 import { useAppState, ACCENTS, SYMBOLS } from './AppState';
 
@@ -31,8 +32,6 @@ type Sheet =
   | 'settings'
   | 'calendar'
   | 'broker';
-
-type BottomTab = 'home' | 'scanner' | 'broker';
 
 const BASE = {
   black: '#000000',
@@ -124,7 +123,6 @@ export function EaControlScreen() {
       ? { uri: activeEa.pictureUri }
       : require('../assets/mascot.jpg');
   const [sheet, setSheet] = useState<Sheet>('none');
-  const [bottomTab, setBottomTab] = useState<BottomTab>('home');
   const [query, setQuery] = useState('');
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
@@ -152,7 +150,7 @@ export function EaControlScreen() {
   /** Shared image height so face shows top, neck shows bottom of same pic. */
   const bleedImgH = Math.round(faceH * 1.55);
   const dockPad = Math.max(6, 2 + safeBottom);
-  const dockH = Math.round(50 * scale) + dockPad;
+  const dockH = Math.round(58 * scale) + dockPad;
   /** Reference stack gaps ≈ 10–15px (use 12). */
   const gapTight = 12;
   const gapSm = 4;
@@ -213,33 +211,12 @@ export function EaControlScreen() {
 
   const closeSheet = () => {
     setSheet('none');
-    setBottomTab('home');
   };
   const backToSettings = () => setSheet('settings');
 
   const openChartScanner = () => {
     setSheet('none');
-    setBottomTab('scanner');
-    router.push('/chart-scanner');
-  };
-
-  const openConnectBroker = () => {
-    setSheet('none');
-    setBottomTab('broker');
-    router.push('/connect-broker');
-  };
-
-  const onBottomTab = (tab: BottomTab) => {
-    setBottomTab(tab);
-    if (tab === 'home') {
-      setSheet('none');
-      return;
-    }
-    if (tab === 'scanner') {
-      openChartScanner();
-      return;
-    }
-    openConnectBroker();
+    router.replace('/chart-scanner');
   };
 
   const onSettingsPress = () => setSheet('settings');
@@ -351,7 +328,7 @@ export function EaControlScreen() {
         style={styles.scroll}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: Math.max(6, Math.round(8 * scale)) },
+          { paddingBottom: dockH + Math.max(8, Math.round(10 * scale)) },
         ]}
         showsVerticalScrollIndicator={false}
         bounces={false}
@@ -669,53 +646,7 @@ export function EaControlScreen() {
         </View>
       </ScrollView>
 
-      <View
-        style={[
-          styles.bottomDock,
-          {
-            paddingBottom: dockPad,
-            paddingTop: Math.max(2, Math.round(2 * scale)),
-            minHeight: dockH,
-          },
-        ]}
-      >
-        <View
-          style={[
-            styles.bottomBar,
-            { borderColor: hexToRgba(accent, 0.55) },
-            Platform.OS === 'web'
-              ? ({
-                  boxShadow: `0 0 14px ${hexToRgba(accent, 0.25)}`,
-                } as object)
-              : null,
-          ]}
-        >
-          <BottomNavItem
-            accent={accent}
-            active={bottomTab === 'home'}
-            label="Home"
-            icon="home-outline"
-            scale={scale}
-            onPress={() => onBottomTab('home')}
-          />
-          <BottomNavItem
-            accent={accent}
-            active={bottomTab === 'scanner'}
-            label="Chart scanner"
-            icon="scan-outline"
-            scale={scale}
-            onPress={() => onBottomTab('scanner')}
-          />
-          <BottomNavItem
-            accent={accent}
-            active={bottomTab === 'broker'}
-            label="Connect your broker"
-            icon="link-outline"
-            scale={scale}
-            onPress={() => onBottomTab('broker')}
-          />
-        </View>
-      </View>
+      <EdgesBottomDock onHomeRetap={closeSheet} />
 
       <Modal
         visible={sheet !== 'none'}
@@ -1058,55 +989,6 @@ function QuotesPanel({
   );
 }
 
-function BottomNavItem({
-  accent,
-  active,
-  label,
-  icon,
-  onPress,
-  scale = 1,
-}: {
-  accent: string;
-  active: boolean;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  onPress: () => void;
-  scale?: number;
-}) {
-  const iconSize = Math.max(15, Math.round(17 * scale));
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ selected: active }}
-      style={({ pressed }) => [
-        styles.bottomItem,
-        { minHeight: Math.max(34, Math.round(36 * scale)) },
-        pressed && { opacity: 0.75 },
-      ]}
-    >
-      <Ionicons
-        name={icon}
-        size={iconSize}
-        color={active ? accent : BASE.muted}
-      />
-      <Text
-        style={[
-          styles.bottomLabel,
-          {
-            color: active ? accent : BASE.muted,
-            fontSize: Math.max(8, Math.round(9 * scale)),
-            lineHeight: Math.max(10, Math.round(11 * scale)),
-          },
-        ]}
-        numberOfLines={2}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
 
 function SettingsLink({
   accent,
