@@ -23,8 +23,10 @@ export default function RootLayout() {
           <Stack
             screenOptions={{
               headerShown: false,
-              animation: 'fade',
+              // Avoid fade-through-black flash when switching dock tabs
+              animation: 'none',
               contentStyle: { backgroundColor: '#000000' },
+              animationDuration: 0,
             }}
           />
         </ThemeProvider>
