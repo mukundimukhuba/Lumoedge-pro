@@ -95,7 +95,9 @@ export function BotTradeFloat({
   const [loadingOpen, setLoadingOpen] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
-  const dockLift = Math.max(insets.bottom, Platform.OS === 'web' ? 12 : 8) + 72;
+  /** Dock ≈ 58 content + safe pad — keep FAB clearly above it. */
+  const safeBottom = Math.max(insets.bottom, Platform.OS === 'web' ? 12 : 8);
+  const dockLift = safeBottom + 64 + 14;
 
   const refreshHistory = useCallback(async () => {
     const rows = await loadAutoTradeHistory();
@@ -142,28 +144,52 @@ export function BotTradeFloat({
 
   return (
     <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open bot trades panel"
-        onPress={() => setOpen(true)}
-        style={({ pressed }) => [
-          styles.fab,
-          {
-            bottom: dockLift,
-            borderColor: hexToRgba(accent, 0.85),
-            shadowColor: accent,
-            opacity: pressed ? 0.88 : 1,
-          },
-        ]}
+      {/* Full-screen overlay layer — always above ScrollView + dock */}
+      <View
+        pointerEvents="box-none"
+        style={styles.overlayHost}
+        // @ts-expect-error web stacking
+        dataSet={{ botFloat: 'host' }}
       >
-        <Image source={botImage} style={styles.fabImg} resizeMode="cover" />
-        {engineRunning ? (
-          <View
-            style={[styles.fabLive, { backgroundColor: BASE.green }]}
-            accessibilityLabel="Auto Trade running"
-          />
-        ) : null}
-      </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open bot trades panel"
+          testID="bot-trade-float"
+          // @ts-expect-error web-only marker for proofs
+          dataSet={{ botFloat: 'fab' }}
+          onPress={() => setOpen(true)}
+          style={({ pressed }) => [
+            styles.fab,
+            {
+              bottom: dockLift,
+              borderColor: accent,
+              shadowColor: accent,
+              opacity: pressed ? 0.9 : 1,
+              ...(Platform.OS === 'web'
+                ? ({
+                    boxShadow: `0 0 0 2px ${hexToRgba(accent, 0.35)}, 0 8px 22px ${hexToRgba(accent, 0.55)}`,
+                    cursor: 'pointer',
+                  } as object)
+                : null),
+            },
+          ]}
+        >
+          <View style={styles.fabImgWrap}>
+            <Image
+              source={botImage}
+              style={styles.fabImg}
+              resizeMode="cover"
+              accessibilityIgnoresInvertColors
+            />
+          </View>
+          {engineRunning ? (
+            <View
+              style={[styles.fabLive, { backgroundColor: BASE.green }]}
+              accessibilityLabel="Auto Trade running"
+            />
+          ) : null}
+        </Pressable>
+      </View>
 
       <Modal
         visible={open}
@@ -347,20 +373,36 @@ export function BotTradeFloat({
 }
 
 const styles = StyleSheet.create({
+  overlayHost: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 9999,
+    elevation: 9999,
+    ...(Platform.OS === 'web'
+      ? ({
+          position: 'absolute' as const,
+          inset: 0,
+          pointerEvents: 'box-none',
+        } as object)
+      : null),
+  },
   fab: {
     position: 'absolute',
-    right: 16,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    borderWidth: 2,
+    right: 14,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2.5,
     overflow: 'hidden',
-    backgroundColor: '#120000',
-    zIndex: 40,
-    elevation: 12,
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
+    backgroundColor: '#1A0000',
+    zIndex: 10000,
+    elevation: 10000,
+    shadowOpacity: 0.55,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
+  },
+  fabImgWrap: {
+    flex: 1,
+    backgroundColor: '#220000',
   },
   fabImg: {
     width: '100%',
@@ -368,11 +410,11 @@ const styles = StyleSheet.create({
   },
   fabLive: {
     position: 'absolute',
-    right: 4,
-    top: 4,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    right: 5,
+    top: 5,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
     borderWidth: 1.5,
     borderColor: BASE.black,
   },

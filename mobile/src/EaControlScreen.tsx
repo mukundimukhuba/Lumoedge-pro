@@ -701,6 +701,9 @@ export function EaControlScreen() {
         </View>
       </ScrollView>
 
+      <EdgesBottomDock onHomeRetap={closeSheet} />
+
+      {/* Last child so bot FAB always paints above dock + scroll */}
       <BotTradeFloat
         accent={accent}
         botImage={eaPicture}
@@ -708,8 +711,6 @@ export function EaControlScreen() {
         engineRunning={autoEngineOpen}
         historyTick={historyTick}
       />
-
-      <EdgesBottomDock onHomeRetap={closeSheet} />
 
       <Modal
         visible={sheet !== 'none'}
@@ -1452,9 +1453,12 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: BASE.black,
-    overflow: 'hidden',
+    // Keep overflow visible so the bot FAB is never clipped
+    overflow: 'visible',
     width: '100%',
     maxWidth: '100%',
+    position: 'relative',
+    zIndex: 0,
   },
   scroll: { flex: 1, width: '100%', maxWidth: '100%' },
   scrollContent: {
