@@ -814,7 +814,7 @@ export function ChartScannerScreen() {
   const params = useLocalSearchParams<{ demo?: string }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
-  const { accent } = useAppState();
+  const { accent, selected: quoteSymbols } = useAppState();
   const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
   const demoStarted = useRef(false);
@@ -1496,7 +1496,11 @@ export function ChartScannerScreen() {
           </LinearGradient>
         </Pressable>
         <Text style={styles.autoHint}>
-          Auto Trade Engine · XAUUSD–XAGUSD · M15→H1→M5→M1 · 8s countdown
+          Prefers Home Start/Stop · scans Quotes selected only · linked MT5 ·
+          M15→H1→M5→M1
+          {quoteSymbols.length
+            ? ` · ${quoteSymbols.length} symbol(s)`
+            : ' · pick Quotes on Home'}
           {scanApiLive === true
             ? ' · scan API live'
             : scanApiLive === false
@@ -1719,6 +1723,7 @@ export function ChartScannerScreen() {
         visible={autoEngineOpen}
         accent={accent}
         mt5Token={mt5Token}
+        symbols={quoteSymbols}
         lotSize={clampLot(parsePositive(lotRaw, 0.01, 1))}
         trades={clampTrades(parsePositive(tradesRaw, 1, 3))}
         onClose={() => setAutoEngineOpen(false)}

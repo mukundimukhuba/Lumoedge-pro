@@ -32,7 +32,11 @@ import {
   getBrokerRecord,
   getBrokerServers,
 } from './brokers/data';
-import { clearMt5Token, saveMt5Token } from './brokers/mt5Token';
+import {
+  clearMt5Token,
+  loadMt5Link,
+  saveMt5Link,
+} from './brokers/mt5Token';
 
 export { BROKERS, filterBrokers, canUseCustomBroker };
 
@@ -253,8 +257,8 @@ function LiveAccountPanel({
   const openPl = account.equity - account.balance;
   const deltaColor =
     openPl > 0 ? BASE.green : openPl < 0 ? BASE.red : BASE.muted;
-  // Floating P/L = equity − balance. Hide when flat and no open trades.
-  const showOpenPl = hasTrades || Math.abs(openPl) >= 0.005;
+  // Open P/L only when mapped open trades exist — never invent from equity−balance.
+  const showOpenPl = hasTrades;
 
   return (
     <View style={styles.liveBlock} accessibilityLabel="Live account">
@@ -362,6 +366,7 @@ export function ConnectBrokerScreen() {
   );
   const searchGen = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const restoringRef = useRef(true);
 
   const servers = useMemo(
     () => (selected ? getBrokerServers(selected) : []),
@@ -373,6 +378,32 @@ export function ConnectBrokerScreen() {
   const showCustom = useMemo(() => canUseCustomBroker(query), [query]);
   const showSuggest =
     !selected && (searchFocused || query.trim().length > 0);
+
+  // Restore MT5 link across reload / navigation until Disconnect
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const link = await loadMt5Link();
+        if (cancelled || !link?.token) {
+          restoringRef.current = false;
+          return;
+        }
+        setSelected(link.broker);
+        setQuery(link.broker);
+        if (link.server) setServer(link.server);
+        if (link.login) setLogin(link.login);
+        setSessionId(link.token);
+        setConnected(true);
+        setError(null);
+      } finally {
+        restoringRef.current = false;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // API search with local fallback
   useEffect(() => {
@@ -436,6 +467,7 @@ export function ConnectBrokerScreen() {
     setServerPickerOpen(false);
     setLogin('');
     setPassword('');
+    void clearMt5Token();
   };
 
   const clearBroker = () => {
@@ -502,7 +534,12 @@ export function ConnectBrokerScreen() {
         }
         setConnected(true);
         setSessionId(mt5Id);
-        void saveMt5Token(mt5Id);
+        void saveMt5Link({
+          token: mt5Id,
+          broker: selected,
+          server: server.trim(),
+          login: login.trim(),
+        });
         // Account fetched live via poll — never trust seeded connect payload
         setAccount(null);
       } catch {
