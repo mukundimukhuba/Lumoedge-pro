@@ -1,10 +1,10 @@
 const { applyCors, json } = require('../_lib/cors');
-const { brokerApiBase } = require('../_lib/upstream');
-const { getSession, publicAccount } = require('../_lib/sessions');
+const { fetchLiveAccount } = require('../_lib/mt5Live');
 
 /**
- * GET /api/brokers/account?sessionId=
- * Real-time-ish balance / equity / open trades for a linked session.
+ * GET /api/brokers/account?id=MT5_TOKEN
+ * Also accepts ?sessionId= for compatibility (same token).
+ * Live AccountSummary + OpenedOrders only — no mock data.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -17,39 +17,22 @@ module.exports = async function handler(req, res) {
   }
 
   const url = new URL(req.url || '/', 'http://localhost');
-  const sessionId = url.searchParams.get('sessionId') || '';
+  const id =
+    url.searchParams.get('id') ||
+    url.searchParams.get('sessionId') ||
+    url.searchParams.get('token') ||
+    '';
 
-  if (!sessionId) {
-    return json(res, 400, { error: 'sessionId is required' });
+  if (!String(id).trim()) {
+    return json(res, 400, { error: 'id (MT5 connect token) is required' });
   }
 
-  // Optional upstream account poll
-  const base = brokerApiBase();
-  if (base && sessionId.startsWith('up_')) {
-    try {
-      const u = new URL('/brokers/account', `${base}/`);
-      u.searchParams.set('sessionId', sessionId.slice(3));
-      const r = await fetch(u.toString(), {
-        headers: { Accept: 'application/json' },
-      });
-      const data = await r.json();
-      if (!r.ok) {
-        return json(res, r.status, {
-          error: data.error || 'Upstream account failed',
-        });
-      }
-      return json(res, 200, { ...data, source: 'upstream' });
-    } catch {
-      return json(res, 502, { error: 'Upstream account unreachable' });
-    }
+  const result = await fetchLiveAccount(id);
+  if (!result.ok) {
+    return json(res, result.status || 502, {
+      error: result.error || 'Live account unavailable',
+    });
   }
 
-  const session = getSession(sessionId);
-  if (!session) {
-    return json(res, 404, { error: 'Session not found' });
-  }
-  return json(res, 200, {
-    ...publicAccount(session),
-    source: 'local-demo',
-  });
+  return json(res, 200, result.account);
 };

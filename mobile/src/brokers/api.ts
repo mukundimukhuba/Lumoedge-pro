@@ -19,6 +19,7 @@ export type BrokerTrade = {
 };
 
 export type BrokerAccount = {
+  id?: string;
   sessionId?: string;
   broker?: string;
   server?: string;
@@ -26,6 +27,9 @@ export type BrokerAccount = {
   currency?: string;
   balance: number;
   equity: number;
+  margin?: number;
+  freeMargin?: number;
+  leverage?: number;
   trades: BrokerTrade[];
   updatedAt?: string;
   source?: string;
@@ -37,11 +41,11 @@ export type BrokerConnectResponse = {
   server?: string;
   login?: string;
   linked?: boolean;
-  source?: 'local-demo' | 'upstream';
+  source?: 'mt5-live' | 'local-demo' | 'upstream';
   message?: string;
   error?: string;
   upstream?: boolean;
-  /** MT5 token for /api/scan/auto body.id */
+  /** MT5 token for /api/scan/auto and account poll */
   token?: string;
   id?: string;
   sessionId?: string;
@@ -51,7 +55,7 @@ export type BrokerConnectResponse = {
 /**
  * Resolve API root. Production (Vercel) uses same origin `/api/...`.
  * Local Expo web (:8081) talks to the brokers dev server on :8787.
- * Never embeds BROKER_API_URL or credentials in the client.
+ * Never embeds credentials in the client.
  */
 export function getBrokersApiRoot(): string {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -121,12 +125,15 @@ export async function connectBrokerApi(input: {
   return data;
 }
 
+/**
+ * Live account poll — uses connect token as `id` (MT5 session).
+ */
 export async function fetchBrokerAccount(
-  sessionId: string,
+  mt5Id: string,
 ): Promise<BrokerAccount> {
   const root = getBrokersApiRoot();
   const url = new URL('/api/brokers/account', root || 'http://127.0.0.1');
-  url.searchParams.set('sessionId', sessionId);
+  url.searchParams.set('id', mt5Id);
   const res = await fetch(url.toString(), {
     method: 'GET',
     headers: { Accept: 'application/json' },
@@ -135,10 +142,13 @@ export async function fetchBrokerAccount(
   if (!res.ok) {
     throw new Error(data.error || `Account fetch failed (${res.status})`);
   }
+  const currency = String(data.currency || '').trim() || undefined;
   return {
     ...data,
+    currency,
     trades: Array.isArray(data.trades) ? data.trades : [],
-    balance: Number(data.balance) || 0,
-    equity: Number(data.equity) || 0,
+    balance: Number(data.balance),
+    equity: Number(data.equity),
+    source: data.source || 'mt5-live',
   };
 }
