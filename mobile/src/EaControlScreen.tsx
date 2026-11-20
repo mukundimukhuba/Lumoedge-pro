@@ -22,6 +22,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AccessGateScreen } from './AccessGateScreen';
+import { ChartScannerPanel } from './ChartScannerPanel';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
 import { useAppState, ACCENTS, SYMBOLS } from './AppState';
 
@@ -128,7 +129,6 @@ export function EaControlScreen() {
   const [bottomTab, setBottomTab] = useState<BottomTab>('home');
   const [query, setQuery] = useState('');
   const [scanSymbol, setScanSymbol] = useState('XAUUSD');
-  const [scanResult, setScanResult] = useState<string | null>(null);
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
   const [brokerConnected, setBrokerConnected] = useState(false);
@@ -229,7 +229,6 @@ export function EaControlScreen() {
       return;
     }
     if (tab === 'scanner') {
-      setScanResult(null);
       setSheet('scanner');
       return;
     }
@@ -312,12 +311,6 @@ export function EaControlScreen() {
         { text: 'Continue', onPress: go },
       ],
     );
-  };
-
-  const runScan = () => {
-    const bias = ['buy', 'sell', 'range'][Math.floor(Math.random() * 3)];
-    const conf = 62 + Math.floor(Math.random() * 33);
-    setScanResult(`${scanSymbol} · ${bias} bias · ${conf}% confidence (mock)`);
   };
 
   return (
@@ -689,7 +682,14 @@ export function EaControlScreen() {
         onRequestClose={closeSheet}
       >
         <View style={styles.modalBackdrop}>
-          <Glass accent={accent} style={styles.sheet} contentStyle={styles.sheetBody}>
+          <Glass
+            accent={accent}
+            style={[
+              styles.sheet,
+              sheet === 'scanner' ? styles.sheetTall : null,
+            ]}
+            contentStyle={styles.sheetBody}
+          >
 
               <View style={styles.sheetHeader}>
                 <View style={styles.sheetHeaderLeft}>
@@ -776,11 +776,8 @@ export function EaControlScreen() {
                   accent={accent}
                   icon="scan-outline"
                   title="chart scanner"
-                  subtitle="mock bias scan for a symbol"
-                  onPress={() => {
-                    setScanResult(null);
-                    setSheet('scanner');
-                  }}
+                  subtitle="radar · upload · camera · mock bias"
+                  onPress={() => setSheet('scanner')}
                 />
                 <SettingsLink
                   accent={accent}
@@ -811,74 +808,12 @@ export function EaControlScreen() {
             ) : null}
 
             {sheet === 'scanner' ? (
-              <View style={styles.toolBody}>
-                <Text style={styles.settingsHint}>
-                  mock scanner — no live chart feed
-                </Text>
-                <View
-                  style={[styles.searchBox, { borderColor: accent }]}
-                >
-                  <Ionicons name="search" size={16} color={BASE.muted} />
-                  <TextInput
-                    value={scanSymbol}
-                    onChangeText={(t) => setScanSymbol(t.toUpperCase())}
-                    placeholder="symbol"
-                    placeholderTextColor={BASE.muted}
-                    autoCapitalize="characters"
-                    style={styles.searchInput}
-                  />
-                </View>
-                <View style={styles.chipRow}>
-                  {['XAUUSD', 'EURUSD', 'BTCUSD', 'NAS100'].map((s) => (
-                    <Pressable
-                      key={s}
-                      onPress={() => setScanSymbol(s)}
-                      style={[
-                        styles.chip,
-                        {
-                          borderColor: accent,
-                          backgroundColor:
-                            scanSymbol === s
-                              ? hexToRgba(accent, 0.22)
-                              : 'transparent',
-                        },
-                      ]}
-                    >
-                      <Text style={styles.chipText}>{s}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <Pressable
-                  style={[
-                    styles.doneBtn,
-                    {
-                      borderColor: accent,
-                      backgroundColor: hexToRgba(accent, 0.18),
-                    },
-                  ]}
-                  onPress={runScan}
-                >
-                  <Text style={styles.doneText}>run scan</Text>
-                </Pressable>
-                {scanResult ? (
-                  <View
-                    style={[
-                      styles.scanCard,
-                      {
-                        borderColor: accent,
-                        backgroundColor: hexToRgba(accent, 0.12),
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name="chart-bell-curve-cumulative"
-                      size={22}
-                      color={accent}
-                    />
-                    <Text style={styles.scanResult}>{scanResult}</Text>
-                  </View>
-                ) : null}
-              </View>
+              <ChartScannerPanel
+                accent={accent}
+                symbol={scanSymbol}
+                setSymbol={setScanSymbol}
+                onClose={closeSheet}
+              />
             ) : null}
 
             {sheet === 'broker' ? (
@@ -1586,6 +1521,7 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   sheet: { borderRadius: 28, maxHeight: '82%' },
+  sheetTall: { maxHeight: '92%' },
   sheetBody: { padding: 16, gap: 12 },
   sheetHeader: {
     flexDirection: 'row',
