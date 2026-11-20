@@ -1,15 +1,11 @@
 const { applyCors, json, readJsonBody } = require('../_lib/cors');
-const { brokerApiBase, upstreamConnect } = require('../_lib/upstream');
-const {
-  createSession,
-  publicAccount,
-} = require('../_lib/sessions');
+const { connectLiveMt5 } = require('../_lib/mt5Live');
 
 /**
  * POST /api/brokers/connect
  * Body: { broker, server, login, password }
- * Never logs password. Forwards to BROKER_API_URL when configured;
- * otherwise returns a local demo-linked success + account snapshot.
+ * Forwards to lumoedge.com /api/mt5/connect. Returns live MT5 token as id.
+ * Never logs password. Never invents demo balance/trades.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -30,7 +26,7 @@ module.exports = async function handler(req, res) {
 
   const broker = String(body.broker || body.name || '').trim();
   const server = String(body.server || '').trim();
-  const login = String(body.login || body.account || '').trim();
+  const login = String(body.login || body.account || body.user || '').trim();
   const password = String(body.password || '');
 
   if (!broker) {
@@ -42,68 +38,32 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  const upstreamConfigured = Boolean(brokerApiBase());
-  if (upstreamConfigured) {
-    const result = await upstreamConnect({
-      broker,
-      server,
-      login,
-      password,
-    });
-    if (!result) {
-      return json(res, 502, { error: 'Upstream broker API unavailable' });
-    }
-    if (!result.ok) {
-      return json(res, result.status || 502, {
-        error:
-          result.data?.error ||
-          result.data?.message ||
-          'Broker connect failed upstream',
-        upstream: true,
-      });
-    }
-    // MT5 bridge returns `token`; other upstreams may use sessionId.
-    // Auto Scan curl uses this as body.id
-    const mt5Token = String(
-      result.data?.token ||
-        result.data?.id ||
-        result.data?.sessionId ||
-        result.data?.session ||
-        '',
-    ).trim();
-    return json(res, 200, {
-      ok: true,
-      broker,
-      server,
-      login,
-      linked: true,
-      source: 'upstream',
-      message: result.data?.message || `${broker} linked via broker API`,
-      token: mt5Token || undefined,
-      id: mt5Token || undefined,
-      sessionId: mt5Token
-        ? mt5Token.startsWith('up_')
-          ? mt5Token
-          : `up_${mt5Token}`
-        : undefined,
-      account: result.data?.account || null,
+  const result = await connectLiveMt5({
+    user: login,
+    password,
+    server,
+  });
+
+  if (!result.ok) {
+    return json(res, result.status || 502, {
+      ok: false,
+      error: result.error || 'MT5 connect failed',
     });
   }
 
-  const session = createSession({ broker, server, login });
-  // Local demo: session id doubles as account poll key; Auto Scan still needs
-  // a real MT5 token from production connect for live candles.
+  const token = result.token;
   return json(res, 200, {
     ok: true,
     broker,
     server,
     login,
     linked: true,
-    source: 'local-demo',
-    message: `${broker} linked · demo session ready`,
-    token: session.id,
-    id: session.id,
-    sessionId: session.id,
-    account: publicAccount(session),
+    source: 'mt5-live',
+    message: `${broker} linked · live MT5`,
+    token,
+    id: token,
+    sessionId: token,
+    // Account is fetched live via /api/brokers/account?id= — never seeded here
+    account: null,
   });
 };

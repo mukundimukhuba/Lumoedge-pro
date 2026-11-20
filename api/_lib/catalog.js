@@ -1,30 +1,18 @@
-/** Shared broker catalog + fuzzy search for /api/brokers */
+/** Shared broker catalog + fuzzy search for /api/brokers.
+ * Forex / CFD MT4·MT5 brokers only — no banks or share platforms.
+ */
 
 const BROKERS = [
-  // South Africa
-  'EasyEquities',
-  'GT247',
-  'Standard Bank OST',
-  'Absa Stockbrokers',
-  'FNB Share Investing',
-  'Investec Securities',
-  'PSG Wealth',
-  'Sasfin Securities',
-  'Orange Securities',
-  'Sygnia Securities',
-  'Ninety One',
-  'Afriforesx',
-  'Accendo Markets',
-  'Bidvest Securities',
-  'Satrix',
+  // South Africa — MT/forex CFD
   'Razor Markets',
   'RCG Markets',
   'Banxso',
   'Scope Markets',
   'Vault Markets',
   'JustMarkets SA',
-  'FNB',
-  'Standard Bank FX',
+  'GT247',
+  'Afriforesx',
+  'Accendo Markets',
   'Orange Markets',
   'Trade360 SA',
   'AVATRADE SA',
@@ -51,7 +39,6 @@ const BROKERS = [
   'AvaTrade',
   'OANDA',
   'IG',
-  'Plus500',
   'Admiral Markets',
   'Admirals',
   'BlackBull Markets',
@@ -67,11 +54,6 @@ const BROKERS = [
   'AxiTrader',
   'CMC Markets',
   'Forex.com',
-  'Interactive Brokers',
-  'Saxo Bank',
-  'Capital.com',
-  'Trading 212',
-  'eToro',
   'Blueberry Markets',
   'GO Markets',
   'Global Prime',
@@ -93,9 +75,6 @@ const BROKERS = [
   'PuPrime',
   'MultiBank Group',
   'StarTrader',
-  'MetaQuotes Demo',
-  'MetaTrader 5 Demo',
-  'MetaTrader 4 Demo',
   'Deriv',
   'NordFX',
   'DooPrime',
@@ -117,18 +96,7 @@ const BROKER_ALIASES = {
   hfmarkets: 'HF Markets',
   fundedpips: 'FundingPips',
   gt247: 'GT247',
-  easyequities: 'EasyEquities',
-  easyequity: 'EasyEquities',
-  standardbank: 'Standard Bank OST',
-  standardbankfx: 'Standard Bank FX',
-  standardbankost: 'Standard Bank OST',
-  absa: 'Absa Stockbrokers',
-  fnb: 'FNB',
-  fnbshareinvesting: 'FNB Share Investing',
-  investec: 'Investec Securities',
-  psg: 'PSG Wealth',
   afriforesx: 'Afriforesx',
-  satrix: 'Satrix',
   razor: 'Razor Markets',
   razormarkets: 'Razor Markets',
   razormarket: 'Razor Markets',
@@ -141,9 +109,10 @@ const BROKER_ALIASES = {
   vaultmarkets: 'Vault Markets',
   justmarketssa: 'JustMarkets SA',
   justmarkets: 'JustMarkets',
-  mt5demo: 'MetaTrader 5 Demo',
-  mt4demo: 'MetaTrader 4 Demo',
-  metaquotes: 'MetaQuotes Demo',
+  accendo: 'Accendo Markets',
+  orangemarkets: 'Orange Markets',
+  trade360: 'Trade360 SA',
+  avatradesa: 'AVATRADE SA',
 };
 
 const QUERY_STOPWORDS = new Set([
@@ -208,7 +177,6 @@ function scoreBroker(query, name) {
   const distinctive = qTokens.filter((t) => !QUERY_STOPWORDS.has(t));
   const needed = distinctive.length > 0 ? distinctive : qTokens;
 
-  // Fuzzy match only on distinctive tokens (never on "markets" alone)
   const fuzzyKey = normalizeBrokerKey(needed.join(' '));
   if (fuzzyKey.length >= 2) {
     const dist = levenshtein(
@@ -217,8 +185,6 @@ function scoreBroker(query, name) {
     );
     const maxLen = Math.max(fuzzyKey.length, 1);
     if (dist <= Math.max(1, Math.floor(maxLen / 3))) {
-      // Still require the distinctive stem to appear in the name key
-      // for short queries like "rcg" / "razor"
       const stemOk =
         distinctive.length === 0 ||
         distinctive.some(
@@ -253,7 +219,6 @@ function filterBrokers(query, limit = 10) {
   const q = String(query || '').trim();
   const lim = Math.max(1, Math.min(50, Number(limit) || 10));
   if (!q) {
-    // SA brokers first when listing
     const za = [
       'Razor Markets',
       'RCG Markets',
@@ -261,17 +226,12 @@ function filterBrokers(query, limit = 10) {
       'Scope Markets',
       'Vault Markets',
       'JustMarkets SA',
-      'EasyEquities',
       'GT247',
-      'Standard Bank FX',
-      'Standard Bank OST',
-      'FNB',
-      'FNB Share Investing',
-      'Absa Stockbrokers',
-      'Investec Securities',
-      'PSG Wealth',
       'Afriforesx',
-      'Satrix',
+      'Accendo Markets',
+      'Orange Markets',
+      'Trade360 SA',
+      'AVATRADE SA',
     ];
     const rest = BROKERS.filter((b) => !za.includes(b));
     return [...za, ...rest].slice(0, lim);

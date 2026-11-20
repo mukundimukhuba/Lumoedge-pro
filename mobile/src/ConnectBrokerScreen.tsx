@@ -62,15 +62,19 @@ function hexToRgba(hex: string, a: number): string {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-function formatMoney(n: number, currency = 'USD'): string {
+function formatMoney(n: number, currency?: string): string {
+  const cur = String(currency || '').trim();
+  if (!cur) {
+    return Number.isFinite(n) ? n.toFixed(2) : '—';
+  }
   try {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-ZA', {
       style: 'currency',
-      currency,
+      currency: cur,
       maximumFractionDigits: 2,
     }).format(n);
   } catch {
-    return `${currency} ${n.toFixed(2)}`;
+    return `${cur} ${n.toFixed(2)}`;
   }
 }
 
@@ -134,20 +138,33 @@ function BrokerMark({
   );
 }
 
-function ConnectPulse({ accent, active }: { accent: string; active: boolean }) {
+function ConnectPulse({
+  accent,
+  active,
+  broker,
+}: {
+  accent: string;
+  active: boolean;
+  broker?: string | null;
+}) {
   const spin = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(0.4)).current;
+  const scale = useRef(new Animated.Value(0.92)).current;
 
   useEffect(() => {
     if (!active) {
       spin.stopAnimation();
       pulse.stopAnimation();
+      scale.stopAnimation();
+      spin.setValue(0);
+      pulse.setValue(0.4);
+      scale.setValue(0.92);
       return;
     }
     const rot = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
-        duration: 1100,
+        duration: 1200,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
@@ -156,23 +173,39 @@ function ConnectPulse({ accent, active }: { accent: string; active: boolean }) {
       Animated.sequence([
         Animated.timing(pulse, {
           toValue: 1,
-          duration: 520,
+          duration: 560,
           useNativeDriver: true,
         }),
         Animated.timing(pulse, {
           toValue: 0.35,
-          duration: 520,
+          duration: 560,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    const breath = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scale, {
+          toValue: 1.06,
+          duration: 560,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scale, {
+          toValue: 0.94,
+          duration: 560,
           useNativeDriver: true,
         }),
       ]),
     );
     rot.start();
     pul.start();
+    breath.start();
     return () => {
       rot.stop();
       pul.stop();
+      breath.stop();
     };
-  }, [active, spin, pulse]);
+  }, [active, spin, pulse, scale]);
 
   if (!active) return null;
   const rotate = spin.interpolate({
@@ -186,16 +219,23 @@ function ConnectPulse({ accent, active }: { accent: string; active: boolean }) {
         style={[
           styles.pulseRing,
           {
-            borderColor: hexToRgba(accent, 0.55),
+            borderColor: hexToRgba(accent, 0.65),
             opacity: pulse,
             transform: [{ rotate }],
           },
         ]}
       />
-      <Ionicons name="link" size={22} color={accent} />
+      <Animated.View style={{ transform: [{ scale }] }}>
+        {broker ? (
+          <BrokerMark name={broker} size={48} />
+        ) : (
+          <Ionicons name="link" size={28} color={accent} />
+        )}
+      </Animated.View>
       <Text style={[styles.pulseText, { color: accent }]}>
-        Linking account…
+        Linking {broker || 'account'}…
       </Text>
+      <Text style={styles.pulseSub}>Live MT5 session</Text>
     </View>
   );
 }
@@ -207,7 +247,7 @@ function LiveAccountPanel({
   account: BrokerAccount;
   accent: string;
 }) {
-  const currency = account.currency || 'USD';
+  const currency = String(account.currency || '').trim() || undefined;
   const trades = account.trades || [];
   const hasTrades = trades.length > 0;
   const equityDelta = account.equity - account.balance;
@@ -218,7 +258,9 @@ function LiveAccountPanel({
     <View style={styles.liveBlock} accessibilityLabel="Live account">
       <View style={styles.liveHeader}>
         <View style={styles.liveDot} />
-        <Text style={styles.liveTitle}>Live account</Text>
+        <Text style={styles.liveTitle}>
+          Live MT5{currency ? ` · ${currency}` : ''}
+        </Text>
         <Text style={styles.liveAgo}>
           {account.updatedAt
             ? new Date(account.updatedAt).toLocaleTimeString()
@@ -277,7 +319,7 @@ function LiveAccountPanel({
                 </View>
                 <Text style={[styles.tradePnl, { color: pnlColor }]}>
                   {t.pnl >= 0 ? '+' : ''}
-                  {t.pnl.toFixed(2)}
+                  {formatMoney(t.pnl, currency)}
                 </Text>
               </View>
             );
@@ -404,6 +446,18 @@ export function ConnectBrokerScreen() {
     void clearMt5Token();
   };
 
+  const onDisconnect = () => {
+    setConnected(false);
+    setSessionId(null);
+    setAccount(null);
+    setError(null);
+    setPassword('');
+    setLogin('');
+    setServerPickerOpen(false);
+    // Keep selected broker so user can reconnect quickly; show form again
+    void clearMt5Token();
+  };
+
   const onConnect = () => {
     if (!selected) {
       setError('Choose a broker from the suggestions.');
@@ -431,14 +485,19 @@ export function ConnectBrokerScreen() {
           setAccount(null);
           return;
         }
-        setConnected(true);
-        // Prefer MT5 token (`token`/`id`) for Auto Scan curl body.id
         const mt5Id = String(res.token || res.id || res.sessionId || '').trim();
-        if (mt5Id) {
-          setSessionId(res.sessionId || mt5Id);
-          void saveMt5Token(mt5Id);
+        if (!mt5Id) {
+          setError('No MT5 session token returned.');
+          setConnected(false);
+          setSessionId(null);
+          setAccount(null);
+          return;
         }
-        if (res.account) setAccount(res.account);
+        setConnected(true);
+        setSessionId(mt5Id);
+        void saveMt5Token(mt5Id);
+        // Account fetched live via poll — never trust seeded connect payload
+        setAccount(null);
       } catch {
         setPassword('');
         setError('Broker API unreachable. Try again.');
@@ -498,16 +557,75 @@ export function ConnectBrokerScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.lead}>
-          Search brokers (SA + global), pick a server, then connect. Live
-          balance and equity appear after linking
-          {apiSource === 'upstream'
-            ? ' · live upstream'
-            : apiSource === 'offline'
-              ? ' · offline catalog'
-              : ' · local catalog'}
-          .
+          {connected
+            ? 'Live MT5 session — balance, equity, and open trades from your linked account.'
+            : `Search forex CFD brokers (SA + global), pick an MT server, then connect a real session${
+                apiSource === 'upstream'
+                  ? ' · live upstream'
+                  : apiSource === 'offline'
+                    ? ' · offline catalog'
+                    : ' · local catalog'
+              }.`}
         </Text>
 
+        {connected && selected ? (
+          <View style={styles.formBlock}>
+            <View
+              style={[
+                styles.pickedRow,
+                { borderColor: hexToRgba(BASE.green, 0.5) },
+              ]}
+            >
+              <View style={styles.pickedLeft}>
+                <BrokerMark name={selected} size={36} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickedName}>{selected}</Text>
+                  <Text style={styles.suggestHint}>
+                    {account?.login ? `Login ${account.login} · ` : ''}
+                    Live MT5
+                    {account?.currency ? ` · ${account.currency}` : ''}
+                  </Text>
+                </View>
+              </View>
+              <View
+                style={[
+                  styles.liveBadge,
+                  { borderColor: hexToRgba(BASE.green, 0.55) },
+                ]}
+              >
+                <View style={styles.liveDot} />
+                <Text style={[styles.liveBadgeText, { color: BASE.green }]}>
+                  Connected
+                </Text>
+              </View>
+            </View>
+
+            {account ? (
+              <LiveAccountPanel account={account} accent={accent} />
+            ) : (
+              <ConnectPulse accent={accent} active broker={selected} />
+            )}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Disconnect broker"
+              onPress={onDisconnect}
+              style={({ pressed }) => [
+                styles.disconnectBtn,
+                {
+                  borderColor: hexToRgba(BASE.red, 0.55),
+                  opacity: pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              <Ionicons name="unlink-outline" size={18} color={BASE.red} />
+              <Text style={styles.disconnectText}>Disconnect</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        {!connected ? (
+          <>
         <Text style={styles.sectionLabel}>Broker</Text>
         <View
           style={[
@@ -535,7 +653,7 @@ export function ConnectBrokerScreen() {
             onBlur={() => {
               setTimeout(() => setSearchFocused(false), 180);
             }}
-            placeholder="Search EasyEquities, GT247, IC Markets…"
+            placeholder="Search Razor Markets, RCG, Exness…"
             placeholderTextColor={BASE.dim}
             style={styles.searchInput}
             autoCapitalize="none"
@@ -694,7 +812,7 @@ export function ConnectBrokerScreen() {
                     setServerPickerOpen(false);
                   }}
                   placeholder={
-                    servers[0] || 'e.g. ICMarkets-Demo01'
+                    servers[0] || 'e.g. ICMarkets-Live01'
                   }
                   placeholderTextColor={BASE.dim}
                   autoCapitalize="none"
@@ -800,31 +918,13 @@ export function ConnectBrokerScreen() {
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-            <ConnectPulse accent={accent} active={connecting} />
+            <ConnectPulse
+              accent={accent}
+              active={connecting}
+              broker={selected}
+            />
 
-            {connected ? (
-              <View
-                style={[
-                  styles.statusCard,
-                  {
-                    borderColor: hexToRgba(BASE.green, 0.55),
-                    backgroundColor: hexToRgba(BASE.green, 0.1),
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="checkmark-circle"
-                  size={20}
-                  color={BASE.green}
-                />
-                <Text style={[styles.statusText, { color: BASE.green }]}>
-                  {selected} linked
-                  {account?.source === 'upstream'
-                    ? ' · live'
-                    : ' · demo session'}
-                </Text>
-              </View>
-            ) : !connecting ? (
+            {!connecting ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Connect broker"
@@ -848,15 +948,13 @@ export function ConnectBrokerScreen() {
                   style={styles.connectGrad}
                 >
                   <Ionicons name="link-outline" size={18} color={BASE.white} />
-                  <Text style={styles.connectText}>Connect</Text>
+                  <Text style={styles.connectText}>Connect live MT5</Text>
                 </LinearGradient>
               </Pressable>
             ) : null}
-
-            {connected && account ? (
-              <LiveAccountPanel account={account} accent={accent} />
-            ) : null}
           </View>
+        ) : null}
+          </>
         ) : null}
       </ScrollView>
 
@@ -1097,22 +1195,46 @@ const styles = StyleSheet.create({
   },
   pulseRing: {
     position: 'absolute',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 2.5,
     borderTopColor: 'transparent',
   },
-  pulseText: { fontSize: 13, fontWeight: '700', marginTop: 36 },
-  statusCard: {
+  pulseText: { fontSize: 13, fontWeight: '700', marginTop: 8 },
+  pulseSub: {
+    color: BASE.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+  },
+  disconnectBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
+    gap: 8,
     borderWidth: 1.5,
     borderRadius: 14,
-    padding: 14,
+    paddingVertical: 14,
+    backgroundColor: hexToRgba('#FF5252', 0.08),
+    marginTop: 4,
   },
-  statusText: { flex: 1, fontSize: 13, fontWeight: '700' },
+  disconnectText: {
+    color: BASE.red,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: hexToRgba('#00C853', 0.1),
+  },
+  liveBadgeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.4 },
   liveBlock: { gap: 12, marginTop: 4 },
   liveHeader: {
     flexDirection: 'row',
