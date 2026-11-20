@@ -1,4 +1,3 @@
-import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useMemo, useState } from 'react';
@@ -15,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
+import { EdgesBottomDock } from './EdgesBottomDock';
 
 const BASE = {
   black: '#000000',
@@ -416,8 +416,7 @@ export function ConnectBrokerScreen() {
   };
 
   const goHome = () => {
-    if (router.canGoBack()) router.back();
-    else router.replace('/');
+    router.replace('/');
   };
 
   return (
@@ -723,49 +722,7 @@ export function ConnectBrokerScreen() {
         ) : null}
       </ScrollView>
 
-      <View
-        style={[
-          styles.dock,
-          {
-            paddingBottom: dockPad,
-            borderColor: hexToRgba(accent, 0.35),
-          },
-        ]}
-      >
-        {Platform.OS === 'web' ? (
-          <View
-            style={[
-              StyleSheet.absoluteFill,
-              { backgroundColor: 'rgba(0,0,0,0.88)' },
-            ]}
-          />
-        ) : (
-          <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
-        )}
-        <View style={styles.dockRow}>
-          <DockItem
-            label="Home"
-            icon="home-outline"
-            accent={accent}
-            active={false}
-            onPress={goHome}
-          />
-          <DockItem
-            label="Chart scanner"
-            icon="scan-outline"
-            accent={accent}
-            active={false}
-            onPress={() => router.push('/chart-scanner')}
-          />
-          <DockItem
-            label="Connect your broker"
-            icon="link-outline"
-            accent={accent}
-            active
-            onPress={() => undefined}
-          />
-        </View>
-      </View>
+      <EdgesBottomDock />
     </View>
   );
 }
@@ -811,37 +768,6 @@ function Field({
         />
       </View>
     </View>
-  );
-}
-
-function DockItem({
-  label,
-  icon,
-  accent,
-  active,
-  onPress,
-}: {
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  accent: string;
-  active: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={styles.dockItem}
-    >
-      <Ionicons name={icon} size={22} color={active ? accent : BASE.muted} />
-      <Text
-        style={[styles.dockLabel, { color: active ? accent : BASE.muted }]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
-    </Pressable>
   );
 }
 
@@ -1016,26 +942,4 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   statusText: { flex: 1, fontSize: 13, fontWeight: '700' },
-  dock: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopWidth: 1,
-    overflow: 'hidden',
-  },
-  dockRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-around',
-    paddingTop: 10,
-    paddingHorizontal: 8,
-  },
-  dockItem: {
-    flex: 1,
-    alignItems: 'center',
-    gap: 4,
-    paddingBottom: 4,
-  },
-  dockLabel: { fontSize: 10, fontWeight: '600', textAlign: 'center' },
 });
