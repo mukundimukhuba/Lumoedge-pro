@@ -130,8 +130,16 @@ export function EaControlScreen() {
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
   const [brokerConnected, setBrokerConnected] = useState(false);
-  /** Compact hero so quotes/status/bottom bar fit one phone viewport. */
-  const heroH = Math.max(168, Math.min(Math.round(windowH * 0.30), 236));
+  /** Prefer on-layout height (phone chrome / real device) over window. */
+  const [layoutH, setLayoutH] = useState(windowH);
+  /**
+   * Hero fills upper phone real-estate without the old half-screen poster.
+   * Remainder is a dense controls→status column above the sticky dock.
+   */
+  const heroH = Math.max(148, Math.min(Math.round(layoutH * 0.34), 248));
+  /** Sticky dock approx height — keep lower body filling above it. */
+  const dockH = 62;
+  const bodyMinH = Math.max(220, layoutH - heroH - dockH);
   /** Triple-tap the logo (hero image) → Mentors Portal — not Settings. */
   const logoTaps = useRef<{ count: number; at: number }>({
     count: 0,
@@ -261,7 +269,13 @@ export function EaControlScreen() {
   };
 
   return (
-    <View style={styles.root}>
+    <View
+      style={styles.root}
+      onLayout={(e) => {
+        const h = e.nativeEvent.layout.height;
+        if (h > 0) setLayoutH(h);
+      }}
+    >
       <StatusBar style="light" />
 
       <Pressable
@@ -278,7 +292,7 @@ export function EaControlScreen() {
         ]}
         hitSlop={12}
       >
-        <Ionicons name="settings-outline" size={18} color={BASE.white} />
+        <Ionicons name="settings-outline" size={16} color={BASE.white} />
       </Pressable>
 
       <ScrollView
@@ -314,79 +328,81 @@ export function EaControlScreen() {
             <Image
               source={eaPicture}
               style={styles.mascot}
-              resizeMode={activeEa?.pictureUri ? 'cover' : 'contain'}
+              resizeMode="cover"
             />
           </Pressable>
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.35)', BASE.black]}
-            locations={[0.45, 0.78, 1]}
+            colors={['transparent', 'rgba(0,0,0,0.4)', BASE.black]}
+            locations={[0.35, 0.72, 1]}
             style={styles.heroFade}
             pointerEvents="none"
           />
-          <Text style={styles.title} pointerEvents="none">
+          <Text style={styles.title} pointerEvents="none" numberOfLines={1}>
             {eaTitle}
           </Text>
         </View>
 
-        <View style={styles.lower}>
-          <Glass
-            accent={accent}
-            style={styles.controlGlass}
-            contentStyle={styles.controlRow}
-          >
-            <Control
+        <View style={[styles.lower, { minHeight: bodyMinH }]}>
+          <View style={styles.lowerTop}>
+            <Glass
               accent={accent}
-              label="quotes"
-              onPress={() => {
-                setQuery('');
-                setSheet('quotes');
-              }}
-              icon={
-                <MaterialCommunityIcons
-                  name="chart-line"
-                  size={20}
-                  color={accent}
-                />
-              }
-            />
-            <Control
-              accent={accent}
-              label={isActive ? 'stop' : 'start'}
-              onPress={onToggleRun}
-              large
-              lit={isActive}
-              icon={
-                <Ionicons
-                  name={isActive ? 'stop' : 'play'}
-                  size={24}
-                  color={accent}
-                />
-              }
-            />
-            <Control
-              accent={accent}
-              label="remove"
-              onPress={onRemove}
-              icon={
-                <Ionicons name="trash-outline" size={20} color={accent} />
-              }
-            />
-          </Glass>
+              style={styles.controlGlass}
+              contentStyle={styles.controlRow}
+            >
+              <Control
+                accent={accent}
+                label="quotes"
+                onPress={() => {
+                  setQuery('');
+                  setSheet('quotes');
+                }}
+                icon={
+                  <MaterialCommunityIcons
+                    name="chart-line"
+                    size={18}
+                    color={accent}
+                  />
+                }
+              />
+              <Control
+                accent={accent}
+                label={isActive ? 'stop' : 'start'}
+                onPress={onToggleRun}
+                large
+                lit={isActive}
+                icon={
+                  <Ionicons
+                    name={isActive ? 'stop' : 'play'}
+                    size={22}
+                    color={accent}
+                  />
+                }
+              />
+              <Control
+                accent={accent}
+                label="remove"
+                onPress={onRemove}
+                icon={
+                  <Ionicons name="trash-outline" size={18} color={accent} />
+                }
+              />
+            </Glass>
 
-          <Text style={styles.powered}>
-            powered by{' '}
-            <Text style={[styles.poweredBrand, { color: accent }]}>
-              lumo edge pro
+            <Text style={styles.powered}>
+              powered by{' '}
+              <Text style={[styles.poweredBrand, { color: accent }]}>
+                lumo edge pro
+              </Text>
             </Text>
-          </Text>
 
-          {selected.length > 0 ? (
-            <Text style={styles.symbolHint} numberOfLines={1}>
-              {selected.join(' · ')}
-            </Text>
-          ) : (
-            <Text style={styles.symbolHint}>no symbols selected</Text>
-          )}
+            {selected.length > 0 ? (
+              <Text style={styles.symbolHint} numberOfLines={1}>
+                {selected.join(' · ')}
+              </Text>
+            ) : (
+              <Text style={styles.symbolHint}>no symbols selected</Text>
+            )}
+          </View>
 
           <Glass
             accent={accent}
@@ -413,44 +429,44 @@ export function EaControlScreen() {
               </Text>
             </View>
           </Glass>
-
-          <View style={styles.bottomDock}>
-            <View
-              style={[
-                styles.bottomBar,
-                { borderColor: hexToRgba(accent, 0.55) },
-                Platform.OS === 'web'
-                  ? ({
-                      boxShadow: `0 0 14px ${hexToRgba(accent, 0.25)}`,
-                    } as object)
-                  : null,
-              ]}
-            >
-              <BottomNavItem
-                accent={accent}
-                active={bottomTab === 'home'}
-                label="Home"
-                icon="home-outline"
-                onPress={() => onBottomTab('home')}
-              />
-              <BottomNavItem
-                accent={accent}
-                active={bottomTab === 'scanner'}
-                label="Chart scanner"
-                icon="scan-outline"
-                onPress={() => onBottomTab('scanner')}
-              />
-              <BottomNavItem
-                accent={accent}
-                active={bottomTab === 'broker'}
-                label="Connect your broker"
-                icon="link-outline"
-                onPress={() => onBottomTab('broker')}
-              />
-            </View>
-          </View>
         </View>
       </ScrollView>
+
+      <View style={styles.bottomDock}>
+        <View
+          style={[
+            styles.bottomBar,
+            { borderColor: hexToRgba(accent, 0.55) },
+            Platform.OS === 'web'
+              ? ({
+                  boxShadow: `0 0 14px ${hexToRgba(accent, 0.25)}`,
+                } as object)
+              : null,
+          ]}
+        >
+          <BottomNavItem
+            accent={accent}
+            active={bottomTab === 'home'}
+            label="Home"
+            icon="home-outline"
+            onPress={() => onBottomTab('home')}
+          />
+          <BottomNavItem
+            accent={accent}
+            active={bottomTab === 'scanner'}
+            label="Chart scanner"
+            icon="scan-outline"
+            onPress={() => onBottomTab('scanner')}
+          />
+          <BottomNavItem
+            accent={accent}
+            active={bottomTab === 'broker'}
+            label="Connect your broker"
+            icon="link-outline"
+            onPress={() => onBottomTab('broker')}
+          />
+        </View>
+      </View>
 
       <Modal
         visible={sheet !== 'none'}
@@ -891,7 +907,7 @@ function BottomNavItem({
     >
       <Ionicons
         name={icon}
-        size={20}
+        size={18}
         color={active ? accent : BASE.muted}
       />
       <Text
@@ -991,7 +1007,7 @@ function Control({
   lit?: boolean;
   accent: string;
 }) {
-  const size = large ? 58 : 46;
+  const size = large ? 50 : 40;
   return (
     <Pressable
       accessibilityRole="button"
@@ -1091,9 +1107,9 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BASE.black },
   scroll: { flex: 1 },
   scrollContent: {
-    // No flexGrow fill — keeps the stack compact at the top and lets
-    // paddingBottom create real overflow so the screen can scroll past.
-    paddingBottom: 480,
+    flexGrow: 1,
+    // Modest slack so users can still scroll past hero + controls.
+    paddingBottom: 56,
   },
   hero: {
     width: '100%',
@@ -1116,11 +1132,14 @@ const styles = StyleSheet.create({
   heroFade: { ...StyleSheet.absoluteFill },
   title: {
     position: 'absolute',
-    bottom: 8,
+    bottom: 6,
+    left: 16,
+    right: 16,
+    textAlign: 'center',
     color: BASE.white,
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '700',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
     textTransform: 'lowercase',
     textShadowColor: 'rgba(0,0,0,0.65)',
     textShadowOffset: { width: 0, height: 1 },
@@ -1128,31 +1147,40 @@ const styles = StyleSheet.create({
   },
   settingsBtn: {
     position: 'absolute',
-    top: 14,
-    right: 12,
+    top: 10,
+    right: 10,
     zIndex: 30,
     elevation: 30,
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.55)',
     borderWidth: 1.5,
   },
   lower: {
+    flexGrow: 1,
     backgroundColor: BASE.black,
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingTop: 6,
-    paddingBottom: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingTop: 2,
+    paddingBottom: 4,
     gap: 6,
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  lowerTop: {
+    width: '100%',
+    alignItems: 'center',
+    gap: 3,
   },
   bottomDock: {
     width: '100%',
-    paddingHorizontal: 0,
-    paddingBottom: 4,
-    paddingTop: 6,
+    paddingHorizontal: 10,
+    paddingBottom: Platform.OS === 'web' ? 4 : 4,
+    paddingTop: 2,
     backgroundColor: BASE.black,
   },
   bottomBar: {
@@ -1162,10 +1190,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
     justifyContent: 'space-between',
-    gap: 4,
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    borderRadius: 16,
+    gap: 2,
+    paddingVertical: 5,
+    paddingHorizontal: 4,
+    borderRadius: 14,
     borderWidth: 1.5,
     backgroundColor: 'rgba(8, 8, 8, 0.96)',
   },
@@ -1173,10 +1201,10 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
-    paddingVertical: 2,
+    gap: 2,
+    paddingVertical: 1,
     paddingHorizontal: 2,
-    minHeight: 48,
+    minHeight: 40,
   },
   bottomLabel: {
     fontSize: 9,
@@ -1221,10 +1249,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
   },
-  control: { alignItems: 'center', minWidth: 62 },
+  control: { alignItems: 'center', minWidth: 56 },
   ring: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
   sheen: {
     position: 'absolute',
@@ -1237,12 +1265,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
   controlLabel: {
-    marginTop: 5,
-    fontSize: 12,
+    marginTop: 4,
+    fontSize: 11,
     fontWeight: '600',
     textTransform: 'lowercase',
   },
-  powered: { marginTop: 0, color: BASE.muted, fontSize: 11 },
+  powered: { marginTop: 0, color: BASE.muted, fontSize: 10 },
   poweredBrand: { fontWeight: '700' },
   symbolHint: {
     color: 'rgba(255,255,255,0.55)',
@@ -1252,8 +1280,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   statusGlass: {
-    marginTop: 4,
-    marginBottom: 2,
+    marginTop: 0,
+    marginBottom: 0,
     borderRadius: 999,
     maxWidth: 420,
     width: '100%',
@@ -1261,26 +1289,26 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 9,
   },
   statusThumb: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     borderWidth: 1.5,
   },
   statusText: { flex: 1 },
   statusTitle: {
     color: BASE.white,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
   statusState: {
-    marginTop: 1,
-    fontSize: 12,
+    marginTop: 0,
+    fontSize: 11,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
