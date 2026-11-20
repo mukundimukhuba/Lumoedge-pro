@@ -354,83 +354,118 @@ export function EaControlScreen() {
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
       >
-        {/* Face band: full-bleed EA picture (pic bg fills — no black gutters). */}
         <View
-          style={[styles.heroFace, { height: faceH, backgroundColor: accent }]}
-          pointerEvents="box-none"
+          style={[
+            styles.heroWrap,
+            { height: heroTotalH - 1 },
+            // Web: dissolve the hard cut with a soft mask (reads as smoke into UI).
+            Platform.OS === 'web'
+              ? ({
+                  WebkitMaskImage:
+                    'linear-gradient(to bottom, #000 0%, #000 38%, rgba(0,0,0,0.85) 52%, rgba(0,0,0,0.45) 68%, rgba(0,0,0,0.12) 84%, transparent 100%)',
+                  maskImage:
+                    'linear-gradient(to bottom, #000 0%, #000 38%, rgba(0,0,0,0.85) 52%, rgba(0,0,0,0.45) 68%, rgba(0,0,0,0.12) 84%, transparent 100%)',
+                } as object)
+              : null,
+          ]}
         >
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Edges logo — triple tap for Mentors Portal"
-            onPress={onLogoPress}
-            hitSlop={20}
-            style={({ pressed }) => [
-              styles.logoHit,
-              Platform.OS === 'web'
-                ? ({ cursor: 'pointer', touchAction: 'manipulation' } as object)
-                : null,
-              pressed && { opacity: 0.92 },
+          {/* Face band: full-bleed EA picture (pic bg fills — no black gutters). */}
+          <View
+            style={[styles.heroFace, { height: faceH, backgroundColor: accent }]}
+            pointerEvents="box-none"
+          >
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Edges logo — triple tap for Mentors Portal"
+              onPress={onLogoPress}
+              hitSlop={20}
+              style={({ pressed }) => [
+                styles.logoHit,
+                Platform.OS === 'web'
+                  ? ({ cursor: 'pointer', touchAction: 'manipulation' } as object)
+                  : null,
+                pressed && { opacity: 0.92 },
+              ]}
+            >
+              <Image
+                source={eaPicture}
+                style={[styles.heroBleedImg, { height: bleedImgH }]}
+                resizeMode="cover"
+              />
+            </Pressable>
+          </View>
+
+          {/* Neck/lower-body strip: same pic, cropped to lower portion. */}
+          <View
+            style={[
+              styles.heroNeck,
+              {
+                height: neckH,
+                backgroundColor: accent,
+                marginTop: -1,
+              },
             ]}
+            pointerEvents="none"
           >
             <Image
               source={eaPicture}
-              style={[styles.heroBleedImg, { height: bleedImgH }]}
+              style={[
+                styles.heroBleedImg,
+                {
+                  height: bleedImgH,
+                  marginTop: -(bleedImgH - neckH),
+                },
+              ]}
               resizeMode="cover"
             />
-          </Pressable>
-          {/* Light bottom shade for title only — do not paint black over pic bg. */}
+          </View>
+
+          {/* Soft black cloud/smoke — starts above the chin cut so the hard edge dissolves. */}
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.45)']}
-            locations={[0.55, 1]}
-            style={styles.heroFade}
-            pointerEvents="none"
-          />
-          <Text
+            colors={[
+              'transparent',
+              'rgba(0,0,0,0.18)',
+              'rgba(0,0,0,0.4)',
+              'rgba(0,0,0,0.68)',
+              'rgba(0,0,0,0.88)',
+              'rgba(0,0,0,0.97)',
+              '#000000',
+            ]}
+            locations={[0, 0.16, 0.34, 0.52, 0.7, 0.86, 1]}
             style={[
-              styles.title,
-              { fontSize: titleSize, bottom: Math.max(8, gapTight - 2) },
+              styles.heroSmoke,
+              { height: Math.max(210, Math.round(heroTotalH * 0.72)) },
             ]}
             pointerEvents="none"
-            numberOfLines={1}
-          >
-            {eaTitle}
-          </Text>
+          />
         </View>
 
-        {/* Neck/lower-body strip: same pic, cropped to lower portion (Algo Nova style). */}
-        <View
+        {/* Title sits above the smoke/mask so it stays readable. */}
+        <Text
           style={[
-            styles.heroNeck,
+            styles.title,
             {
-              height: neckH,
-              backgroundColor: accent,
-              // Overlap 1px to avoid a black hairline seam between bands.
-              marginTop: -1,
+              fontSize: titleSize,
+              marginTop: -Math.max(36, Math.round(neckH * 0.55)),
+              marginBottom: Math.max(4, gapTight - 4),
             },
           ]}
           pointerEvents="none"
+          numberOfLines={1}
         >
-          <Image
-            source={eaPicture}
-            style={[
-              styles.heroBleedImg,
-              {
-                height: bleedImgH,
-                marginTop: -(bleedImgH - neckH),
-              },
-            ]}
-            resizeMode="cover"
-          />
-        </View>
+          {eaTitle}
+        </Text>
 
         <View
           style={[
             styles.lower,
             {
+              marginTop: 0,
               paddingTop: gapTight,
               paddingBottom: gapSm,
               paddingHorizontal: sidePad,
               gap: gapTight,
+              backgroundColor: BASE.black,
             },
           ]}
         >
@@ -1262,6 +1297,12 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     paddingBottom: 8,
   },
+  heroWrap: {
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
+    position: 'relative',
+  },
   heroFace: {
     width: '100%',
     maxWidth: '100%',
@@ -1285,21 +1326,27 @@ const styles = StyleSheet.create({
     elevation: 25,
     overflow: 'hidden',
   },
-  heroFade: { ...StyleSheet.absoluteFill },
-  title: {
+  /** Soft black cloud/smoke under hero → UI (no hard cut line). */
+  heroSmoke: {
     position: 'absolute',
-    bottom: 10,
-    left: 16,
-    right: 16,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 8,
+  },
+  title: {
+    width: '100%',
+    paddingHorizontal: 16,
+    zIndex: 12,
     textAlign: 'center',
     color: BASE.white,
     fontSize: 18,
     fontWeight: '700',
     letterSpacing: 0.3,
     textTransform: 'lowercase',
-    textShadowColor: 'rgba(0,0,0,0.75)',
+    textShadowColor: 'rgba(0,0,0,0.9)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 10,
+    textShadowRadius: 14,
   },
   settingsBtn: {
     position: 'absolute',
