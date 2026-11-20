@@ -41,21 +41,44 @@ let memoryEas: StoredEa[] = [];
 let memoryKeys: StoredLicenseKey[] = [];
 
 /**
- * Canonical form for compare / Supabase `key_normalized`.
- * Folds OCR lookalikes: O→0, I/L→1 so mentor screenshots and typed keys match.
+ * Canonical display/storage form: EDGES-XXXX-XXXX-XXXX-XXXX
+ * Folds OCR lookalikes (O→0, I/L→1), unicode dashes, spaces, and bare alnum pastes.
  */
 export function normalizeLicenseKey(raw: string) {
-  return raw
+  const upper = String(raw || '')
     .trim()
     .toUpperCase()
+    // Unicode hyphens/dashes → ASCII (copy/paste from screenshots/docs)
+    .replace(/[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]/g, '-')
     .replace(/\s+/g, '')
     .replace(/O/g, '0')
     .replace(/[IL]/g, '1');
+  const fp = upper.replace(/[^A-Z0-9]/g, '');
+  if (fp.startsWith('EDGES') && fp.length >= 21) {
+    const body = fp.slice(5, 21);
+    return `EDGES-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}-${body.slice(12, 16)}`;
+  }
+  return upper;
 }
 
-/** True when two keys match after OCR-safe normalize (hyphens/spacing ignored equally). */
+/** Alphanumeric fingerprint for equality (ignores hyphen style / spacing). */
+export function licenseKeyFingerprint(raw: string) {
+  return normalizeLicenseKey(raw).replace(/[^A-Z0-9]/g, '');
+}
+
+/** True when two keys match after OCR-safe normalize (hyphens/spacing ignored). */
 export function licenseKeysMatch(a: string, b: string) {
-  return normalizeLicenseKey(a) === normalizeLicenseKey(b);
+  return licenseKeyFingerprint(a) === licenseKeyFingerprint(b);
+}
+
+/** Find a catalog key by typed input (fingerprint match). */
+export function findLocalIssuedKey<T extends { key: string }>(
+  keys: T[],
+  rawKey: string,
+): T | undefined {
+  const want = licenseKeyFingerprint(rawKey);
+  if (!want.startsWith('EDGES') || want.length < 21) return undefined;
+  return keys.find((k) => licenseKeyFingerprint(k.key) === want);
 }
 
 const CATALOG_SYNC_CHANNEL = 'edges-license-catalog-v1';
@@ -694,9 +717,10 @@ export async function findIssuedLicense(
   }
 
   const { eas, keys } = await loadLicenseCatalog();
+  // Fingerprint match first (unicode dashes, bare alnum, O/0) — same device.
   let key =
-    keys.find((k) => licenseKeysMatch(k.key, normalized)) ||
-    memoryKeys.find((k) => licenseKeysMatch(k.key, normalized));
+    findLocalIssuedKey(keys, normalized) ||
+    findLocalIssuedKey(memoryKeys, normalized);
 
   // Cross-device / wiped localStorage: server admin lookup + anon table.
   if (!key) {

@@ -68,7 +68,7 @@ export function LicenseKeysPanel() {
     if (remote.ok) {
       setFlashError(false);
       setFlash(
-        `Generated ${row.key} for ${row.eaName}. Synced via ${remote.via || 'remote'}. Activate with this key.${
+        `Generated ${row.key} for ${row.eaName}. Cloud sync OK (${remote.via || 'remote'}) — Activate works on any device.${
           remote.hint ? ` Note: ${remote.hint}` : ''
         }`,
       );

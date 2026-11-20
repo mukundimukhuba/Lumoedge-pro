@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
+import { normalizeLicenseKey } from './licenseStorage';
 import { TripleTapLogo } from './TripleTapLogo';
 
 const RED = '#FF0000';
@@ -21,7 +22,8 @@ const BG = '#000000';
  * After Lumo Edge Pro $35 access — require a mentor-issued license key
  * before opening EA control. Activating syncs that EA's name / picture / symbols.
  *
- * Copy matches license-copy-ref.jpg exactly.
+ * Keys resolve from this device catalog OR cloud (/api/licenses/lookup) so
+ * Generate on one browser → Activate on any device worldwide.
  */
 export function LicenseActivateScreen() {
   const insets = useSafeAreaInsets();
@@ -31,7 +33,7 @@ export function LicenseActivateScreen() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // Pull latest keys written by Mentors Portal (same AsyncStorage).
+  // Pull latest keys (local + cloud merge).
   useEffect(() => {
     void refreshLicenseCatalog();
   }, [refreshLicenseCatalog]);
@@ -56,15 +58,25 @@ export function LicenseActivateScreen() {
     return () => window.clearInterval(id);
   }, []);
 
-  const onActivate = async () => {
+  const runActivate = async (raw: string) => {
     setError('');
     setBusy(true);
     try {
-      const result = await activateLicenseKey(key);
+      const result = await activateLicenseKey(raw);
       if (!result.ok) setError(result.error);
     } finally {
       setBusy(false);
     }
+  };
+
+  const onActivate = () => {
+    void runActivate(key);
+  };
+
+  const onPickIssued = (issued: string) => {
+    const canonical = normalizeLicenseKey(issued);
+    setKey(canonical);
+    void runActivate(canonical);
   };
 
   return (
@@ -97,14 +109,7 @@ export function LicenseActivateScreen() {
             <TextInput
               style={styles.input}
               value={key}
-              onChangeText={(t) =>
-                setKey(
-                  t
-                    .toUpperCase()
-                    .replace(/O/g, '0')
-                    .replace(/[IL]/g, '1'),
-                )
-              }
+              onChangeText={(t) => setKey(normalizeLicenseKey(t))}
               placeholder="EDGES-XXXX-XXXX-XXXX-XXXX"
               placeholderTextColor="#6B7280"
               autoCapitalize="characters"
@@ -130,11 +135,39 @@ export function LicenseActivateScreen() {
                 <Text style={styles.ctaText}>Activate EA</Text>
               )}
             </Pressable>
+
+            {licenseKeys.length > 0 ? (
+              <View style={styles.issuedBox}>
+                <Text style={styles.issuedLabel}>
+                  KEYS ON THIS DEVICE — tap to activate
+                </Text>
+                {licenseKeys.map((k) => (
+                  <Pressable
+                    key={k.id}
+                    style={({ pressed }) => [
+                      styles.issuedRow,
+                      pressed && { opacity: 0.85 },
+                      busy && { opacity: 0.55 },
+                    ]}
+                    onPress={() => onPickIssued(k.key)}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Activate ${k.eaName} with ${k.key}`}
+                  >
+                    <Text style={styles.issuedEa}>{k.eaName}</Text>
+                    <Text style={styles.issuedKey} selectable>
+                      {normalizeLicenseKey(k.key)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+
             <Text style={styles.fine}>
-              Your license key is provided by your mentor. Enter a valid key to
-              continue.
+              Your license key is provided by your mentor. Works on any device
+              once synced to the cloud.
               {licenseKeys.length > 0
-                ? ` ${licenseKeys.length} key(s) available on this device.`
+                ? ` ${licenseKeys.length} key(s) cached on this device.`
                 : ''}
             </Text>
           </View>
@@ -196,7 +229,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     letterSpacing: 0.5,
   },
-  error: { color: '#FF6B6B', fontSize: 13, marginTop: 4 },
+  error: { color: '#FF6B6B', fontSize: 13, marginTop: 4, lineHeight: 18 },
   cta: {
     marginTop: 14,
     backgroundColor: RED,
@@ -210,6 +243,36 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '800',
     fontSize: 16,
+  },
+  issuedBox: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: '#2A2F3A',
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+    backgroundColor: '#0B0D12',
+  },
+  issuedLabel: {
+    color: '#9CA3AF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+  },
+  issuedRow: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 4,
+  },
+  issuedEa: { color: '#E5E7EB', fontWeight: '700', fontSize: 13 },
+  issuedKey: {
+    color: '#fff',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 13,
+    letterSpacing: 0.4,
   },
   fine: {
     marginTop: 14,

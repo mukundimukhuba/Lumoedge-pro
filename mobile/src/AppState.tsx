@@ -13,7 +13,7 @@ import type { MentorSession } from './auth/mentorAuth';
 import {
   compressEaPicture,
   findIssuedLicense,
-  licenseKeysMatch,
+  findLocalIssuedKey,
   loadLicenseCatalog,
   normalizeLicenseKey,
   saveLicenseCatalog,
@@ -490,41 +490,38 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: 'Enter a valid EDGES-XXXX-XXXX-XXXX-XXXX key' };
     }
 
-    // 1) Shared disk/localStorage + Supabase (OCR-safe normalize)
-    let found = await findIssuedLicense(key);
+    const fromLocal = (pool: LicenseKey[]) => {
+      const hit = findLocalIssuedKey(pool, key);
+      if (!hit) return null;
+      return {
+        key: hit,
+        eas: easRef.current,
+        keys: pool.length ? pool : keysRef.current,
+      };
+    };
 
-    // 2) Same-SPA React memory (portal just generated the key this session)
+    // 1) Same-device React memory first (fingerprint / OCR-safe)
+    let found = fromLocal(keysRef.current);
+
+    // 2) Disk + cloud catalog (any browser worldwide via /api/licenses/lookup)
     if (!found) {
-      const memKey = keysRef.current.find((k) => licenseKeysMatch(k.key, key));
-      if (memKey) {
-        found = {
-          key: memKey,
-          eas: easRef.current,
-          keys: keysRef.current,
-        };
-      }
+      found = await findIssuedLicense(key);
     }
 
-    // 3) Force reload from disk/remote then retry (same-device race after Generate)
+    // 3) Refresh local+remote then retry (race after Generate on another tab)
     if (!found) {
       await refreshLicenseCatalog();
-      const memKey = keysRef.current.find((k) => licenseKeysMatch(k.key, key));
-      if (memKey) {
-        found = {
-          key: memKey,
-          eas: easRef.current,
-          keys: keysRef.current,
-        };
-      } else {
-        found = await findIssuedLicense(key);
-      }
+      found = fromLocal(keysRef.current) || (await findIssuedLicense(key));
     }
 
     if (!found) {
+      const n = keysRef.current.length;
       const localHint =
-        keysRef.current.length > 0
-          ? ` ${keysRef.current.length} key(s) on this device — check O vs 0 and I vs 1.`
-          : ' Keys sync on this device and via Supabase when configured.';
+        n === 1
+          ? ` 1 key on this device (${keysRef.current[0]!.key}) — tap it below or re-type carefully (O vs 0).`
+          : n > 1
+            ? ` ${n} keys on this device — pick one from the list below.`
+            : ' If your mentor just generated it, wait a moment and try again (cloud sync).';
       return {
         ok: false,
         error: `License key not found.${localHint}`,
