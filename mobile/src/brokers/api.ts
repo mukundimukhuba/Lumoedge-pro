@@ -9,6 +9,28 @@ export type BrokersSearchResponse = {
   error?: string;
 };
 
+export type BrokerTrade = {
+  id: string;
+  symbol: string;
+  side: string;
+  lots: number;
+  openPrice: number;
+  pnl: number;
+};
+
+export type BrokerAccount = {
+  sessionId?: string;
+  broker?: string;
+  server?: string;
+  login?: string;
+  currency?: string;
+  balance: number;
+  equity: number;
+  trades: BrokerTrade[];
+  updatedAt?: string;
+  source?: string;
+};
+
 export type BrokerConnectResponse = {
   ok: boolean;
   broker?: string;
@@ -19,6 +41,8 @@ export type BrokerConnectResponse = {
   message?: string;
   error?: string;
   upstream?: boolean;
+  sessionId?: string;
+  account?: BrokerAccount | null;
 };
 
 /**
@@ -45,7 +69,7 @@ export function getBrokersApiRoot(): string {
 
 export async function searchBrokersApi(
   query: string,
-  limit = 12,
+  limit = 24,
 ): Promise<BrokersSearchResponse> {
   const root = getBrokersApiRoot();
   const url = new URL('/api/brokers', root || 'http://127.0.0.1');
@@ -92,4 +116,26 @@ export async function connectBrokerApi(input: {
     };
   }
   return data;
+}
+
+export async function fetchBrokerAccount(
+  sessionId: string,
+): Promise<BrokerAccount> {
+  const root = getBrokersApiRoot();
+  const url = new URL('/api/brokers/account', root || 'http://127.0.0.1');
+  url.searchParams.set('sessionId', sessionId);
+  const res = await fetch(url.toString(), {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+  const data = (await res.json()) as BrokerAccount & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error || `Account fetch failed (${res.status})`);
+  }
+  return {
+    ...data,
+    trades: Array.isArray(data.trades) ? data.trades : [],
+    balance: Number(data.balance) || 0,
+    equity: Number(data.equity) || 0,
+  };
 }

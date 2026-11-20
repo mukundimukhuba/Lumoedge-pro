@@ -1,8 +1,40 @@
 /** Shared broker catalog + fuzzy search for /api/brokers */
 
 const BROKERS = [
+  // South Africa
+  'EasyEquities',
+  'GT247',
+  'Standard Bank OST',
+  'Absa Stockbrokers',
+  'FNB Share Investing',
+  'Investec Securities',
+  'PSG Wealth',
+  'Sasfin Securities',
+  'Orange Securities',
+  'Sygnia Securities',
+  'Ninety One',
+  'Afriforesx',
+  'Accendo Markets',
+  'Bidvest Securities',
+  'Satrix',
+  'Razor Markets',
+  'RCG Markets',
+  'Banxso',
+  'Scope Markets',
+  'Vault Markets',
+  'JustMarkets SA',
+  'FNB',
+  'Standard Bank FX',
+  'Orange Markets',
+  'Trade360 SA',
+  'AVATRADE SA',
+  // Global / MT5
   'IC Markets',
+  'IC Markets AU',
+  'IC Markets Global',
   'Pepperstone',
+  'Pepperstone UK',
+  'Pepperstone AU',
   'XM',
   'XM Global',
   'Exness',
@@ -13,6 +45,8 @@ const BROKERS = [
   'MyForexFunds',
   'RoboForex',
   'Tickmill',
+  'Tickmill UK',
+  'Tickmill EU',
   'FP Markets',
   'AvaTrade',
   'OANDA',
@@ -41,7 +75,6 @@ const BROKERS = [
   'Blueberry Markets',
   'GO Markets',
   'Global Prime',
-  'Raw Trading',
   'JustMarkets',
   'Octa',
   'OctaFX',
@@ -51,178 +84,87 @@ const BROKERS = [
   'FXTM',
   'HotForex',
   'Dukascopy',
-  'Swissquote',
-  'TD365',
-  'City Index',
-  'Spreadex',
-  'Markets.com',
-  'XTB',
-  'ActivTrades',
-  'ADSS',
-  'AMarkets',
-  'IronFX',
   'FXCM',
   'FXOpen',
   'FXPro',
-  'FxPig',
-  'Gbe brokers',
-  'GMI',
-  'HYCM',
-  'ICM Capital',
-  'IFC Markets',
-  'Infinox',
-  'Ironbeam',
-  'LegacyFX',
-  'Libertex',
-  'LMAX',
-  'London Capital Group',
-  'NPBFX',
-  'Olymp Trade',
-  'Orbex',
-  'Pacific Union',
-  'Phenix Capital',
-  'PhillipCapital',
   'PrimeXBT',
-  'Purple Trading',
-  'Rakuten Securities',
-  'Refresh Capital',
-  'Scope Markets',
-  'Skilling',
-  'Spread Co',
-  'Sterling Markets',
-  'StoneX',
-  'Supercharts',
-  'T4Trade',
-  'TeleTrade',
-  'TenX Prime',
   'TMGM',
-  'Tradier',
-  'Tradovate',
-  'Traders Way',
-  'Tradeview Markets',
-  'TriumphFX',
-  'Ubermarkets',
-  'Umarkets',
-  'UniFee',
-  'Valutrades',
-  'Vantage International',
-  'Vertex Markets',
   'VT Markets',
-  'Windsor Brokers',
-  'XBTFX',
-  'Yapikredi Invest',
-  'ZuluTrade',
-  'StarTrader',
-  'MultiBank Group',
-  'DooPrime',
   'PuPrime',
-  'Ultima Markets',
-  'Moneta Markets',
-  'ACYpartners',
-  'Opofinance',
-  'Errante',
-  'Blueberry',
-  'ATFX',
-  'BDSwiss',
-  'NordFX',
-  'Just2Trade',
-  'Tickmill UK',
-  'Tickmill EU',
-  'IC Markets AU',
-  'IC Markets Global',
-  'Pepperstone UK',
-  'Pepperstone AU',
+  'MultiBank Group',
+  'StarTrader',
   'MetaQuotes Demo',
   'MetaTrader 5 Demo',
   'MetaTrader 4 Demo',
   'Deriv',
-  'Binary.com',
-  'Pocket Option',
-  'IQ Option',
-  'Quotex',
-  'FreshForex',
-  'Grand Capital',
-  'Gerchik & Co',
-  'Weltrade',
-  'FiboGroup',
-  'RoboForex EU',
-  'RoboForex Ltd',
-  'AvaTrade EU',
-  'AvaTrade Global',
-  'Fxview',
-  'E8 Markets',
-  'The5ers',
-  'SurgeTrader',
-  'Maven Trading',
-  'Earn2Trade',
-  'Apex Trader Funding',
-  'Topstep',
-  'Bulenox',
-  'Leeloo Trading',
-  'City Traders Imperium',
-  'Funded Trading Plus',
-  'True Forex Funds',
-  'Goat Funded Trader',
+  'NordFX',
+  'DooPrime',
+  'Ultima Markets',
+  'Moneta Markets',
 ];
 
 const BROKER_ALIASES = {
   icmarkets: 'IC Markets',
-  icmarket: 'IC Markets',
   icm: 'IC Markets',
   pepper: 'Pepperstone',
   pepperston: 'Pepperstone',
   xmtrading: 'XM',
-  xmglobal: 'XM Global',
   exnes: 'Exness',
   ftmoo: 'FTMO',
   roboforex: 'RoboForex',
   tickmil: 'Tickmill',
-  fpmarkets: 'FP Markets',
-  avatrade: 'AvaTrade',
-  oanda: 'OANDA',
-  plus500: 'Plus500',
-  admiral: 'Admiral Markets',
-  admirals: 'Admirals',
-  blackbull: 'BlackBull Markets',
-  fusion: 'Fusion Markets',
-  eightcap: 'Eightcap',
   hfm: 'HFM',
   hfmarkets: 'HF Markets',
-  thinkmarkets: 'ThinkMarkets',
-  vantagemarkets: 'Vantage Markets',
-  axitrader: 'AxiTrader',
-  cmc: 'CMC Markets',
-  ibkr: 'Interactive Brokers',
-  ib: 'Interactive Brokers',
-  saxo: 'Saxo Bank',
-  capitalcom: 'Capital.com',
-  trading212: 'Trading 212',
-  etoro: 'eToro',
-  blueberry: 'Blueberry Markets',
-  gomarkets: 'GO Markets',
-  globalprime: 'Global Prime',
-  justmarkets: 'JustMarkets',
-  octafx: 'OctaFX',
-  liteforex: 'LiteFinance',
-  insta: 'InstaForex',
-  hotforex: 'HotForex',
-  dukas: 'Dukascopy',
-  fxcm: 'FXCM',
-  fxpro: 'FXPro',
-  fxopen: 'FXOpen',
   fundedpips: 'FundingPips',
-  tft: 'The Funded Trader',
-  fundednext: 'FundedNext',
-  mff: 'MyForexFunds',
-  tmgm: 'TMGM',
-  vtmarkets: 'VT Markets',
-  puprime: 'PuPrime',
-  dooprime: 'DooPrime',
-  multibank: 'MultiBank Group',
+  gt247: 'GT247',
+  easyequities: 'EasyEquities',
+  easyequity: 'EasyEquities',
+  standardbank: 'Standard Bank OST',
+  standardbankfx: 'Standard Bank FX',
+  standardbankost: 'Standard Bank OST',
+  absa: 'Absa Stockbrokers',
+  fnb: 'FNB',
+  fnbshareinvesting: 'FNB Share Investing',
+  investec: 'Investec Securities',
+  psg: 'PSG Wealth',
+  afriforesx: 'Afriforesx',
+  satrix: 'Satrix',
+  razor: 'Razor Markets',
+  razormarkets: 'Razor Markets',
+  razormarket: 'Razor Markets',
+  rcg: 'RCG Markets',
+  rcgmarkets: 'RCG Markets',
+  banxso: 'Banxso',
+  scope: 'Scope Markets',
+  scopemarkets: 'Scope Markets',
+  vault: 'Vault Markets',
+  vaultmarkets: 'Vault Markets',
+  justmarketssa: 'JustMarkets SA',
+  justmarkets: 'JustMarkets',
   mt5demo: 'MetaTrader 5 Demo',
   mt4demo: 'MetaTrader 4 Demo',
   metaquotes: 'MetaQuotes Demo',
 };
+
+const QUERY_STOPWORDS = new Set([
+  'markets',
+  'market',
+  'broker',
+  'brokers',
+  'trading',
+  'forex',
+  'capital',
+  'securities',
+  'bank',
+  'fx',
+  'mt5',
+  'mt4',
+  'sa',
+  'global',
+  'ltd',
+  'limited',
+  'the',
+]);
 
 function normalizeBrokerKey(s) {
   return String(s || '')
@@ -260,26 +202,80 @@ function scoreBroker(query, name) {
   if (n === q || nKey === qKey) return 1000;
   if (n.startsWith(q) || nKey.startsWith(qKey)) return 900 - Math.min(qKey.length, 40);
   if (n.includes(q) || nKey.includes(qKey)) return 750 - Math.min(nKey.indexOf(qKey), 40);
-  const dist = levenshtein(
-    qKey,
-    nKey.slice(0, Math.max(qKey.length + 2, qKey.length)),
-  );
-  const maxLen = Math.max(qKey.length, 1);
-  if (dist <= Math.max(1, Math.floor(maxLen / 3))) return 600 - dist * 40;
+
   const qTokens = q.split(/[^a-z0-9]+/).filter(Boolean);
   const nTokens = n.split(/[^a-z0-9]+/).filter(Boolean);
-  let hits = 0;
-  for (const t of qTokens) {
-    if (nTokens.some((nt) => nt.startsWith(t) || t.startsWith(nt))) hits += 1;
+  const distinctive = qTokens.filter((t) => !QUERY_STOPWORDS.has(t));
+  const needed = distinctive.length > 0 ? distinctive : qTokens;
+
+  // Fuzzy match only on distinctive tokens (never on "markets" alone)
+  const fuzzyKey = normalizeBrokerKey(needed.join(' '));
+  if (fuzzyKey.length >= 2) {
+    const dist = levenshtein(
+      fuzzyKey,
+      nKey.slice(0, Math.max(fuzzyKey.length + 2, fuzzyKey.length)),
+    );
+    const maxLen = Math.max(fuzzyKey.length, 1);
+    if (dist <= Math.max(1, Math.floor(maxLen / 3))) {
+      // Still require the distinctive stem to appear in the name key
+      // for short queries like "rcg" / "razor"
+      const stemOk =
+        distinctive.length === 0 ||
+        distinctive.some(
+          (t) =>
+            nKey.includes(t) ||
+            nTokens.some((nt) => nt.startsWith(t) || t.startsWith(nt)),
+        );
+      if (stemOk) return 600 - dist * 40;
+    }
   }
-  if (hits > 0) return 400 + hits * 50;
-  return 0;
+
+  let hits = 0;
+  let distinctiveHits = 0;
+  for (const t of qTokens) {
+    const matched = nTokens.some(
+      (nt) => nt.startsWith(t) || t.startsWith(nt) || nt.includes(t),
+    );
+    if (matched) {
+      hits += 1;
+      if (!QUERY_STOPWORDS.has(t)) distinctiveHits += 1;
+    }
+  }
+  if (distinctive.length > 0 && distinctiveHits === 0) return 0;
+  if (needed.length > 1 && distinctiveHits < Math.ceil(needed.length * 0.5)) {
+    return 0;
+  }
+  if (hits === 0) return 0;
+  return 400 + distinctiveHits * 120 + hits * 20;
 }
 
 function filterBrokers(query, limit = 10) {
   const q = String(query || '').trim();
   const lim = Math.max(1, Math.min(50, Number(limit) || 10));
-  if (!q) return BROKERS.slice(0, lim);
+  if (!q) {
+    // SA brokers first when listing
+    const za = [
+      'Razor Markets',
+      'RCG Markets',
+      'Banxso',
+      'Scope Markets',
+      'Vault Markets',
+      'JustMarkets SA',
+      'EasyEquities',
+      'GT247',
+      'Standard Bank FX',
+      'Standard Bank OST',
+      'FNB',
+      'FNB Share Investing',
+      'Absa Stockbrokers',
+      'Investec Securities',
+      'PSG Wealth',
+      'Afriforesx',
+      'Satrix',
+    ];
+    const rest = BROKERS.filter((b) => !za.includes(b));
+    return [...za, ...rest].slice(0, lim);
+  }
 
   const qKey = normalizeBrokerKey(q);
   const aliasHit = BROKER_ALIASES[qKey] || BROKER_ALIASES[q.toLowerCase()];

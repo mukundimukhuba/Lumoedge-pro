@@ -2,6 +2,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -15,7 +18,22 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { EdgesBottomDock } from './EdgesBottomDock';
-import { connectBrokerApi, searchBrokersApi } from './brokers/api';
+import {
+  connectBrokerApi,
+  fetchBrokerAccount,
+  searchBrokersApi,
+  type BrokerAccount,
+} from './brokers/api';
+import {
+  BROKERS,
+  brokerLogoUri,
+  canUseCustomBroker,
+  filterBrokers,
+  getBrokerRecord,
+  getBrokerServers,
+} from './brokers/data';
+
+export { BROKERS, filterBrokers, canUseCustomBroker };
 
 const BASE = {
   black: '#000000',
@@ -24,333 +42,249 @@ const BASE = {
   dim: '#5C5C5C',
   panel: 'rgba(10, 10, 10, 0.94)',
   green: '#00C853',
+  red: '#FF5252',
 };
 
-/** Expanded MT4/MT5 / CFD broker catalog for search + auto-suggest. */
-export const BROKERS = [
-  'IC Markets',
-  'Pepperstone',
-  'XM',
-  'XM Global',
-  'Exness',
-  'FTMO',
-  'FundingPips',
-  'The Funded Trader',
-  'FundedNext',
-  'MyForexFunds',
-  'RoboForex',
-  'Tickmill',
-  'FP Markets',
-  'AvaTrade',
-  'OANDA',
-  'IG',
-  'Plus500',
-  'Admiral Markets',
-  'Admirals',
-  'BlackBull Markets',
-  'Fusion Markets',
-  'Eightcap',
-  'HFM',
-  'HF Markets',
-  'FBS',
-  'ThinkMarkets',
-  'Vantage',
-  'Vantage Markets',
-  'Axi',
-  'AxiTrader',
-  'CMC Markets',
-  'Forex.com',
-  'Interactive Brokers',
-  'Saxo Bank',
-  'Capital.com',
-  'Trading 212',
-  'eToro',
-  'Blueberry Markets',
-  'GO Markets',
-  'Global Prime',
-  'Raw Trading',
-  'JustMarkets',
-  'Octa',
-  'OctaFX',
-  'LiteFinance',
-  'InstaForex',
-  'Alpari',
-  'FXTM',
-  'HotForex',
-  'Dukascopy',
-  'Swissquote',
-  'TD365',
-  'City Index',
-  'Spreadex',
-  'Markets.com',
-  'XTB',
-  'ActivTrades',
-  'ADSS',
-  'AMarkets',
-  'IronFX',
-  'FXCM',
-  'FXOpen',
-  'FXPro',
-  'FxPig',
-  'Gbe brokers',
-  'GMI',
-  'HYCM',
-  'ICM Capital',
-  'IFC Markets',
-  'Infinox',
-  'Ironbeam',
-  'LegacyFX',
-  'Libertex',
-  'LMAX',
-  'London Capital Group',
-  'NPBFX',
-  'Olymp Trade',
-  'Orbex',
-  'Pacific Union',
-  'Phenix Capital',
-  'PhillipCapital',
-  'PrimeXBT',
-  'Purple Trading',
-  'Rakuten Securities',
-  'Refresh Capital',
-  'Scope Markets',
-  'Skilling',
-  'Spread Co',
-  'Sterling Markets',
-  'StoneX',
-  'Supercharts',
-  'T4Trade',
-  'TeleTrade',
-  'TenX Prime',
-  'TMGM',
-  'Tradier',
-  'Tradovate',
-  'Traders Way',
-  'Tradeview Markets',
-  'TriumphFX',
-  'Ubermarkets',
-  'Umarkets',
-  'UniFee',
-  'Valutrades',
-  'Vantage International',
-  'Vertex Markets',
-  'VT Markets',
-  'Windsor Brokers',
-  'XBTFX',
-  'Yapikredi Invest',
-  'ZuluTrade',
-  'StarTrader',
-  'MultiBank Group',
-  'DooPrime',
-  'PuPrime',
-  'Ultima Markets',
-  'Moneta Markets',
-  'ACYpartners',
-  'Opofinance',
-  'Errante',
-  'Blueberry',
-  'ATFX',
-  'BDSwiss',
-  'NordFX',
-  'Just2Trade',
-  'NordFX',
-  'Tickmill UK',
-  'Tickmill EU',
-  'IC Markets AU',
-  'IC Markets Global',
-  'Pepperstone UK',
-  'Pepperstone AU',
-  'MetaQuotes Demo',
-  'MetaTrader 5 Demo',
-  'MetaTrader 4 Demo',
-  'Deriv',
-  'Binary.com',
-  'Pocket Option',
-  'IQ Option',
-  'Quotex',
-  'FreshForex',
-  'Grand Capital',
-  'Gerchik & Co',
-  'Amarkets',
-  'Weltrade',
-  'FiboGroup',
-  'RoboForex EU',
-  'RoboForex Ltd',
-  'AvaTrade EU',
-  'AvaTrade Global',
-  'Fxview',
-  'E8 Markets',
-  'The5ers',
-  'SurgeTrader',
-  'Maven Trading',
-  'Earn2Trade',
-  'Apex Trader Funding',
-  'Topstep',
-  'Bulenox',
-  'Leeloo Trading',
-  'City Traders Imperium',
-  'Funded Trading Plus',
-  'True Forex Funds',
-  'Goat Funded Trader',
-] as const;
-
-/** Common misspellings / short names → catalog entry. */
-const BROKER_ALIASES: Record<string, string> = {
-  icmarkets: 'IC Markets',
-  icmarket: 'IC Markets',
-  icm: 'IC Markets',
-  pepper: 'Pepperstone',
-  pepperston: 'Pepperstone',
-  xmtrading: 'XM',
-  xmglobal: 'XM Global',
-  exnes: 'Exness',
-  ftmoo: 'FTMO',
-  roboforex: 'RoboForex',
-  'robo forex': 'RoboForex',
-  tickmil: 'Tickmill',
-  fpmarkets: 'FP Markets',
-  avatrade: 'AvaTrade',
-  oanda: 'OANDA',
-  plus500: 'Plus500',
-  admiral: 'Admiral Markets',
-  admirals: 'Admirals',
-  blackbull: 'BlackBull Markets',
-  fusion: 'Fusion Markets',
-  eightcap: 'Eightcap',
-  hfm: 'HFM',
-  hfmarkets: 'HF Markets',
-  thinkmarkets: 'ThinkMarkets',
-  vantagemarkets: 'Vantage Markets',
-  axitrader: 'AxiTrader',
-  cmc: 'CMC Markets',
-  ibkr: 'Interactive Brokers',
-  ib: 'Interactive Brokers',
-  saxo: 'Saxo Bank',
-  capitalcom: 'Capital.com',
-  trading212: 'Trading 212',
-  etoro: 'eToro',
-  blueberry: 'Blueberry Markets',
-  gomarkets: 'GO Markets',
-  globalprime: 'Global Prime',
-  justmarkets: 'JustMarkets',
-  octafx: 'OctaFX',
-  liteforex: 'LiteFinance',
-  insta: 'InstaForex',
-  hotforex: 'HotForex',
-  dukas: 'Dukascopy',
-  fxcm: 'FXCM',
-  fxpro: 'FXPro',
-  fxopen: 'FXOpen',
-  fundedpips: 'FundingPips',
-  tft: 'The Funded Trader',
-  fundednext: 'FundedNext',
-  mff: 'MyForexFunds',
-  tmgm: 'TMGM',
-  vtmarkets: 'VT Markets',
-  puprime: 'PuPrime',
-  dooprime: 'DooPrime',
-  multibank: 'MultiBank Group',
-  mt5demo: 'MetaTrader 5 Demo',
-  mt4demo: 'MetaTrader 4 Demo',
-  metaquotes: 'MetaQuotes Demo',
-};
-
-function hexToRgba(hex: string, alpha: number) {
+function hexToRgba(hex: string, a: number): string {
   const h = hex.replace('#', '');
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h;
+  const full =
+    h.length === 3
+      ? h
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : h;
   const n = parseInt(full, 16);
   const r = (n >> 16) & 255;
   const g = (n >> 8) & 255;
   const b = n & 255;
-  return `rgba(${r},${g},${b},${alpha})`;
+  return `rgba(${r},${g},${b},${a})`;
 }
 
-/** Lowercase + strip spaces/punctuation for fuzzy compare. */
-export function normalizeBrokerKey(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '');
+function formatMoney(n: number, currency = 'USD'): string {
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency,
+      maximumFractionDigits: 2,
+    }).format(n);
+  } catch {
+    return `${currency} ${n.toFixed(2)}`;
+  }
 }
 
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  if (!a.length) return b.length;
-  if (!b.length) return a.length;
-  const row = new Array(b.length + 1);
-  for (let j = 0; j <= b.length; j++) row[j] = j;
-  for (let i = 1; i <= a.length; i++) {
-    let prev = i - 1;
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cur = row[j];
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + cost);
-      prev = cur;
-    }
-  }
-  return row[b.length];
-}
+function BrokerMark({
+  name,
+  size = 28,
+}: {
+  name: string;
+  size?: number;
+}) {
+  const rec = getBrokerRecord(name);
+  const uri = brokerLogoUri(name);
+  const [failed, setFailed] = useState(false);
+  const letter = (name.trim()[0] || '?').toUpperCase();
+  const bg = rec?.color || '#333';
 
-function scoreBroker(query: string, name: string): number {
-  const q = query.trim().toLowerCase();
-  const qKey = normalizeBrokerKey(query);
-  const n = name.toLowerCase();
-  const nKey = normalizeBrokerKey(name);
-  if (!qKey) return 0;
-  if (n === q || nKey === qKey) return 1000;
-  if (n.startsWith(q) || nKey.startsWith(qKey)) return 900 - Math.min(qKey.length, 40);
-  if (n.includes(q) || nKey.includes(qKey)) return 750 - Math.min(nKey.indexOf(qKey), 40);
-  // subsequence / typo tolerance
-  const dist = levenshtein(qKey, nKey.slice(0, Math.max(qKey.length + 2, qKey.length)));
-  const maxLen = Math.max(qKey.length, 1);
-  if (dist <= Math.max(1, Math.floor(maxLen / 3))) {
-    return 600 - dist * 40;
+  if (uri && !failed) {
+    return (
+      <View
+        style={{
+          width: size,
+          height: size,
+          borderRadius: size * 0.28,
+          overflow: 'hidden',
+          backgroundColor: '#111',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Image
+          source={{ uri }}
+          style={{ width: size * 0.72, height: size * 0.72 }}
+          onError={() => setFailed(true)}
+          accessibilityIgnoresInvertColors
+        />
+      </View>
+    );
   }
-  // token overlap
-  const qTokens = q.split(/[^a-z0-9]+/).filter(Boolean);
-  const nTokens = n.split(/[^a-z0-9]+/).filter(Boolean);
-  let hits = 0;
-  for (const t of qTokens) {
-    if (nTokens.some((nt) => nt.startsWith(t) || t.startsWith(nt))) hits += 1;
-  }
-  if (hits > 0) return 400 + hits * 50;
-  return 0;
-}
 
-export function filterBrokers(query: string, limit = 10): string[] {
-  const q = query.trim();
-  if (!q) return [...BROKERS].slice(0, limit);
-
-  const qKey = normalizeBrokerKey(q);
-  const aliasHit = BROKER_ALIASES[qKey] || BROKER_ALIASES[q.toLowerCase()];
-  const scored = BROKERS.map((name) => ({
-    name,
-    score: scoreBroker(q, name),
-  }))
-    .filter((x) => x.score > 0)
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
-
-  const out: string[] = [];
-  if (aliasHit && !scored.some((s) => s.name === aliasHit && s.score >= 750)) {
-    out.push(aliasHit);
-  }
-  for (const s of scored) {
-    if (!out.includes(s.name)) out.push(s.name);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
-/** True when typed name is not an exact catalog match (offer custom). */
-export function canUseCustomBroker(query: string): boolean {
-  const q = query.trim();
-  if (q.length < 2) return false;
-  const exact = BROKERS.some(
-    (b) => b.toLowerCase() === q.toLowerCase() || normalizeBrokerKey(b) === normalizeBrokerKey(q),
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size * 0.28,
+        backgroundColor: bg,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Text
+        style={{
+          color: BASE.white,
+          fontWeight: '800',
+          fontSize: size * 0.42,
+        }}
+      >
+        {letter}
+      </Text>
+    </View>
   );
-  return !exact;
+}
+
+function ConnectPulse({ accent, active }: { accent: string; active: boolean }) {
+  const spin = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0.4)).current;
+
+  useEffect(() => {
+    if (!active) {
+      spin.stopAnimation();
+      pulse.stopAnimation();
+      return;
+    }
+    const rot = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 1100,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    const pul = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 520,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.35,
+          duration: 520,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    rot.start();
+    pul.start();
+    return () => {
+      rot.stop();
+      pul.stop();
+    };
+  }, [active, spin, pulse]);
+
+  if (!active) return null;
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={styles.pulseWrap} accessibilityLabel="Connecting">
+      <Animated.View
+        style={[
+          styles.pulseRing,
+          {
+            borderColor: hexToRgba(accent, 0.55),
+            opacity: pulse,
+            transform: [{ rotate }],
+          },
+        ]}
+      />
+      <Ionicons name="link" size={22} color={accent} />
+      <Text style={[styles.pulseText, { color: accent }]}>
+        Linking account…
+      </Text>
+    </View>
+  );
+}
+
+function LiveAccountPanel({
+  account,
+  accent,
+}: {
+  account: BrokerAccount;
+  accent: string;
+}) {
+  const currency = account.currency || 'USD';
+  const trades = account.trades || [];
+  const hasTrades = trades.length > 0;
+  const equityDelta = account.equity - account.balance;
+  const deltaColor =
+    equityDelta > 0 ? BASE.green : equityDelta < 0 ? BASE.red : BASE.muted;
+
+  return (
+    <View style={styles.liveBlock} accessibilityLabel="Live account">
+      <View style={styles.liveHeader}>
+        <View style={styles.liveDot} />
+        <Text style={styles.liveTitle}>Live account</Text>
+        <Text style={styles.liveAgo}>
+          {account.updatedAt
+            ? new Date(account.updatedAt).toLocaleTimeString()
+            : 'now'}
+        </Text>
+      </View>
+
+      <View style={styles.metricsRow}>
+        <View
+          style={[
+            styles.metricCard,
+            { borderColor: hexToRgba(accent, 0.35) },
+          ]}
+        >
+          <Text style={styles.metricLabel}>Balance</Text>
+          <Text style={styles.metricValue}>
+            {formatMoney(account.balance, currency)}
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.metricCard,
+            { borderColor: hexToRgba(accent, 0.35) },
+          ]}
+        >
+          <Text style={styles.metricLabel}>Equity</Text>
+          <Text style={styles.metricValue}>
+            {formatMoney(account.equity, currency)}
+          </Text>
+          <Text style={[styles.metricDelta, { color: deltaColor }]}>
+            {equityDelta >= 0 ? '+' : ''}
+            {formatMoney(equityDelta, currency)}
+          </Text>
+        </View>
+      </View>
+
+      {hasTrades ? (
+        <View style={styles.tradesBlock}>
+          <Text style={styles.sectionLabel}>Open trades</Text>
+          {trades.map((t) => {
+            const pnlColor =
+              t.pnl > 0 ? BASE.green : t.pnl < 0 ? BASE.red : BASE.muted;
+            return (
+              <View
+                key={t.id}
+                style={[
+                  styles.tradeRow,
+                  { borderColor: hexToRgba(accent, 0.25) },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.tradeSymbol}>{t.symbol}</Text>
+                  <Text style={styles.tradeMeta}>
+                    {t.side} · {t.lots} lot · @{t.openPrice}
+                  </Text>
+                </View>
+                <Text style={[styles.tradePnl, { color: pnlColor }]}>
+                  {t.pnl >= 0 ? '+' : ''}
+                  {t.pnl.toFixed(2)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 export function ConnectBrokerScreen() {
@@ -367,27 +301,37 @@ export function ConnectBrokerScreen() {
   const [showPass, setShowPass] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [account, setAccount] = useState<BrokerAccount | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [serverPickerOpen, setServerPickerOpen] = useState(false);
   const [apiSuggestions, setApiSuggestions] = useState<string[] | null>(null);
   const [apiSource, setApiSource] = useState<'local' | 'upstream' | 'offline'>(
     'local',
   );
   const searchGen = useRef(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const localSuggestions = useMemo(() => filterBrokers(query, 10), [query]);
+  const servers = useMemo(
+    () => (selected ? getBrokerServers(selected) : []),
+    [selected],
+  );
+
+  const localSuggestions = useMemo(() => filterBrokers(query, 24), [query]);
   const suggestions = apiSuggestions ?? localSuggestions;
   const showCustom = useMemo(() => canUseCustomBroker(query), [query]);
   const showSuggest =
     !selected && (searchFocused || query.trim().length > 0);
 
+  // API search with local fallback
   useEffect(() => {
     if (selected) return;
     const gen = ++searchGen.current;
     const t = setTimeout(() => {
       void (async () => {
         try {
-          const res = await searchBrokersApi(query, 10);
+          const res = await searchBrokersApi(query, 24);
           if (gen !== searchGen.current) return;
           setApiSuggestions(res.brokers);
           setApiSource(res.source === 'upstream' ? 'upstream' : 'local');
@@ -397,17 +341,49 @@ export function ConnectBrokerScreen() {
           setApiSource('offline');
         }
       })();
-    }, 220);
+    }, 180);
     return () => clearTimeout(t);
   }, [query, selected]);
+
+  // Live account poll
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    if (!sessionId || !connected) return;
+
+    const tick = () => {
+      void (async () => {
+        try {
+          const next = await fetchBrokerAccount(sessionId);
+          setAccount(next);
+        } catch {
+          // keep last snapshot
+        }
+      })();
+    };
+    tick();
+    pollRef.current = setInterval(tick, 1500);
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [sessionId, connected]);
 
   const pickBroker = (name: string) => {
     setSelected(name);
     setQuery(name);
     setSearchFocused(false);
     setConnected(false);
+    setSessionId(null);
+    setAccount(null);
     setError(null);
-    setServer('');
+    const list = getBrokerServers(name);
+    setServer(list[0] || '');
+    setServerPickerOpen(false);
     setLogin('');
     setPassword('');
   };
@@ -416,10 +392,13 @@ export function ConnectBrokerScreen() {
     setSelected(null);
     setQuery('');
     setConnected(false);
+    setSessionId(null);
+    setAccount(null);
     setError(null);
     setServer('');
     setLogin('');
     setPassword('');
+    setServerPickerOpen(false);
     setSearchFocused(true);
   };
 
@@ -442,18 +421,23 @@ export function ConnectBrokerScreen() {
           login: login.trim(),
           password,
         });
-        // Clear password from UI memory immediately after submit.
         setPassword('');
         if (!res.ok) {
           setError(res.error || 'Connect failed.');
           setConnected(false);
+          setSessionId(null);
+          setAccount(null);
           return;
         }
         setConnected(true);
+        if (res.sessionId) setSessionId(res.sessionId);
+        if (res.account) setAccount(res.account);
       } catch {
         setPassword('');
         setError('Broker API unreachable. Try again.');
         setConnected(false);
+        setSessionId(null);
+        setAccount(null);
       } finally {
         setConnecting(false);
       }
@@ -502,12 +486,12 @@ export function ConnectBrokerScreen() {
           { paddingBottom: 88 + dockPad },
         ]}
         keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.lead}>
-          Search your broker via the brokers API (fuzzy match), or use a custom
-          name if it is not listed. Then enter MT5 Server, Login, and Password.
-          Credentials go only to the brokers API and are not stored
+          Search brokers (SA + global), pick a server, then connect. Live
+          balance and equity appear after linking
           {apiSource === 'upstream'
             ? ' · live upstream'
             : apiSource === 'offline'
@@ -535,14 +519,15 @@ export function ConnectBrokerScreen() {
               setQuery(t);
               setSelected(null);
               setConnected(false);
+              setSessionId(null);
+              setAccount(null);
               setError(null);
             }}
             onFocus={() => setSearchFocused(true)}
             onBlur={() => {
-              // Delay so suggestion press registers
               setTimeout(() => setSearchFocused(false), 180);
             }}
-            placeholder="Search brokers…"
+            placeholder="Search EasyEquities, GT247, IC Markets…"
             placeholderTextColor={BASE.dim}
             style={styles.searchInput}
             autoCapitalize="none"
@@ -567,75 +552,90 @@ export function ConnectBrokerScreen() {
               { borderColor: hexToRgba(accent, 0.35) },
             ]}
           >
-            {suggestions.length === 0 && !showCustom ? (
-              <Text style={styles.suggestEmpty}>
-                No brokers match — type a name to use custom
-              </Text>
-            ) : null}
-            {suggestions.map((name, i) => (
-              <Pressable
-                key={name}
-                accessibilityRole="button"
-                accessibilityLabel={`Select ${name}`}
-                onPress={() => pickBroker(name)}
-                style={({ pressed }) => [
-                  styles.suggestRow,
-                  i > 0
-                    ? {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: hexToRgba(accent, 0.2),
-                      }
-                    : null,
-                  {
-                    backgroundColor: pressed
-                      ? hexToRgba(accent, 0.12)
-                      : 'transparent',
-                  },
-                ]}
-              >
-                <Ionicons name="business-outline" size={16} color={accent} />
-                <Text style={styles.suggestName}>{name}</Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color={BASE.dim}
-                />
-              </Pressable>
-            ))}
-            {showCustom ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Use custom broker ${query.trim()}`}
-                onPress={() => pickBroker(query.trim())}
-                style={({ pressed }) => [
-                  styles.suggestRow,
-                  suggestions.length > 0
-                    ? {
-                        borderTopWidth: StyleSheet.hairlineWidth,
-                        borderTopColor: hexToRgba(accent, 0.2),
-                      }
-                    : null,
-                  {
-                    backgroundColor: pressed
-                      ? hexToRgba(accent, 0.12)
-                      : hexToRgba(accent, 0.06),
-                  },
-                ]}
-              >
-                <Ionicons name="create-outline" size={16} color={accent} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.suggestName}>
-                    Use “{query.trim()}”
-                  </Text>
-                  <Text style={styles.suggestHint}>Custom broker name</Text>
-                </View>
-                <Ionicons
-                  name="chevron-forward"
-                  size={16}
-                  color={BASE.dim}
-                />
-              </Pressable>
-            ) : null}
+            <ScrollView
+              style={styles.suggestScroll}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
+              {suggestions.length === 0 && !showCustom ? (
+                <Text style={styles.suggestEmpty}>
+                  No brokers match — type a name to use custom
+                </Text>
+              ) : null}
+              {suggestions.map((name, i) => {
+                const rec = getBrokerRecord(name);
+                return (
+                  <Pressable
+                    key={name}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Select ${name}`}
+                    onPress={() => pickBroker(name)}
+                    style={({ pressed }) => [
+                      styles.suggestRow,
+                      i > 0
+                        ? {
+                            borderTopWidth: StyleSheet.hairlineWidth,
+                            borderTopColor: hexToRgba(accent, 0.2),
+                          }
+                        : null,
+                      {
+                        backgroundColor: pressed
+                          ? hexToRgba(accent, 0.12)
+                          : 'transparent',
+                      },
+                    ]}
+                  >
+                    <BrokerMark name={name} size={30} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.suggestName}>{name}</Text>
+                      {rec?.region === 'za' ? (
+                        <Text style={styles.suggestHint}>South Africa</Text>
+                      ) : null}
+                    </View>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={16}
+                      color={BASE.dim}
+                    />
+                  </Pressable>
+                );
+              })}
+              {showCustom ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use custom broker ${query.trim()}`}
+                  onPress={() => pickBroker(query.trim())}
+                  style={({ pressed }) => [
+                    styles.suggestRow,
+                    suggestions.length > 0
+                      ? {
+                          borderTopWidth: StyleSheet.hairlineWidth,
+                          borderTopColor: hexToRgba(accent, 0.2),
+                        }
+                      : null,
+                    {
+                      backgroundColor: pressed
+                        ? hexToRgba(accent, 0.12)
+                        : hexToRgba(accent, 0.06),
+                    },
+                  ]}
+                >
+                  <Ionicons name="create-outline" size={16} color={accent} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestName}>
+                      Use “{query.trim()}”
+                    </Text>
+                    <Text style={styles.suggestHint}>Custom broker name</Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color={BASE.dim}
+                  />
+                </Pressable>
+              ) : null}
+            </ScrollView>
           </View>
         ) : null}
 
@@ -648,7 +648,7 @@ export function ConnectBrokerScreen() {
               ]}
             >
               <View style={styles.pickedLeft}>
-                <Ionicons name="checkmark-circle" size={18} color={accent} />
+                <BrokerMark name={selected} size={32} />
                 <Text style={styles.pickedName}>{selected}</Text>
               </View>
               <Pressable
@@ -664,15 +664,88 @@ export function ConnectBrokerScreen() {
 
             <Text style={styles.sectionLabel}>Credentials</Text>
 
-            <Field
-              accent={accent}
-              label="Server"
-              value={server}
-              onChangeText={setServer}
-              placeholder="e.g. ICMarkets-Demo01"
-              autoCapitalize="none"
-              accessibilityLabel="Server"
-            />
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>Server</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Choose server"
+                onPress={() =>
+                  servers.length > 0
+                    ? setServerPickerOpen((v) => !v)
+                    : undefined
+                }
+                style={[
+                  styles.fieldInputWrap,
+                  { borderColor: hexToRgba(accent, 0.5) },
+                ]}
+              >
+                <TextInput
+                  value={server}
+                  onChangeText={(t) => {
+                    setServer(t);
+                    setServerPickerOpen(false);
+                  }}
+                  placeholder={
+                    servers[0] || 'e.g. ICMarkets-Demo01'
+                  }
+                  placeholderTextColor={BASE.dim}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={[styles.fieldInput, { flex: 1 }]}
+                  accessibilityLabel="Server"
+                />
+                {servers.length > 0 ? (
+                  <Ionicons
+                    name={
+                      serverPickerOpen ? 'chevron-up' : 'chevron-down'
+                    }
+                    size={18}
+                    color={BASE.muted}
+                  />
+                ) : null}
+              </Pressable>
+              {serverPickerOpen && servers.length > 0 ? (
+                <View
+                  style={[
+                    styles.serverList,
+                    { borderColor: hexToRgba(accent, 0.3) },
+                  ]}
+                >
+                  {servers.map((s) => (
+                    <Pressable
+                      key={s}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Server ${s}`}
+                      onPress={() => {
+                        setServer(s);
+                        setServerPickerOpen(false);
+                      }}
+                      style={({ pressed }) => [
+                        styles.serverRow,
+                        {
+                          backgroundColor:
+                            s === server
+                              ? hexToRgba(accent, 0.14)
+                              : pressed
+                                ? hexToRgba(accent, 0.08)
+                                : 'transparent',
+                        },
+                      ]}
+                    >
+                      <Text style={styles.serverName}>{s}</Text>
+                      {s === server ? (
+                        <Ionicons
+                          name="checkmark"
+                          size={16}
+                          color={accent}
+                        />
+                      ) : null}
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+
             <Field
               accent={accent}
               label="Login"
@@ -719,6 +792,8 @@ export function ConnectBrokerScreen() {
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
+            <ConnectPulse accent={accent} active={connecting} />
+
             {connected ? (
               <View
                 style={[
@@ -735,20 +810,22 @@ export function ConnectBrokerScreen() {
                   color={BASE.green}
                 />
                 <Text style={[styles.statusText, { color: BASE.green }]}>
-                  {selected} linked · demo session ready
+                  {selected} linked
+                  {account?.source === 'upstream'
+                    ? ' · live'
+                    : ' · demo session'}
                 </Text>
               </View>
-            ) : (
+            ) : !connecting ? (
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Connect broker"
                 onPress={onConnect}
-                disabled={connecting}
                 style={({ pressed }) => [
                   styles.connectBtn,
                   {
                     borderColor: accent,
-                    opacity: connecting || pressed ? 0.7 : 1,
+                    opacity: pressed ? 0.7 : 1,
                   },
                 ]}
               >
@@ -763,12 +840,14 @@ export function ConnectBrokerScreen() {
                   style={styles.connectGrad}
                 >
                   <Ionicons name="link-outline" size={18} color={BASE.white} />
-                  <Text style={styles.connectText}>
-                    {connecting ? 'Connecting…' : 'Connect'}
-                  </Text>
+                  <Text style={styles.connectText}>Connect</Text>
                 </LinearGradient>
               </Pressable>
-            )}
+            ) : null}
+
+            {connected && account ? (
+              <LiveAccountPanel account={account} accent={accent} />
+            ) : null}
           </View>
         ) : null}
       </ScrollView>
@@ -900,6 +979,9 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginTop: -4,
   },
+  suggestScroll: {
+    maxHeight: 280,
+  },
   suggestEmpty: {
     color: BASE.muted,
     fontSize: 13,
@@ -910,7 +992,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 14,
-    paddingVertical: 13,
+    paddingVertical: 12,
   },
   suggestName: {
     flex: 1,
@@ -934,11 +1016,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
   },
-  pickedLeft: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  pickedLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   pickedName: {
     color: BASE.white,
     fontSize: 15,
     fontWeight: '700',
+    flexShrink: 1,
   },
   changeLink: { fontSize: 13, fontWeight: '700' },
   fieldBlock: { gap: 6 },
@@ -961,8 +1044,22 @@ const styles = StyleSheet.create({
       ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
       : null),
   },
+  serverList: {
+    borderWidth: 1,
+    borderRadius: 12,
+    backgroundColor: BASE.panel,
+    overflow: 'hidden',
+  },
+  serverRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
+  serverName: { color: BASE.white, fontSize: 14, fontWeight: '600' },
   errorText: {
-    color: '#FF5252',
+    color: BASE.red,
     fontSize: 13,
     fontWeight: '600',
   },
@@ -984,6 +1081,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 15,
   },
+  pulseWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    gap: 10,
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
+    borderTopColor: 'transparent',
+  },
+  pulseText: { fontSize: 13, fontWeight: '700', marginTop: 36 },
   statusCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -993,4 +1105,72 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   statusText: { flex: 1, fontSize: 13, fontWeight: '700' },
+  liveBlock: { gap: 12, marginTop: 4 },
+  liveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: BASE.green,
+  },
+  liveTitle: {
+    flex: 1,
+    color: BASE.white,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  liveAgo: { color: BASE.dim, fontSize: 11, fontWeight: '600' },
+  metricsRow: { flexDirection: 'row', gap: 10 },
+  metricCard: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    backgroundColor: BASE.panel,
+    padding: 14,
+    gap: 4,
+  },
+  metricLabel: {
+    color: BASE.muted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  metricValue: {
+    color: BASE.white,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  metricDelta: { fontSize: 12, fontWeight: '700' },
+  tradesBlock: { gap: 8 },
+  tradeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    backgroundColor: BASE.panel,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  tradeSymbol: {
+    color: BASE.white,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  tradeMeta: {
+    color: BASE.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  tradePnl: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
 });
