@@ -135,8 +135,8 @@ export function EaControlScreen() {
   /** Prefer on-layout height (phone chrome / real device) over window. */
   const [layoutH, setLayoutH] = useState(windowH);
   /**
-   * Viewport-scaled phone stack: smaller hero, compact controls, no dead gaps.
-   * Target: one iPhone-tall frame without forced scroll.
+   * Exact reference proportions (Edges branding kept):
+   * hero ~50% viewport, 10–15px gaps hero→controls→status, fixed dock.
    */
   // Keep dock fully above home-indicator / browser safe area.
   const safeBottom = Math.max(
@@ -144,22 +144,20 @@ export function EaControlScreen() {
     Platform.OS === 'web' ? 12 : 8,
   );
   const safeTop = Math.max(insets.top, Platform.OS === 'web' ? 8 : 0);
-  const scale = Math.min(1.05, Math.max(0.82, layoutH / 844));
-  /**
-   * Smaller proportional hero vs old ~34%/248cap — ~28% fills the phone
-   * without leaving a dead mid-gap; lower stack stays dense under it.
-   */
-  const heroH = Math.max(124, Math.min(Math.round(layoutH * 0.28), 210));
+  const scale = Math.min(1.08, Math.max(0.85, layoutH / 844));
+  /** Hero ≈ half the phone — dominant visual plane like the reference. */
+  const heroH = Math.max(220, Math.min(Math.round(layoutH * 0.5), 440));
   const dockPad = Math.max(6, 2 + safeBottom);
-  const dockH = Math.round(46 * scale) + dockPad;
+  const dockH = Math.round(48 * scale) + dockPad;
+  /** Tight stack gaps (~10–15px) between hero / controls / status. */
+  const gapTight = Math.round(Math.min(15, Math.max(10, 12 * scale)));
   const gapSm = Math.max(2, Math.round(3 * scale));
-  const gapMd = Math.max(4, Math.round(6 * scale));
-  const titleSize = Math.max(14, Math.round(16 * scale));
-  const controlPadV = Math.max(4, Math.round(5 * scale));
-  const ringSm = Math.max(30, Math.round(34 * scale));
-  const ringLg = Math.max(38, Math.round(42 * scale));
-  const iconSm = Math.max(14, Math.round(16 * scale));
-  const iconLg = Math.max(18, Math.round(20 * scale));
+  const titleSize = Math.max(15, Math.round(17 * scale));
+  const controlPadV = Math.max(6, Math.round(8 * scale));
+  const ringSm = Math.max(34, Math.round(38 * scale));
+  const ringLg = Math.max(44, Math.round(50 * scale));
+  const iconSm = Math.max(15, Math.round(17 * scale));
+  const iconLg = Math.max(20, Math.round(22 * scale));
   /** Triple-tap the logo (hero image) → Mentors Portal — not Settings. */
   const logoTaps = useRef<{ count: number; at: number }>({
     count: 0,
@@ -399,9 +397,9 @@ export function EaControlScreen() {
           style={[
             styles.lower,
             {
-              paddingTop: gapSm,
+              paddingTop: gapTight,
               paddingBottom: gapSm,
-              gap: gapMd,
+              gap: gapTight,
             },
           ]}
         >
@@ -459,44 +457,28 @@ export function EaControlScreen() {
               />
             </Glass>
 
-            <Text style={[styles.powered, { fontSize: Math.max(9, Math.round(10 * scale)) }]}>
+            <Text
+              style={[
+                styles.powered,
+                { fontSize: Math.max(9, Math.round(10 * scale)), marginTop: gapSm },
+              ]}
+            >
               powered by{' '}
               <Text style={[styles.poweredBrand, { color: accent }]}>
                 lumo edge pro
               </Text>
             </Text>
-
-            {selected.length > 0 ? (
-              <Text
-                style={[
-                  styles.symbolHint,
-                  { fontSize: Math.max(9, Math.round(10 * scale)) },
-                ]}
-                numberOfLines={1}
-              >
-                {selected.join(' · ')}
-              </Text>
-            ) : (
-              <Text
-                style={[
-                  styles.symbolHint,
-                  { fontSize: Math.max(9, Math.round(10 * scale)) },
-                ]}
-              >
-                no symbols selected
-              </Text>
-            )}
           </View>
 
-          <View style={[styles.statusBlock, { gap: gapMd }]}>
+          <View style={[styles.statusBlock, { gap: gapTight }]}>
             <Glass
               accent={accent}
               style={styles.statusGlass}
               contentStyle={[
                 styles.statusRow,
                 {
-                  paddingVertical: Math.max(4, Math.round(5 * scale)),
-                  gap: Math.max(6, Math.round(8 * scale)),
+                  paddingVertical: Math.max(6, Math.round(8 * scale)),
+                  gap: Math.max(8, Math.round(10 * scale)),
                 },
               ]}
             >
@@ -512,9 +494,9 @@ export function EaControlScreen() {
                     styles.statusThumb,
                     {
                       borderColor: accent,
-                      width: Math.max(28, Math.round(32 * scale)),
-                      height: Math.max(28, Math.round(32 * scale)),
-                      borderRadius: Math.max(14, Math.round(16 * scale)),
+                      width: Math.max(30, Math.round(34 * scale)),
+                      height: Math.max(30, Math.round(34 * scale)),
+                      borderRadius: Math.max(15, Math.round(17 * scale)),
                     },
                   ]}
                 />
@@ -523,7 +505,7 @@ export function EaControlScreen() {
                 <Text
                   style={[
                     styles.statusTitle,
-                    { fontSize: Math.max(12, Math.round(13 * scale)) },
+                    { fontSize: Math.max(12, Math.round(14 * scale)) },
                   ]}
                   numberOfLines={1}
                 >
@@ -539,6 +521,21 @@ export function EaControlScreen() {
                   ]}
                 >
                   {statusLabel}
+                </Text>
+                <Text
+                  style={[
+                    styles.symbolHint,
+                    {
+                      fontSize: Math.max(9, Math.round(10 * scale)),
+                      textAlign: 'left',
+                      marginTop: 1,
+                    },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {selected.length > 0
+                    ? selected.join(' · ')
+                    : 'no symbols selected'}
                 </Text>
               </View>
             </Glass>
@@ -1354,10 +1351,10 @@ const styles = StyleSheet.create({
     backgroundColor: BASE.black,
     alignItems: 'center',
     justifyContent: 'flex-start',
-    paddingHorizontal: 12,
-    paddingTop: 2,
-    paddingBottom: 2,
-    gap: 6,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 4,
+    gap: 12,
     alignSelf: 'stretch',
     width: '100%',
     maxWidth: '100%',
@@ -1366,7 +1363,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: '100%',
     alignItems: 'center',
-    gap: 2,
+    gap: 4,
   },
   bottomDock: {
     width: '100%',
@@ -1443,10 +1440,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-evenly',
-    paddingVertical: 5,
-    paddingHorizontal: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
   },
-  control: { alignItems: 'center', minWidth: 48 },
+  control: { alignItems: 'center', minWidth: 56 },
   ring: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
   sheen: {
     position: 'absolute',
@@ -1459,12 +1456,12 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.14)',
   },
   controlLabel: {
-    marginTop: 2,
-    fontSize: 10,
+    marginTop: 4,
+    fontSize: 11,
     fontWeight: '600',
     textTransform: 'lowercase',
   },
-  powered: { marginTop: 0, color: BASE.muted, fontSize: 10 },
+  powered: { marginTop: 2, color: BASE.muted, fontSize: 10 },
   poweredBrand: { fontWeight: '700' },
   symbolHint: {
     color: 'rgba(255,255,255,0.55)',
@@ -1476,7 +1473,7 @@ const styles = StyleSheet.create({
   statusBlock: {
     width: '100%',
     maxWidth: 420,
-    gap: 6,
+    gap: 12,
   },
   statusGlass: {
     marginTop: 0,
@@ -1488,26 +1485,26 @@ const styles = StyleSheet.create({
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 8,
+    gap: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
   },
   statusThumb: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1.5,
   },
   statusText: { flex: 1, minWidth: 0 },
   statusTitle: {
     color: BASE.white,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
   statusState: {
-    marginTop: 0,
-    fontSize: 11,
+    marginTop: 1,
+    fontSize: 12,
     fontWeight: '700',
     textTransform: 'lowercase',
   },
@@ -1517,7 +1514,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 6,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 999,
     borderWidth: 1.5,
