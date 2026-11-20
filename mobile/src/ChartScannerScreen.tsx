@@ -2,9 +2,8 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Animated,
   Easing,
   Image,
@@ -28,13 +27,19 @@ const BASE = {
   white: '#FFFFFF',
   muted: '#8B8B8B',
   dim: '#5C5C5C',
-  panel: 'rgba(10, 10, 10, 0.92)',
+  panel: 'rgba(10, 10, 10, 0.94)',
+  green: '#00C853',
 };
 
-/** Known MT5-style labels — only used to match OCR text, never as defaults. */
+/** Match OCR text only — never used as UI defaults. */
 const TF_PATTERN = /\b(M1|M5|M15|M30|H1|H4|D1|W1|MN1)\b/i;
 const SYM_PATTERN =
   /\b(XAUUSD|XAGUSD|BTCUSD|ETHUSD|NAS100|US30|US500|USTEC|GER40|UK100|EURUSD|GBPUSD|USDJPY|AUDUSD|USDCAD|USDCHF|NZDUSD|EURGBP|EURJPY|GBPJPY)(?:[\.\+][A-Za-z0-9]+)?\b/gi;
+
+type EngineStageId = 1 | 2 | 3 | 4;
+type StageState = 'idle' | 'active' | 'done' | 'error';
+
+type RadarStatus = 'READY' | 'ANALYSING' | 'SIGNAL DETECTED';
 
 type HistoryEntry = {
   id: string;
@@ -56,6 +61,26 @@ type OcrResult = {
   timeframe: string | null;
   raw: string;
 };
+
+type ScanOutcome = {
+  bias: string;
+  confidence: number;
+  explanation: string;
+  timeframe: string;
+  tp: string;
+  sl: string;
+};
+
+const ENGINE_STAGES: {
+  id: EngineStageId;
+  label: string;
+  hint: string;
+}[] = [
+  { id: 1, label: 'CAPTURE', hint: 'Chart uploaded' },
+  { id: 2, label: 'DETECT', hint: 'Symbol from image' },
+  { id: 3, label: 'ANALYSE', hint: 'Local chart pulse' },
+  { id: 4, label: 'RECORD', hint: 'Saved to history' },
+];
 
 function hexToRgba(hex: string, alpha: number) {
   const h = hex.replace('#', '');
@@ -81,7 +106,7 @@ export function parseMt5Labels(raw: string): OcrResult {
 }
 
 async function ocrChartImage(uri: string): Promise<OcrResult> {
-  // Demo / proof harness: only when URI explicitly embeds OCR fixtures.
+  // Proof harness only — never invents symbols for normal uploads.
   const harness = uri.match(/[#&]edgesocr=([A-Z0-9]+)\|([A-Z0-9]+)/i);
   if (harness) {
     return {
@@ -106,13 +131,22 @@ async function ocrChartImage(uri: string): Promise<OcrResult> {
   return { symbol: null, timeframe: null, raw: '' };
 }
 
-function mockLevels(symbol: string, bias: string, seed: number) {
+function hashSeed(s: string) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+
+/** Advisory levels from OCR'd symbol — not a live trade engine fill. */
+function advisoryLevels(symbol: string, bias: string, seed: number) {
   const base =
     symbol.includes('XAU')
       ? 2650
       : symbol.includes('BTC')
         ? 68000
-        : symbol.includes('NAS') || symbol.includes('US30') || symbol.includes('US500')
+        : symbol.includes('NAS') ||
+            symbol.includes('US30') ||
+            symbol.includes('US500')
           ? 18500
           : symbol.includes('JPY')
             ? 150
@@ -123,7 +157,6 @@ function mockLevels(symbol: string, bias: string, seed: number) {
   const entry = base + jitter;
   const fmt = (n: number) =>
     base >= 100 ? n.toFixed(2) : base >= 10 ? n.toFixed(3) : n.toFixed(5);
-
   if (bias === 'Buy') {
     return { tp: fmt(entry + step * 2.4), sl: fmt(entry - step * 1.2) };
   }
@@ -133,7 +166,7 @@ function mockLevels(symbol: string, bias: string, seed: number) {
   return { tp: fmt(entry + step), sl: fmt(entry - step) };
 }
 
-function buildTradeExplanation(
+function buildExplanation(
   symbol: string,
   timeframe: string,
   bias: string,
@@ -144,12 +177,12 @@ function buildTradeExplanation(
   const sizeNote = `${lotSize} lot × ${trades} trade${trades === 1 ? '' : 's'}`;
   const tf = timeframe || 'chart';
   if (bias === 'Buy') {
-    return `${symbol} ${tf}: structure holds above the last swing low. Prefer a pullback long (${sizeNote}); confidence ${confidence}% favors continuation.`;
+    return `${symbol} ${tf}: local chart read favors continuation long (${sizeNote}). Confidence ${confidence}%. Advisory only — not a live MT5 fill.`;
   }
   if (bias === 'Sell') {
-    return `${symbol} ${tf}: rejection into resistance with lower highs. Prefer sells on failed retests (${sizeNote}); confidence ${confidence}%.`;
+    return `${symbol} ${tf}: local chart read favors sells on failed retests (${sizeNote}). Confidence ${confidence}%. Advisory only — not a live MT5 fill.`;
   }
-  return `${symbol} ${tf}: balanced two-way flow — wait for break and retest before ${sizeNote}. Confidence ${confidence}% on range hold.`;
+  return `${symbol} ${tf}: local chart read is two-sided — wait for expansion before ${sizeNote}. Confidence ${confidence}%. Advisory only.`;
 }
 
 function pickWebFile(accept: string, capture?: string): Promise<string | null> {
@@ -179,66 +212,81 @@ function parsePositive(raw: string, fallback: number, max: number) {
   return Math.min(max, Math.round(n * 100) / 100);
 }
 
+async function buildDemoChartUri(
+  symbol: string,
+  timeframe: string,
+): Promise<string> {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') {
+    return `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6aAAAAAElFTkSuQmCC#edgesocr=${symbol}|${timeframe}`;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return `#edgesocr=${symbol}|${timeframe}`;
+  }
+  ctx.fillStyle = '#0b0f14';
+  ctx.fillRect(0, 0, 640, 360);
+  ctx.strokeStyle = '#1f2a36';
+  for (let x = 40; x < 640; x += 40) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 360);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#c62828';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(40, 260);
+  ctx.lineTo(140, 220);
+  ctx.lineTo(220, 240);
+  ctx.lineTo(320, 160);
+  ctx.lineTo(420, 190);
+  ctx.lineTo(520, 110);
+  ctx.lineTo(600, 140);
+  ctx.stroke();
+  ctx.fillStyle = '#e8eef5';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText(`${symbol}, ${timeframe}`, 16, 36);
+  ctx.fillStyle = '#8aa0b5';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('MetaTrader 5', 16, 58);
+  return `${canvas.toDataURL('image/png')}#edgesocr=${symbol}|${timeframe}`;
+}
+
 function EdgesRadar({
   accent,
-  scanning,
-  detecting,
+  status,
   size,
-  chartUri,
 }: {
   accent: string;
-  scanning: boolean;
-  detecting: boolean;
+  status: RadarStatus;
   size: number;
-  chartUri: string | null;
 }) {
   const spin = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(0.35)).current;
-  const busy = scanning || detecting;
+  const analysing = status === 'ANALYSING';
+  const signal = status === 'SIGNAL DETECTED';
 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
-        duration: busy ? 1200 : 5200,
+        duration: analysing ? 1100 : signal ? 2800 : 4800,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
     loop.start();
     return () => loop.stop();
-  }, [busy, spin]);
-
-  useEffect(() => {
-    if (!busy) {
-      pulse.setValue(0.35);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulse, {
-          toValue: 0.85,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulse, {
-          toValue: 0.3,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [busy, pulse]);
+  }, [analysing, signal, spin]);
 
   const rotate = spin.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
-  const rings = [0.92, 0.7, 0.48];
-  const inner = size * 0.52;
+  const rings = [0.92, 0.7, 0.48, 0.28];
 
   return (
     <View
@@ -248,59 +296,23 @@ function EdgesRadar({
           width: size,
           height: size,
           borderRadius: size / 2,
-          borderColor: hexToRgba(accent, 0.55),
+          borderColor: hexToRgba(accent, signal ? 0.85 : 0.55),
         },
         Platform.OS === 'web'
           ? ({
-              boxShadow: `0 0 36px ${hexToRgba(accent, 0.28)}, inset 0 0 40px ${hexToRgba(accent, 0.08)}`,
+              boxShadow: `0 0 36px ${hexToRgba(accent, signal ? 0.45 : 0.28)}`,
             } as object)
           : null,
       ]}
     >
-      {chartUri ? (
-        <Image
-          source={{ uri: chartUri }}
-          style={[
-            styles.radarChart,
-            {
-              width: inner,
-              height: inner,
-              borderRadius: inner / 2,
-            },
-          ]}
-        />
-      ) : (
-        <LinearGradient
-          colors={[
-            'rgba(0,0,0,0.2)',
-            hexToRgba(accent, 0.08),
-            'rgba(0,0,0,0.85)',
-          ]}
-          style={StyleSheet.absoluteFill}
-        />
-      )}
-
-      {busy ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.radarLoader,
-            {
-              width: inner,
-              height: inner,
-              borderRadius: inner / 2,
-              backgroundColor: 'rgba(0,0,0,0.55)',
-              opacity: pulse,
-            },
-          ]}
-        >
-          <ActivityIndicator size="large" color={accent} />
-          <Text style={styles.radarLoaderText}>
-            {detecting ? 'Detecting…' : 'Scanning…'}
-          </Text>
-        </Animated.View>
-      ) : null}
-
+      <LinearGradient
+        colors={[
+          'rgba(0,0,0,0.15)',
+          hexToRgba(accent, 0.1),
+          'rgba(0,0,0,0.9)',
+        ]}
+        style={StyleSheet.absoluteFill}
+      />
       {rings.map((f) => (
         <View
           key={f}
@@ -311,65 +323,134 @@ function EdgesRadar({
               width: size * f,
               height: size * f,
               borderRadius: (size * f) / 2,
-              borderColor: hexToRgba(accent, 0.22 + (1 - f) * 0.4),
+              borderColor: hexToRgba(accent, 0.2 + (1 - f) * 0.45),
             },
           ]}
         />
       ))}
       <View
         pointerEvents="none"
-        style={[styles.radarCrossH, { backgroundColor: hexToRgba(accent, 0.28) }]}
+        style={[styles.radarCrossH, { backgroundColor: hexToRgba(accent, 0.3) }]}
       />
       <View
         pointerEvents="none"
-        style={[styles.radarCrossV, { backgroundColor: hexToRgba(accent, 0.28) }]}
+        style={[styles.radarCrossV, { backgroundColor: hexToRgba(accent, 0.3) }]}
       />
+      {/* Rotating red beam */}
       <Animated.View
         pointerEvents="none"
         style={[
           styles.radarSweepPivot,
-          {
-            width: size * 0.46,
-            transform: [{ rotate }],
-          },
+          { width: size * 0.48, transform: [{ rotate }] },
         ]}
       >
         <LinearGradient
-          colors={[hexToRgba(accent, 0.05), hexToRgba(accent, 0.85)]}
+          colors={[hexToRgba(accent, 0.02), hexToRgba(accent, 0.95)]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={styles.radarSweepArm}
         />
       </Animated.View>
-      {!chartUri ? (
-        <View
-          style={[
-            styles.radarCore,
-            {
-              borderColor: accent,
-              backgroundColor: hexToRgba(accent, busy ? 0.4 : 0.22),
-            },
-          ]}
-        >
-          <MaterialCommunityIcons
-            name="radar"
-            size={26}
-            color={busy ? BASE.white : accent}
-          />
-        </View>
-      ) : null}
+      <View
+        style={[
+          styles.radarCore,
+          {
+            borderColor: accent,
+            backgroundColor: hexToRgba(
+              signal ? BASE.green : accent,
+              signal ? 0.22 : analysing ? 0.4 : 0.2,
+            ),
+          },
+        ]}
+      >
+        <MaterialCommunityIcons
+          name={signal ? 'target' : 'radar'}
+          size={26}
+          color={signal ? BASE.green : analysing ? BASE.white : accent}
+        />
+      </View>
     </View>
   );
 }
 
-type ScanOutcome = {
-  bias: string;
-  confidence: number;
-  explanation: string;
-  timeframe: string;
-  tp: string;
-  sl: string;
-};
+function TradeEnginePanel({
+  accent,
+  stages,
+}: {
+  accent: string;
+  stages: Record<EngineStageId, StageState>;
+}) {
+  return (
+    <View
+      style={[
+        styles.enginePanel,
+        { borderColor: hexToRgba(accent, 0.55) },
+      ]}
+    >
+      <View style={styles.engineHeader}>
+        <Text style={styles.engineEyebrow}>Trade Engine</Text>
+        <Text style={styles.engineSub}>
+          Pipeline status only — no live order fills
+        </Text>
+      </View>
+      <View style={styles.engineRow}>
+        {ENGINE_STAGES.map((s, i) => {
+          const state = stages[s.id];
+          const done = state === 'done';
+          const err = state === 'error';
+          const active = state === 'active';
+          const color = done
+            ? BASE.green
+            : err
+              ? accent
+              : active
+                ? accent
+                : BASE.dim;
+          return (
+            <View key={s.id} style={styles.engineStep}>
+              <View
+                style={[
+                  styles.engineDot,
+                  {
+                    borderColor: color,
+                    backgroundColor: done
+                      ? hexToRgba(BASE.green, 0.2)
+                      : active
+                        ? hexToRgba(accent, 0.2)
+                        : 'transparent',
+                  },
+                ]}
+              >
+                {done ? (
+                  <Ionicons name="checkmark" size={14} color={BASE.green} />
+                ) : err ? (
+                  <Ionicons name="close" size={14} color={accent} />
+                ) : (
+                  <Text style={[styles.engineNum, { color }]}>{s.id}</Text>
+                )}
+              </View>
+              <Text style={[styles.engineLabel, { color }]} numberOfLines={1}>
+                {s.label}
+              </Text>
+              {i < ENGINE_STAGES.length - 1 ? (
+                <View
+                  style={[
+                    styles.engineRail,
+                    {
+                      backgroundColor: done
+                        ? hexToRgba(BASE.green, 0.55)
+                        : hexToRgba(accent, 0.22),
+                    },
+                  ]}
+                />
+              ) : null}
+            </View>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
 
 function LotTradesFields({
   accent,
@@ -428,61 +509,11 @@ function LotTradesFields({
   );
 }
 
-/** Build a demo MT5-like chart image with readable symbol/TF text for proofs. */
-async function buildDemoChartUri(
-  symbol: string,
-  timeframe: string,
-): Promise<string> {
-  if (Platform.OS !== 'web' || typeof document === 'undefined') {
-    return `data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mP8z8BQz0AEYBxVSF+FABJADveWkH6aAAAAAElFTkSuQmCC#edgesocr=${symbol}|${timeframe}`;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = 640;
-  canvas.height = 360;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return `#edgesocr=${symbol}|${timeframe}`;
-  }
-  ctx.fillStyle = '#0b0f14';
-  ctx.fillRect(0, 0, 640, 360);
-  ctx.strokeStyle = '#1f2a36';
-  for (let x = 40; x < 640; x += 40) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, 360);
-    ctx.stroke();
-  }
-  for (let y = 30; y < 360; y += 30) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(640, y);
-    ctx.stroke();
-  }
-  ctx.strokeStyle = '#c62828';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(40, 260);
-  ctx.lineTo(140, 220);
-  ctx.lineTo(220, 240);
-  ctx.lineTo(320, 160);
-  ctx.lineTo(420, 190);
-  ctx.lineTo(520, 110);
-  ctx.lineTo(600, 140);
-  ctx.stroke();
-  ctx.fillStyle = '#e8eef5';
-  ctx.font = 'bold 28px sans-serif';
-  ctx.fillText(`${symbol}, ${timeframe}`, 16, 36);
-  ctx.fillStyle = '#8aa0b5';
-  ctx.font = '14px sans-serif';
-  ctx.fillText('MetaTrader 5', 16, 58);
-  return `${canvas.toDataURL('image/png')}#edgesocr=${symbol}|${timeframe}`;
-}
-
 export function ChartScannerScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ demo?: string }>();
   const insets = useSafeAreaInsets();
-  const { height: winH } = useWindowDimensions();
+  const { height: winH, width: winW } = useWindowDimensions();
   const { accent } = useAppState();
   const picking = useRef(false);
   const demoStarted = useRef(false);
@@ -501,42 +532,73 @@ export function ChartScannerScreen() {
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [detail, setDetail] = useState<HistoryEntry | null>(null);
+  const [stage2, setStage2] = useState<StageState>('idle');
+  const [stage3, setStage3] = useState<StageState>('idle');
+  const [stage4, setStage4] = useState<StageState>('idle');
 
-  const radarSize = Math.min(260, Math.round(winH * 0.32));
+  const radarSize = Math.min(220, Math.round(Math.min(winH * 0.26, winW * 0.58)));
   const dockPad = Math.max(insets.bottom, 10);
+
+  const stages: Record<EngineStageId, StageState> = useMemo(
+    () => ({
+      1: chartUri ? 'done' : 'idle',
+      2: stage2,
+      3: stage3,
+      4: stage4,
+    }),
+    [chartUri, stage2, stage3, stage4],
+  );
+
+  const radarStatus: RadarStatus = detecting || scanning
+    ? 'ANALYSING'
+    : outcome && symbol
+      ? 'SIGNAL DETECTED'
+      : 'READY';
+
+  const resetPipelineSoft = () => {
+    setSymbol(null);
+    setTimeframe(null);
+    setDetectError(null);
+    setOutcome(null);
+    setStage2('idle');
+    setStage3('idle');
+    setStage4('idle');
+    setScanPromptOpen(false);
+  };
 
   const applyChart = async (uri: string | null) => {
     if (!uri) return;
     const gen = ++ocrGen.current;
     setChartUri(uri);
-    setOutcome(null);
-    setDetectError(null);
-    setSymbol(null);
-    setTimeframe(null);
+    resetPipelineSoft();
     setDetecting(true);
-    setScanPromptOpen(false);
+    setStage2('active');
 
     try {
       const started = Date.now();
       const detected = await ocrChartImage(uri);
-      // Keep sniper loader visible briefly so the chart+detect state reads clearly.
-      const wait = Math.max(0, 1100 - (Date.now() - started));
+      const wait = Math.max(0, 900 - (Date.now() - started));
       if (wait) await new Promise((r) => setTimeout(r, wait));
       if (gen !== ocrGen.current) return;
+
       if (!detected.symbol) {
         setDetectError(
           'Could not read a symbol from this chart. Upload a clear MT5 screenshot with the pair visible.',
         );
+        setStage2('error');
         setDetecting(false);
         return;
       }
+
       setSymbol(detected.symbol);
       setTimeframe(detected.timeframe);
+      setStage2('done');
       setDetecting(false);
       setScanPromptOpen(true);
     } catch {
       if (gen !== ocrGen.current) return;
       setDetectError('Chart read failed. Try another screenshot.');
+      setStage2('error');
       setDetecting(false);
     }
   };
@@ -617,12 +679,24 @@ export function ChartScannerScreen() {
     }
   };
 
+  const clearChart = () => {
+    ocrGen.current += 1;
+    setChartUri(null);
+    setDetecting(false);
+    resetPipelineSoft();
+  };
+
   const runScan = () => {
     if (scanning) return;
-    if (!symbol) {
+    if (!symbol || !chartUri) {
       setDetectError('Upload an MT5 chart first so the symbol can be read.');
       return;
     }
+    if (stage2 !== 'done') {
+      setDetectError('Detection must succeed before analysis.');
+      return;
+    }
+
     setScanPromptOpen(false);
     const lotSize = parsePositive(lotRaw, 0.1, 50);
     const trades = Math.max(
@@ -633,28 +707,25 @@ export function ChartScannerScreen() {
     setTradesRaw(String(trades));
 
     if (scansLeft <= 0) {
-      setOutcome({
-        bias: '—',
-        confidence: 0,
-        timeframe: timeframe || '—',
-        tp: '—',
-        sl: '—',
-        explanation: 'No scans left today. Resets overnight.',
-      });
+      setStage3('error');
+      setDetectError('No scans left today. Resets overnight.');
       return;
     }
 
     setScanning(true);
     setOutcome(null);
+    setStage3('active');
+    setStage4('idle');
     setScansLeft((n) => Math.max(0, n - 1));
 
-    const bias = ['Buy', 'Sell', 'Range'][Math.floor(Math.random() * 3)];
-    const confidence = 68 + Math.floor(Math.random() * 28);
+    const seed = hashSeed(symbol + (timeframe || '') + chartUri.slice(0, 80));
+    const bias = (['Buy', 'Sell', 'Range'] as const)[seed % 3];
+    const confidence = 68 + (seed % 28);
     const tf = timeframe || '—';
     const sym = symbol;
     const uriSnap = chartUri;
-    const levels = mockLevels(sym, bias, Date.now());
-    const explanation = buildTradeExplanation(
+    const levels = advisoryLevels(sym, bias, seed);
+    const explanation = buildExplanation(
       sym,
       tf,
       bias,
@@ -672,6 +743,8 @@ export function ChartScannerScreen() {
         sl: levels.sl,
         explanation,
       });
+      setStage3('done');
+      setStage4('active');
       setHistory((prev) =>
         [
           {
@@ -691,6 +764,7 @@ export function ChartScannerScreen() {
           ...prev,
         ].slice(0, 24),
       );
+      setStage4('done');
       setScanning(false);
     }, 950);
   };
@@ -698,17 +772,6 @@ export function ChartScannerScreen() {
   const goHome = () => {
     if (router.canGoBack()) router.back();
     else router.replace('/');
-  };
-
-  const clearChart = () => {
-    ocrGen.current += 1;
-    setChartUri(null);
-    setSymbol(null);
-    setTimeframe(null);
-    setScanPromptOpen(false);
-    setDetecting(false);
-    setDetectError(null);
-    setOutcome(null);
   };
 
   const formatWhen = (iso: string) => {
@@ -725,12 +788,12 @@ export function ChartScannerScreen() {
     }
   };
 
-  const detectedLabel =
-    symbol && timeframe
-      ? `${symbol} · ${timeframe}`
-      : symbol
-        ? symbol
-        : null;
+  const statusColor =
+    radarStatus === 'SIGNAL DETECTED'
+      ? BASE.green
+      : radarStatus === 'ANALYSING'
+        ? accent
+        : BASE.muted;
 
   return (
     <View style={styles.root}>
@@ -740,18 +803,8 @@ export function ChartScannerScreen() {
         locations={[0, 0.45, 1]}
         style={StyleSheet.absoluteFill}
       />
-      <View
-        pointerEvents="none"
-        style={[
-          styles.glowOrb,
-          { backgroundColor: hexToRgba(accent, 0.14) },
-          Platform.OS === 'web'
-            ? ({ filter: 'blur(48px)' } as object)
-            : null,
-        ]}
-      />
 
-      <View style={{ paddingTop: Math.max(insets.top, 12) }}>
+      <View style={{ paddingTop: Math.max(insets.top, 10) }}>
         <View style={styles.header}>
           <Pressable
             accessibilityLabel="back"
@@ -795,46 +848,90 @@ export function ChartScannerScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* 3) Trade Engine ABOVE radar */}
+        <TradeEnginePanel accent={accent} stages={stages} />
+
+        {/* 2) Centered radar + statuses */}
         <View style={styles.radarBlock}>
-          <EdgesRadar
-            accent={accent}
-            scanning={scanning}
-            detecting={detecting}
-            size={radarSize}
-            chartUri={chartUri}
-          />
-          <Text style={styles.statusLabel}>
-            {detecting
-              ? 'Reading chart…'
-              : scanning
-                ? 'Scanning pulse…'
-                : chartUri
-                  ? detectedLabel || 'Chart loaded'
-                  : 'Ready'}
+          <EdgesRadar accent={accent} status={radarStatus} size={radarSize} />
+          <Text style={[styles.radarStatus, { color: statusColor }]}>
+            {radarStatus}
           </Text>
           <Text style={styles.statusSub}>
             {detectError
               ? detectError
-              : chartUri
-                ? detectedLabel
-                  ? 'Symbol read from your MT5 chart'
-                  : 'Waiting for OCR…'
-                : 'Upload or capture an MT5 chart — symbol is read from the image only'}
+              : symbol
+                ? `${symbol}${timeframe ? ` · ${timeframe}` : ''} · from image`
+                : chartUri
+                  ? 'Reading chart…'
+                  : 'Radar READY — upload an MT5 chart to begin'}
           </Text>
-          {chartUri ? (
-            <Pressable
-              accessibilityLabel="clear chart"
-              onPress={clearChart}
-              style={styles.clearLink}
-            >
-              <Text style={[styles.clearLinkText, { color: accent }]}>
-                Clear chart
-              </Text>
-            </Pressable>
-          ) : null}
         </View>
 
-        <Text style={styles.sectionLabel}>Capture</Text>
+        {/* 1) Upload preview */}
+        <Text style={styles.sectionLabel}>Chart</Text>
+        {chartUri ? (
+          <View
+            style={[
+              styles.previewBox,
+              { borderColor: hexToRgba(accent, 0.5) },
+            ]}
+          >
+            <Image
+              source={{ uri: chartUri }}
+              style={styles.previewImg}
+              resizeMode="contain"
+              accessibilityLabel="Uploaded chart preview"
+            />
+            <View style={styles.previewActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Remove chart"
+                onPress={clearChart}
+                style={[
+                  styles.previewBtn,
+                  { borderColor: hexToRgba(accent, 0.55) },
+                ]}
+              >
+                <Ionicons name="trash-outline" size={16} color={accent} />
+                <Text style={[styles.previewBtnText, { color: accent }]}>
+                  Remove
+                </Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Replace chart"
+                onPress={pickLibrary}
+                style={[
+                  styles.previewBtn,
+                  { borderColor: hexToRgba(accent, 0.55) },
+                ]}
+              >
+                <Ionicons name="swap-horizontal" size={16} color={accent} />
+                <Text style={[styles.previewBtnText, { color: accent }]}>
+                  Replace
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <View
+            style={[
+              styles.previewEmpty,
+              { borderColor: hexToRgba(accent, 0.35) },
+            ]}
+          >
+            <MaterialCommunityIcons
+              name="image-off-outline"
+              size={28}
+              color={BASE.dim}
+            />
+            <Text style={styles.previewEmptyText}>
+              No chart yet — preview appears here after upload
+            </Text>
+          </View>
+        )}
+
         <View style={styles.captureRow}>
           <Pressable
             accessibilityRole="button"
@@ -848,14 +945,7 @@ export function ChartScannerScreen() {
               },
             ]}
           >
-            <View
-              style={[
-                styles.captureIconWrap,
-                { backgroundColor: hexToRgba(accent, 0.14) },
-              ]}
-            >
-              <Ionicons name="cloud-upload-outline" size={22} color={accent} />
-            </View>
+            <Ionicons name="cloud-upload-outline" size={20} color={accent} />
             <Text style={styles.captureTitle}>Upload</Text>
             <Text style={styles.captureSub}>MT5 screenshot</Text>
           </Pressable>
@@ -871,20 +961,13 @@ export function ChartScannerScreen() {
               },
             ]}
           >
-            <View
-              style={[
-                styles.captureIconWrap,
-                { backgroundColor: hexToRgba(accent, 0.14) },
-              ]}
-            >
-              <Ionicons name="camera-outline" size={22} color={accent} />
-            </View>
+            <Ionicons name="camera-outline" size={20} color={accent} />
             <Text style={styles.captureTitle}>Camera</Text>
             <Text style={styles.captureSub}>Snap the screen</Text>
           </Pressable>
         </View>
 
-        <Text style={[styles.sectionLabel, { marginTop: 4 }]}>Size</Text>
+        <Text style={[styles.sectionLabel, { marginTop: 2 }]}>Size</Text>
         <LotTradesFields
           accent={accent}
           lotRaw={lotRaw}
@@ -897,16 +980,16 @@ export function ChartScannerScreen() {
           accessibilityRole="button"
           accessibilityLabel="run scan"
           onPress={runScan}
-          disabled={!symbol || detecting || scanning}
+          disabled={!symbol || detecting || scanning || stage2 !== 'done'}
           style={({ pressed }) => [
             styles.runBtn,
             {
               borderColor: accent,
-              opacity: !symbol || detecting || scanning || pressed ? 0.55 : 1,
+              opacity:
+                !symbol || detecting || scanning || stage2 !== 'done' || pressed
+                  ? 0.5
+                  : 1,
             },
-            Platform.OS === 'web'
-              ? ({ boxShadow: `0 0 20px ${hexToRgba(accent, 0.4)}` } as object)
-              : null,
           ]}
         >
           <LinearGradient
@@ -925,24 +1008,24 @@ export function ChartScannerScreen() {
               color={BASE.white}
             />
             <Text style={styles.runText}>
-              {scanning ? 'Scanning…' : 'Run scan'}
+              {scanning ? 'Analysing…' : 'Run scan'}
             </Text>
           </LinearGradient>
         </Pressable>
 
-        {outcome ? (
+        {outcome && symbol ? (
           <View
             style={[
               styles.resultCard,
               {
-                borderColor: hexToRgba(accent, 0.55),
-                backgroundColor: hexToRgba(accent, 0.08),
+                borderColor: hexToRgba(BASE.green, 0.55),
+                backgroundColor: hexToRgba(BASE.green, 0.08),
               },
             ]}
           >
             <View style={styles.resultTop}>
               <View>
-                <Text style={styles.resultEyebrow}>Signal</Text>
+                <Text style={styles.resultEyebrow}>Signal detected</Text>
                 <Text style={styles.resultSym}>
                   {symbol}
                   {outcome.timeframe && outcome.timeframe !== '—'
@@ -950,34 +1033,30 @@ export function ChartScannerScreen() {
                     : ''}
                 </Text>
               </View>
-              <Text style={[styles.resultBias, { color: accent }]}>
+              <Text style={[styles.resultBias, { color: BASE.green }]}>
                 {outcome.bias}
               </Text>
             </View>
             <View style={styles.confRow}>
               <Text style={styles.resultMetaKey}>Confidence</Text>
-              <Text style={styles.resultMetaVal}>
-                {outcome.confidence > 0 ? `${outcome.confidence}%` : '—'}
-              </Text>
+              <Text style={styles.resultMetaVal}>{outcome.confidence}%</Text>
             </View>
-            {outcome.confidence > 0 ? (
+            <View
+              style={[
+                styles.confTrack,
+                { backgroundColor: hexToRgba(BASE.green, 0.18) },
+              ]}
+            >
               <View
                 style={[
-                  styles.confTrack,
-                  { backgroundColor: hexToRgba(accent, 0.15) },
+                  styles.confFill,
+                  {
+                    width: `${outcome.confidence}%`,
+                    backgroundColor: BASE.green,
+                  },
                 ]}
-              >
-                <View
-                  style={[
-                    styles.confFill,
-                    {
-                      width: `${outcome.confidence}%`,
-                      backgroundColor: accent,
-                    },
-                  ]}
-                />
-              </View>
-            ) : null}
+              />
+            </View>
             <View style={styles.levelRow}>
               <View style={styles.levelCell}>
                 <Text style={styles.levelKey}>TP</Text>
@@ -1013,6 +1092,7 @@ export function ChartScannerScreen() {
                   <Image
                     source={{ uri: row.chartUri }}
                     style={styles.historyThumb}
+                    resizeMode="cover"
                   />
                 ) : (
                   <View
@@ -1053,7 +1133,7 @@ export function ChartScannerScreen() {
         ) : null}
       </ScrollView>
 
-      {/* Centered Scan now modal */}
+      {/* Centered Scan now */}
       <Modal
         visible={scanPromptOpen}
         transparent
@@ -1062,15 +1142,7 @@ export function ChartScannerScreen() {
       >
         <View style={styles.centerBackdrop}>
           <View
-            style={[
-              styles.promptCard,
-              { borderColor: accent },
-              Platform.OS === 'web'
-                ? ({
-                    boxShadow: `0 0 28px ${hexToRgba(accent, 0.35)}`,
-                  } as object)
-                : null,
-            ]}
+            style={[styles.promptCard, { borderColor: accent }]}
           >
             <Text style={styles.promptEyebrow}>Detected from chart</Text>
             <Text style={styles.promptTitle}>
@@ -1080,8 +1152,8 @@ export function ChartScannerScreen() {
               ) : null}
             </Text>
             <Text style={styles.promptBody}>
-              Set lot size and how many trades, then run the pulse for signal,
-              confidence, TP / SL, and a short trade read.
+              Set lot size and trades, then run analysis. Trade Engine stages
+              advance only when each real step completes.
             </Text>
             <LotTradesFields
               accent={accent}
@@ -1096,10 +1168,7 @@ export function ChartScannerScreen() {
               onPress={runScan}
               style={({ pressed }) => [
                 styles.promptPrimary,
-                {
-                  borderColor: accent,
-                  opacity: pressed ? 0.88 : 1,
-                },
+                { borderColor: accent, opacity: pressed ? 0.88 : 1 },
               ]}
             >
               <LinearGradient
@@ -1132,7 +1201,6 @@ export function ChartScannerScreen() {
         </View>
       </Modal>
 
-      {/* History detail — also centered */}
       <Modal
         visible={Boolean(detail)}
         transparent
@@ -1147,7 +1215,6 @@ export function ChartScannerScreen() {
                 {
                   borderColor: accent,
                   maxHeight: winH * 0.78,
-                  marginHorizontal: 16,
                 },
               ]}
             >
@@ -1177,17 +1244,9 @@ export function ChartScannerScreen() {
                   <Image
                     source={{ uri: detail.chartUri }}
                     style={styles.detailChart}
+                    resizeMode="contain"
                   />
-                ) : (
-                  <View
-                    style={[
-                      styles.detailChartEmpty,
-                      { borderColor: hexToRgba(accent, 0.35) },
-                    ]}
-                  >
-                    <Text style={styles.captureSub}>No chart attached</Text>
-                  </View>
-                )}
+                ) : null}
                 <View style={styles.resultTop}>
                   <Text style={[styles.resultBias, { color: accent }]}>
                     {detail.bias}
@@ -1204,16 +1263,6 @@ export function ChartScannerScreen() {
                   <View style={styles.levelCell}>
                     <Text style={styles.levelKey}>SL</Text>
                     <Text style={styles.levelVal}>{detail.sl}</Text>
-                  </View>
-                </View>
-                <View style={styles.levelRow}>
-                  <View style={styles.levelCell}>
-                    <Text style={styles.levelKey}>Lot</Text>
-                    <Text style={styles.levelVal}>{detail.lotSize}</Text>
-                  </View>
-                  <View style={styles.levelCell}>
-                    <Text style={styles.levelKey}>Trades</Text>
-                    <Text style={styles.levelVal}>{detail.trades}</Text>
                   </View>
                 </View>
                 <Text style={styles.resultNote}>{detail.message}</Text>
@@ -1241,11 +1290,7 @@ export function ChartScannerScreen() {
             ]}
           />
         ) : (
-          <BlurView
-            intensity={40}
-            tint="dark"
-            style={StyleSheet.absoluteFill}
-          />
+          <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
         )}
         <View style={styles.dockRow}>
           <DockItem
@@ -1267,9 +1312,7 @@ export function ChartScannerScreen() {
             icon="link-outline"
             accent={accent}
             active={false}
-            onPress={() => {
-              router.replace('/');
-            }}
+            onPress={() => router.replace('/')}
           />
         </View>
       </View>
@@ -1310,26 +1353,17 @@ function DockItem({
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BASE.black },
-  glowOrb: {
-    position: 'absolute',
-    top: -40,
-    alignSelf: 'center',
-    left: '18%',
-    width: '64%',
-    height: 220,
-    borderRadius: 999,
-  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    gap: 12,
+    paddingHorizontal: 14,
+    paddingBottom: 6,
+    gap: 10,
   },
   headerIconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1338,14 +1372,14 @@ const styles = StyleSheet.create({
   headerTitles: { flex: 1 },
   eyebrow: {
     color: BASE.muted,
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
-    letterSpacing: 1.4,
+    letterSpacing: 1.3,
     textTransform: 'uppercase',
   },
   title: {
     color: BASE.white,
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     letterSpacing: -0.3,
   },
@@ -1354,50 +1388,83 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1.5,
-    minWidth: 48,
+    minWidth: 46,
     justifyContent: 'center',
   },
   scansPillText: { fontSize: 13, fontWeight: '800' },
   scroll: { flex: 1 },
   scrollBody: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    gap: 14,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    gap: 12,
+  },
+  enginePanel: {
+    borderWidth: 1.5,
+    borderRadius: 16,
+    backgroundColor: BASE.panel,
+    padding: 12,
+    gap: 10,
+  },
+  engineHeader: { gap: 2 },
+  engineEyebrow: {
+    color: BASE.white,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  engineSub: { color: BASE.muted, fontSize: 11 },
+  engineRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+  engineStep: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+    position: 'relative',
+  },
+  engineDot: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+    backgroundColor: '#0A0A0A',
+  },
+  engineNum: { fontSize: 12, fontWeight: '800' },
+  engineLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  engineRail: {
+    position: 'absolute',
+    top: 13,
+    left: '55%',
+    right: '-55%',
+    height: 2,
+    zIndex: 1,
   },
   radarBlock: {
     alignItems: 'center',
-    paddingVertical: 8,
-    gap: 10,
+    gap: 8,
+    paddingVertical: 4,
   },
   radarOuter: {
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
     overflow: 'hidden',
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.75)',
   },
-  radarChart: {
-    position: 'absolute',
-  },
-  radarLoader: {
-    position: 'absolute',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    zIndex: 3,
-  },
-  radarLoaderText: {
-    color: BASE.white,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  radarRing: {
-    position: 'absolute',
-    borderWidth: 1,
-  },
+  radarRing: { position: 'absolute', borderWidth: 1 },
   radarCrossH: {
     position: 'absolute',
     width: '78%',
@@ -1415,75 +1482,97 @@ const styles = StyleSheet.create({
     top: '50%',
     marginTop: -1.5,
   },
-  radarSweepArm: {
-    width: '100%',
-    height: 2,
-    borderRadius: 1,
-  },
+  radarSweepArm: { width: '100%', height: 2, borderRadius: 1 },
   radarCore: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  statusLabel: {
-    color: BASE.white,
-    fontSize: 15,
-    fontWeight: '700',
+  radarStatus: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1.4,
   },
   statusSub: {
     color: BASE.muted,
-    fontSize: 13,
+    fontSize: 12,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 17,
     maxWidth: 300,
   },
-  clearLink: { paddingVertical: 2 },
-  clearLinkText: { fontSize: 13, fontWeight: '700' },
   sectionLabel: {
     color: BASE.muted,
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 1.2,
+    letterSpacing: 1.1,
     textTransform: 'uppercase',
-    marginTop: 4,
   },
-  captureRow: { flexDirection: 'row', gap: 12 },
+  previewBox: {
+    borderWidth: 1.5,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#080808',
+  },
+  previewImg: {
+    width: '100%',
+    height: 160,
+    backgroundColor: '#000',
+  },
+  previewActions: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 10,
+  },
+  previewBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1.5,
+    borderRadius: 999,
+    paddingVertical: 10,
+    backgroundColor: BASE.panel,
+  },
+  previewBtnText: { fontSize: 13, fontWeight: '700' },
+  previewEmpty: {
+    height: 120,
+    borderWidth: 1.5,
+    borderRadius: 16,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+  },
+  previewEmptyText: {
+    color: BASE.muted,
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  captureRow: { flexDirection: 'row', gap: 10 },
   captureTile: {
     flex: 1,
     borderWidth: 1.5,
-    borderRadius: 18,
-    paddingVertical: 16,
+    borderRadius: 16,
+    paddingVertical: 14,
     paddingHorizontal: 12,
     backgroundColor: BASE.panel,
     alignItems: 'flex-start',
-    gap: 8,
-  },
-  captureIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
+    gap: 6,
   },
   captureTitle: {
     color: BASE.white,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
-  captureSub: {
-    color: BASE.muted,
-    fontSize: 12,
-  },
-  paramsRow: { flexDirection: 'row', gap: 12 },
+  captureSub: { color: BASE.muted, fontSize: 11 },
+  paramsRow: { flexDirection: 'row', gap: 10 },
   paramField: { flex: 1, gap: 6 },
-  paramLabel: {
-    color: BASE.muted,
-    fontSize: 12,
-    fontWeight: '600',
-  },
+  paramLabel: { color: BASE.muted, fontSize: 12, fontWeight: '600' },
   paramInputWrap: {
     borderWidth: 1.5,
     borderRadius: 12,
@@ -1500,29 +1589,27 @@ const styles = StyleSheet.create({
       : null),
   },
   runBtn: {
-    borderRadius: 16,
+    borderRadius: 14,
     borderWidth: 1.5,
     overflow: 'hidden',
-    marginTop: 4,
   },
   runGrad: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
-    paddingVertical: 16,
+    gap: 8,
+    paddingVertical: 14,
   },
   runText: {
     color: BASE.white,
     fontWeight: '800',
-    fontSize: 16,
-    letterSpacing: 0.2,
+    fontSize: 15,
   },
   resultCard: {
     borderWidth: 1.5,
-    borderRadius: 18,
-    padding: 16,
-    gap: 12,
+    borderRadius: 16,
+    padding: 14,
+    gap: 10,
   },
   resultTop: {
     flexDirection: 'row',
@@ -1542,25 +1629,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginTop: 4,
   },
-  resultBias: {
-    fontSize: 26,
-    fontWeight: '800',
-  },
+  resultBias: { fontSize: 24, fontWeight: '800' },
   confRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  confTrack: {
-    height: 6,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  confFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  levelRow: { flexDirection: 'row', gap: 10 },
+  confTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  confFill: { height: '100%', borderRadius: 3 },
+  levelRow: { flexDirection: 'row', gap: 8 },
   levelCell: {
     flex: 1,
     borderRadius: 12,
@@ -1575,35 +1652,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.8,
   },
-  levelVal: {
-    color: BASE.white,
-    fontSize: 15,
-    fontWeight: '700',
-  },
+  levelVal: { color: BASE.white, fontSize: 15, fontWeight: '700' },
   resultMetaKey: { color: BASE.muted, fontSize: 13 },
-  resultMetaVal: {
-    color: BASE.white,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  resultNote: {
-    color: BASE.muted,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  historyBlock: { gap: 10, marginTop: 4 },
+  resultMetaVal: { color: BASE.white, fontSize: 15, fontWeight: '700' },
+  resultNote: { color: BASE.muted, fontSize: 13, lineHeight: 18 },
+  historyBlock: { gap: 8 },
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
     borderWidth: 1.5,
     borderRadius: 14,
     padding: 10,
     backgroundColor: BASE.panel,
   },
   historyThumb: {
-    width: 44,
-    height: 44,
+    width: 42,
+    height: 42,
     borderRadius: 10,
     backgroundColor: '#111',
   },
@@ -1613,40 +1678,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   historyMain: { flex: 1, gap: 2 },
-  historyTitle: {
-    color: BASE.white,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  historySub: {
-    color: BASE.muted,
-    fontSize: 11,
-  },
+  historyTitle: { color: BASE.white, fontSize: 13, fontWeight: '700' },
+  historySub: { color: BASE.muted, fontSize: 11 },
   historyRight: { alignItems: 'flex-end', gap: 2 },
-  historyBias: { fontSize: 14, fontWeight: '800' },
+  historyBias: { fontSize: 13, fontWeight: '800' },
   historyConf: { color: BASE.muted, fontSize: 12, fontWeight: '600' },
   centerBackdrop: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.72)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
   },
   promptCard: {
-    borderRadius: 22,
+    borderRadius: 20,
     borderWidth: 1.5,
     backgroundColor: '#0A0A0A',
-    padding: 22,
+    padding: 20,
     gap: 12,
     width: '100%',
     maxWidth: 340,
     alignSelf: 'center',
   },
   detailCard: {
-    borderRadius: 22,
+    borderRadius: 20,
     borderWidth: 1.5,
     backgroundColor: '#0A0A0A',
-    padding: 20,
+    padding: 18,
     gap: 12,
     width: '100%',
     maxWidth: 360,
@@ -1659,46 +1717,34 @@ const styles = StyleSheet.create({
   },
   detailTitle: {
     color: BASE.white,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '800',
     marginTop: 2,
   },
   detailChart: {
     width: '100%',
-    height: 180,
-    borderRadius: 14,
+    height: 160,
+    borderRadius: 12,
     backgroundColor: '#111',
-  },
-  detailChartEmpty: {
-    height: 100,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   promptEyebrow: {
     color: BASE.muted,
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 1.2,
+    letterSpacing: 1.1,
     textTransform: 'uppercase',
   },
   promptTitle: {
     color: BASE.white,
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: '800',
     letterSpacing: -0.4,
   },
-  promptTf: {
-    color: BASE.muted,
-    fontSize: 20,
-    fontWeight: '600',
-  },
+  promptTf: { color: BASE.muted, fontSize: 18, fontWeight: '600' },
   promptBody: {
     color: BASE.muted,
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 4,
+    fontSize: 13,
+    lineHeight: 19,
   },
   promptPrimary: {
     borderRadius: 14,
@@ -1710,17 +1756,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    paddingVertical: 15,
+    paddingVertical: 14,
   },
   promptPrimaryText: {
     color: BASE.white,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
   },
-  promptSecondary: {
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
+  promptSecondary: { alignItems: 'center', paddingVertical: 8 },
   promptSecondaryText: {
     color: BASE.muted,
     fontSize: 14,
@@ -1746,9 +1789,5 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: 4,
   },
-  dockLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
+  dockLabel: { fontSize: 10, fontWeight: '600', textAlign: 'center' },
 });
