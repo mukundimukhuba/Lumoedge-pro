@@ -4,20 +4,49 @@ Lumo Edge Pro EA control UI + Mentors Portal (Manage EAs, License Keys, Activate
 
 ## Supabase (cross-device license + EA pictures)
 
-Required **Cloud Agent / Vercel** secret names (values never committed):
+Required secret **names** (values never committed; never paste into chat):
 
-| Name | Used for |
-|------|----------|
-| `SUPABASE_URL` | Project URL only (`https://<ref>.supabase.co`) — not `/rest/v1` |
-| `SUPABASE_ANON_KEY` | Portal + Activate client sync |
-| `SUPABASE_SERVICE_ROLE_KEY` | Apply/verify scripts (alias `supabase` also accepted) |
-| `SUPABASE_ACCESS_TOKEN` | Optional Management API token so `supabase:apply` can run SQL |
+| Name | Where | Used for |
+|------|--------|----------|
+| `SUPABASE_URL` | Vercel + Cloud Agent | Project URL only (`https://<ref>.supabase.co`) — strip `/rest/v1` if pasted |
+| `SUPABASE_ANON_KEY` | Vercel + Cloud Agent | Expo web client (`app.config.js` → `extra`) + Mentors/Activate |
+| `SUPABASE_SERVICE_ROLE_KEY` | **Vercel (required for cloud Generate→Activate)** + Cloud Agent | `/api/licenses/put`, `/api/licenses/lookup`, `/api/licenses/status`; scripts also accept legacy alias `supabase` |
+| `SUPABASE_ACCESS_TOKEN` | Cloud Agent only (optional) | Management API so `supabase:apply` can run SQL |
 
 ```bash
-npm run supabase:status   # names only
+npm run supabase:status   # names only — never prints values
 npm run supabase:apply    # ensures ea-pictures bucket; SQL via Management API or manual paste
 npm run supabase:verify   # confirms managed_eas + license_keys reachable
 ```
+
+If Mentors Portal shows **“Supabase env incomplete on server”**, the Vercel deployment is missing one of `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` (and usually `SUPABASE_ANON_KEY` for the client build). Set them in the **Vercel project → Settings → Environment Variables** for Production (and Preview if you use preview deploys), then redeploy.
+
+**Cursor secrets do not auto-bind to Vercel.** There is no Cursor→Vercel secret bridge for this repo:
+
+| System | What it does |
+|--------|----------------|
+| Cursor Cloud Agent secrets | Injected into agent VMs only (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, legacy alias `supabase` for service role) |
+| Cursor `bind-app-secrets` / publish-app | Cursor-hosted apps only — **not** the Vercel `lumoedgepro` deployment |
+| **Vercel project env** | Required for production `/api/licenses/*` |
+
+**You must set these in Vercel** → Project `lumoedgepro` → **Settings → Environment Variables** (Production + Preview), then **Redeploy**:
+
+1. `SUPABASE_URL`
+2. `SUPABASE_ANON_KEY`
+3. `SUPABASE_SERVICE_ROLE_KEY` (use this exact name on Vercel — do not rely on the Cloud Agent alias `supabase`)
+
+CLI (with your Vercel login/token; never paste values into chat):
+
+```bash
+vercel env add SUPABASE_URL production
+vercel env add SUPABASE_ANON_KEY production
+vercel env add SUPABASE_SERVICE_ROLE_KEY production
+vercel env add SUPABASE_URL preview
+vercel env add SUPABASE_ANON_KEY preview
+vercel env add SUPABASE_SERVICE_ROLE_KEY preview
+```
+
+Do not put the service role in Expo `extra` / `EXPO_PUBLIC_*` / client bundles.
 
 If verify fails with `PGRST205`, paste `supabase/migrations/*.sql` into the Supabase SQL editor once (or add `SUPABASE_ACCESS_TOKEN` and re-run apply).
 
@@ -36,7 +65,12 @@ Local: `npm run brokers:dev` → `http://127.0.0.1:8787` (Expo web on `:8081` ca
 
 ## Vercel
 
-`vercel.json` builds with `npm run export:web` so `SUPABASE_URL` + `SUPABASE_ANON_KEY` bake into the static client. Set those two on the Vercel project (never the service role). `/api/*` is served by Vercel functions and excluded from the SPA rewrite.
+`vercel.json` builds with `npm run export:web`. On the Vercel project set:
+
+1. `SUPABASE_URL` + `SUPABASE_ANON_KEY` — baked into the static client via `mobile/app.config.js`
+2. `SUPABASE_SERVICE_ROLE_KEY` — **server-only** for `/api/licenses/*` (Generate Key cloud sync + Activate worldwide lookup). Never expose this in client env / `EXPO_PUBLIC_*`.
+
+`/api/*` is served by Vercel functions and excluded from the SPA rewrite. After changing env vars, trigger a new deployment.
 
 Local static: `npx serve -s . -l 8099` → `http://127.0.0.1:8099/`
 

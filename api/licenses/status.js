@@ -15,17 +15,27 @@ module.exports = async function handler(req, res) {
   }
 
   const admin = getSupabaseAdmin();
+  const missing = [];
+  if (!admin.url) missing.push('SUPABASE_URL');
+  if (!admin.serviceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+  if (!admin.anonKey) missing.push('SUPABASE_ANON_KEY');
+
   const out = {
     ok: true,
     urlConfigured: Boolean(admin.url),
     serviceRoleConfigured: Boolean(admin.serviceKey),
     anonConfigured: Boolean(admin.anonKey),
+    missingEnvNames: missing,
+    hint:
+      missing.length > 0
+        ? 'Set missing names in Vercel → Settings → Environment Variables, then redeploy. Cursor secrets do not bind to Vercel.'
+        : undefined,
     tables: { managed_eas: 'unknown', license_keys: 'unknown' },
   };
 
   if (!admin.configured) {
     out.ok = false;
-    out.error = 'SUPABASE_URL or service role missing on server';
+    out.error = `Server missing: ${missing.filter((n) => n !== 'SUPABASE_ANON_KEY').join(' + ') || 'SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY'}`;
     return json(res, 200, out);
   }
 
