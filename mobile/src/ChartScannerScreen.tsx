@@ -36,10 +36,14 @@ const TF_PATTERN = /\b(M1|M5|M15|M30|H1|H4|D1|W1|MN1)\b/i;
 const SYM_PATTERN =
   /\b(XAUUSD|XAGUSD|BTCUSD|ETHUSD|NAS100|US30|US500|USTEC|GER40|UK100|EURUSD|GBPUSD|USDJPY|AUDUSD|USDCAD|USDCHF|NZDUSD|EURGBP|EURJPY|GBPJPY)(?:[\.\+][A-Za-z0-9]+)?\b/gi;
 
-type EngineStageId = 1 | 2 | 3 | 4;
-type StageState = 'idle' | 'active' | 'done' | 'error';
+type EngineStageId = 1 | 2 | 3 | 4 | 5 | 6;
+type StageState = 'idle' | 'active' | 'done' | 'error' | 'blocked';
 
-type RadarStatus = 'READY' | 'ANALYSING' | 'SIGNAL DETECTED';
+type RadarStatus =
+  | 'INITIALISING'
+  | 'ANALYSING'
+  | 'DETECTING'
+  | 'SIGNAL DETECTED';
 
 type HistoryEntry = {
   id: string;
@@ -71,15 +75,13 @@ type ScanOutcome = {
   sl: string;
 };
 
-const ENGINE_STAGES: {
-  id: EngineStageId;
-  label: string;
-  hint: string;
-}[] = [
-  { id: 1, label: 'CAPTURE', hint: 'Chart uploaded' },
-  { id: 2, label: 'DETECT', hint: 'Symbol from image' },
-  { id: 3, label: 'ANALYSE', hint: 'Local chart pulse' },
-  { id: 4, label: 'RECORD', hint: 'Saved to history' },
+const ENGINE_STAGES: { id: EngineStageId; label: string }[] = [
+  { id: 1, label: 'CAPTURE' },
+  { id: 2, label: 'DETECT' },
+  { id: 3, label: 'ANALYSE' },
+  { id: 4, label: 'MATCH' },
+  { id: 5, label: 'EXECUTE' },
+  { id: 6, label: 'CONFIRM' },
 ];
 
 function hexToRgba(hex: string, alpha: number) {
@@ -92,7 +94,6 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/** Pull symbol + timeframe only if they appear in OCR text. */
 export function parseMt5Labels(raw: string): OcrResult {
   const text = (raw || '').toUpperCase().replace(/[|,]/g, ' ');
   const tfMatch = text.match(TF_PATTERN);
@@ -106,7 +107,6 @@ export function parseMt5Labels(raw: string): OcrResult {
 }
 
 async function ocrChartImage(uri: string): Promise<OcrResult> {
-  // Proof harness only — never invents symbols for normal uploads.
   const harness = uri.match(/[#&]edgesocr=([A-Z0-9]+)\|([A-Z0-9]+)/i);
   if (harness) {
     return {
@@ -115,7 +115,6 @@ async function ocrChartImage(uri: string): Promise<OcrResult> {
       raw: `${harness[1]} ${harness[2]}`,
     };
   }
-
   try {
     if (Platform.OS === 'web') {
       const Tesseract = await import('tesseract.js');
@@ -127,7 +126,6 @@ async function ocrChartImage(uri: string): Promise<OcrResult> {
   } catch {
     // fall through
   }
-
   return { symbol: null, timeframe: null, raw: '' };
 }
 
@@ -137,7 +135,6 @@ function hashSeed(s: string) {
   return h;
 }
 
-/** Advisory levels from OCR'd symbol — not a live trade engine fill. */
 function advisoryLevels(symbol: string, bias: string, seed: number) {
   const base =
     symbol.includes('XAU')
@@ -176,13 +173,7 @@ function buildExplanation(
 ): string {
   const sizeNote = `${lotSize} lot × ${trades} trade${trades === 1 ? '' : 's'}`;
   const tf = timeframe || 'chart';
-  if (bias === 'Buy') {
-    return `${symbol} ${tf}: local chart read favors continuation long (${sizeNote}). Confidence ${confidence}%. Advisory only — not a live MT5 fill.`;
-  }
-  if (bias === 'Sell') {
-    return `${symbol} ${tf}: local chart read favors sells on failed retests (${sizeNote}). Confidence ${confidence}%. Advisory only — not a live MT5 fill.`;
-  }
-  return `${symbol} ${tf}: local chart read is two-sided — wait for expansion before ${sizeNote}. Confidence ${confidence}%. Advisory only.`;
+  return `${symbol} ${tf}: local chart match favors ${bias.toLowerCase()} (${sizeNote}, ${confidence}% confidence). Advisory only — EXECUTE/CONFIRM wait for a live trade engine.`;
 }
 
 function pickWebFile(accept: string, capture?: string): Promise<string | null> {
@@ -223,9 +214,7 @@ async function buildDemoChartUri(
   canvas.width = 640;
   canvas.height = 360;
   const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    return `#edgesocr=${symbol}|${timeframe}`;
-  }
+  if (!ctx) return `#edgesocr=${symbol}|${timeframe}`;
   ctx.fillStyle = '#0b0f14';
   ctx.fillRect(0, 0, 640, 360);
   ctx.strokeStyle = '#1f2a36';
@@ -255,38 +244,107 @@ async function buildDemoChartUri(
   return `${canvas.toDataURL('image/png')}#edgesocr=${symbol}|${timeframe}`;
 }
 
+/** Live trade engine hook — only mark EXECUTE/CONFIRM when a real backend exists. */
+function useLiveTradeEngineAvailable() {
+  // No MT5/order API is wired in this app yet — never fake fills.
+  return false;
+}
+
 function EdgesRadar({
   accent,
   status,
   size,
+  chartUri,
 }: {
   accent: string;
   status: RadarStatus;
   size: number;
+  chartUri: string | null;
 }) {
   const spin = useRef(new Animated.Value(0)).current;
-  const analysing = status === 'ANALYSING';
-  const signal = status === 'SIGNAL DETECTED';
+  const pulse = useRef(new Animated.Value(0)).current;
+  const lock = useRef(new Animated.Value(0.4)).current;
+  const busy =
+    status === 'ANALYSING' ||
+    status === 'DETECTING' ||
+    status === 'SIGNAL DETECTED';
+  const locked = status === 'SIGNAL DETECTED';
 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
-        duration: analysing ? 1100 : signal ? 2800 : 4800,
+        duration: status === 'DETECTING' ? 900 : status === 'ANALYSING' ? 1400 : 4200,
         easing: Easing.linear,
         useNativeDriver: true,
       }),
     );
     loop.start();
     return () => loop.stop();
-  }, [analysing, signal, spin]);
+  }, [status, spin]);
+
+  useEffect(() => {
+    if (!busy) {
+      pulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 900,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [busy, pulse]);
+
+  useEffect(() => {
+    if (!locked) {
+      lock.setValue(0.35);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(lock, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(lock, {
+          toValue: 0.4,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [locked, lock]);
 
   const rotate = spin.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
+  const pulseScale = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.55, 1.05],
+  });
+  const pulseOpacity = pulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.55, 0],
+  });
 
-  const rings = [0.92, 0.7, 0.48, 0.28];
+  const inner = size * 0.62;
+  const rings = [0.94, 0.74, 0.54];
 
   return (
     <View
@@ -296,23 +354,57 @@ function EdgesRadar({
           width: size,
           height: size,
           borderRadius: size / 2,
-          borderColor: hexToRgba(accent, signal ? 0.85 : 0.55),
+          borderColor: hexToRgba(accent, locked ? 0.9 : 0.55),
         },
         Platform.OS === 'web'
           ? ({
-              boxShadow: `0 0 36px ${hexToRgba(accent, signal ? 0.45 : 0.28)}`,
+              boxShadow: `0 0 40px ${hexToRgba(accent, locked ? 0.5 : 0.28)}`,
             } as object)
           : null,
       ]}
     >
-      <LinearGradient
-        colors={[
-          'rgba(0,0,0,0.15)',
-          hexToRgba(accent, 0.1),
-          'rgba(0,0,0,0.9)',
-        ]}
-        style={StyleSheet.absoluteFill}
-      />
+      {/* Chart INSIDE radar — circular crop */}
+      {chartUri ? (
+        <Image
+          source={{ uri: chartUri }}
+          style={[
+            styles.radarChart,
+            {
+              width: inner,
+              height: inner,
+              borderRadius: inner / 2,
+            },
+          ]}
+          resizeMode="cover"
+          accessibilityLabel="Chart inside radar"
+        />
+      ) : (
+        <LinearGradient
+          colors={[
+            'rgba(0,0,0,0.2)',
+            hexToRgba(accent, 0.1),
+            'rgba(0,0,0,0.92)',
+          ]}
+          style={StyleSheet.absoluteFill}
+        />
+      )}
+
+      {/* Dark veil so rings/beam stay readable over chart */}
+      {chartUri ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.radarVeil,
+            {
+              width: inner,
+              height: inner,
+              borderRadius: inner / 2,
+              backgroundColor: 'rgba(0,0,0,0.35)',
+            },
+          ]}
+        />
+      ) : null}
+
       {rings.map((f) => (
         <View
           key={f}
@@ -328,15 +420,35 @@ function EdgesRadar({
           ]}
         />
       ))}
+
+      {/* Pulse rings */}
+      {busy ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.pulseRing,
+            {
+              width: size * 0.7,
+              height: size * 0.7,
+              borderRadius: (size * 0.7) / 2,
+              borderColor: accent,
+              opacity: pulseOpacity,
+              transform: [{ scale: pulseScale }],
+            },
+          ]}
+        />
+      ) : null}
+
       <View
         pointerEvents="none"
-        style={[styles.radarCrossH, { backgroundColor: hexToRgba(accent, 0.3) }]}
+        style={[styles.radarCrossH, { backgroundColor: hexToRgba(accent, 0.35) }]}
       />
       <View
         pointerEvents="none"
-        style={[styles.radarCrossV, { backgroundColor: hexToRgba(accent, 0.3) }]}
+        style={[styles.radarCrossV, { backgroundColor: hexToRgba(accent, 0.35) }]}
       />
-      {/* Rotating red beam */}
+
+      {/* Rotating sweep + laser tip */}
       <Animated.View
         pointerEvents="none"
         style={[
@@ -350,23 +462,57 @@ function EdgesRadar({
           end={{ x: 1, y: 0.5 }}
           style={styles.radarSweepArm}
         />
+        <View
+          style={[
+            styles.laserTip,
+            {
+              backgroundColor: accent,
+              shadowColor: accent,
+            },
+            Platform.OS === 'web'
+              ? ({ boxShadow: `0 0 12px ${accent}` } as object)
+              : null,
+          ]}
+        />
       </Animated.View>
+
+      {/* Target lock brackets */}
+      {locked ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.lockFrame,
+            {
+              width: inner * 0.72,
+              height: inner * 0.72,
+              opacity: lock,
+              borderColor: BASE.green,
+            },
+          ]}
+        >
+          <View style={[styles.lockCorner, styles.lockTL, { borderColor: BASE.green }]} />
+          <View style={[styles.lockCorner, styles.lockTR, { borderColor: BASE.green }]} />
+          <View style={[styles.lockCorner, styles.lockBL, { borderColor: BASE.green }]} />
+          <View style={[styles.lockCorner, styles.lockBR, { borderColor: BASE.green }]} />
+        </Animated.View>
+      ) : null}
+
       <View
         style={[
           styles.radarCore,
           {
-            borderColor: accent,
+            borderColor: locked ? BASE.green : accent,
             backgroundColor: hexToRgba(
-              signal ? BASE.green : accent,
-              signal ? 0.22 : analysing ? 0.4 : 0.2,
+              locked ? BASE.green : accent,
+              locked ? 0.25 : busy ? 0.4 : 0.18,
             ),
           },
         ]}
       >
         <MaterialCommunityIcons
-          name={signal ? 'target' : 'radar'}
-          size={26}
-          color={signal ? BASE.green : analysing ? BASE.white : accent}
+          name={locked ? 'crosshairs-gps' : 'radar'}
+          size={22}
+          color={locked ? BASE.green : busy ? BASE.white : accent}
         />
       </View>
     </View>
@@ -376,38 +522,57 @@ function EdgesRadar({
 function TradeEnginePanel({
   accent,
   stages,
+  liveEngine,
 }: {
   accent: string;
   stages: Record<EngineStageId, StageState>;
+  liveEngine: boolean;
 }) {
   return (
-    <View
-      style={[
-        styles.enginePanel,
-        { borderColor: hexToRgba(accent, 0.55) },
-      ]}
-    >
+    <View style={[styles.enginePanel, { borderColor: hexToRgba(accent, 0.55) }]}>
       <View style={styles.engineHeader}>
         <Text style={styles.engineEyebrow}>Trade Engine</Text>
         <Text style={styles.engineSub}>
-          Pipeline status only — no live order fills
+          {liveEngine
+            ? 'Live backend connected'
+            : 'Sequential pipeline — EXECUTE/CONFIRM need a live engine'}
         </Text>
       </View>
-      <View style={styles.engineRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.engineRow}
+      >
         {ENGINE_STAGES.map((s, i) => {
           const state = stages[s.id];
           const done = state === 'done';
           const err = state === 'error';
           const active = state === 'active';
+          const blocked = state === 'blocked';
           const color = done
             ? BASE.green
             : err
               ? accent
               : active
                 ? accent
-                : BASE.dim;
+                : blocked
+                  ? BASE.dim
+                  : BASE.dim;
           return (
             <View key={s.id} style={styles.engineStep}>
+              {i > 0 ? (
+                <View
+                  style={[
+                    styles.engineRail,
+                    {
+                      backgroundColor:
+                        stages[ENGINE_STAGES[i - 1].id] === 'done'
+                          ? hexToRgba(BASE.green, 0.55)
+                          : hexToRgba(accent, 0.2),
+                    },
+                  ]}
+                />
+              ) : null}
               <View
                 style={[
                   styles.engineDot,
@@ -416,15 +581,17 @@ function TradeEnginePanel({
                     backgroundColor: done
                       ? hexToRgba(BASE.green, 0.2)
                       : active
-                        ? hexToRgba(accent, 0.2)
+                        ? hexToRgba(accent, 0.22)
                         : 'transparent',
                   },
                 ]}
               >
                 {done ? (
-                  <Ionicons name="checkmark" size={14} color={BASE.green} />
+                  <Ionicons name="checkmark" size={12} color={BASE.green} />
                 ) : err ? (
-                  <Ionicons name="close" size={14} color={accent} />
+                  <Ionicons name="close" size={12} color={accent} />
+                ) : blocked ? (
+                  <Ionicons name="remove" size={12} color={BASE.dim} />
                 ) : (
                   <Text style={[styles.engineNum, { color }]}>{s.id}</Text>
                 )}
@@ -432,22 +599,10 @@ function TradeEnginePanel({
               <Text style={[styles.engineLabel, { color }]} numberOfLines={1}>
                 {s.label}
               </Text>
-              {i < ENGINE_STAGES.length - 1 ? (
-                <View
-                  style={[
-                    styles.engineRail,
-                    {
-                      backgroundColor: done
-                        ? hexToRgba(BASE.green, 0.55)
-                        : hexToRgba(accent, 0.22),
-                    },
-                  ]}
-                />
-              ) : null}
             </View>
           );
         })}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -515,6 +670,7 @@ export function ChartScannerScreen() {
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
   const { accent } = useAppState();
+  const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
   const demoStarted = useRef(false);
   const ocrGen = useRef(0);
@@ -525,18 +681,25 @@ export function ChartScannerScreen() {
   const [tradesRaw, setTradesRaw] = useState('1');
   const [scansLeft, setScansLeft] = useState(12);
   const [chartUri, setChartUri] = useState<string | null>(null);
-  const [detecting, setDetecting] = useState(false);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [radarStatus, setRadarStatus] =
+    useState<RadarStatus>('INITIALISING');
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [detail, setDetail] = useState<HistoryEntry | null>(null);
+
   const [stage2, setStage2] = useState<StageState>('idle');
   const [stage3, setStage3] = useState<StageState>('idle');
   const [stage4, setStage4] = useState<StageState>('idle');
+  // EXECUTE/CONFIRM stay blocked until a real live trade engine is wired.
+  const [stage5, setStage5] = useState<StageState>('blocked');
+  const [stage6, setStage6] = useState<StageState>('blocked');
 
-  const radarSize = Math.min(220, Math.round(Math.min(winH * 0.26, winW * 0.58)));
+  const radarSize = Math.min(
+    240,
+    Math.round(Math.min(winH * 0.28, winW * 0.62)),
+  );
   const dockPad = Math.max(insets.bottom, 10);
 
   const stages: Record<EngineStageId, StageState> = useMemo(
@@ -545,17 +708,22 @@ export function ChartScannerScreen() {
       2: stage2,
       3: stage3,
       4: stage4,
+      5: stage5,
+      6: stage6,
     }),
-    [chartUri, stage2, stage3, stage4],
+    [chartUri, stage2, stage3, stage4, stage5, stage6],
   );
 
-  const radarStatus: RadarStatus = detecting || scanning
-    ? 'ANALYSING'
-    : outcome && symbol
-      ? 'SIGNAL DETECTED'
-      : 'READY';
+  useEffect(() => {
+    if (!chartUri && radarStatus === 'INITIALISING') {
+      const t = setTimeout(() => {
+        // Stay INITIALISING until user uploads — soft idle after a beat is still INITIALISING
+      }, 400);
+      return () => clearTimeout(t);
+    }
+  }, [chartUri, radarStatus]);
 
-  const resetPipelineSoft = () => {
+  const resetSoft = () => {
     setSymbol(null);
     setTimeframe(null);
     setDetectError(null);
@@ -563,6 +731,8 @@ export function ChartScannerScreen() {
     setStage2('idle');
     setStage3('idle');
     setStage4('idle');
+    setStage5(liveEngine ? 'idle' : 'blocked');
+    setStage6(liveEngine ? 'idle' : 'blocked');
     setScanPromptOpen(false);
   };
 
@@ -570,14 +740,19 @@ export function ChartScannerScreen() {
     if (!uri) return;
     const gen = ++ocrGen.current;
     setChartUri(uri);
-    resetPipelineSoft();
-    setDetecting(true);
+    resetSoft();
+    setRadarStatus('ANALYSING');
     setStage2('active');
 
     try {
       const started = Date.now();
+      // Brief analysing beat, then detecting
+      await new Promise((r) => setTimeout(r, 500));
+      if (gen !== ocrGen.current) return;
+      setRadarStatus('DETECTING');
+
       const detected = await ocrChartImage(uri);
-      const wait = Math.max(0, 900 - (Date.now() - started));
+      const wait = Math.max(0, 700 - (Date.now() - started));
       if (wait) await new Promise((r) => setTimeout(r, wait));
       if (gen !== ocrGen.current) return;
 
@@ -586,20 +761,20 @@ export function ChartScannerScreen() {
           'Could not read a symbol from this chart. Upload a clear MT5 screenshot with the pair visible.',
         );
         setStage2('error');
-        setDetecting(false);
+        setRadarStatus('INITIALISING');
         return;
       }
 
       setSymbol(detected.symbol);
       setTimeframe(detected.timeframe);
       setStage2('done');
-      setDetecting(false);
+      setRadarStatus('ANALYSING');
       setScanPromptOpen(true);
     } catch {
       if (gen !== ocrGen.current) return;
       setDetectError('Chart read failed. Try another screenshot.');
       setStage2('error');
-      setDetecting(false);
+      setRadarStatus('INITIALISING');
     }
   };
 
@@ -682,21 +857,16 @@ export function ChartScannerScreen() {
   const clearChart = () => {
     ocrGen.current += 1;
     setChartUri(null);
-    setDetecting(false);
-    resetPipelineSoft();
+    resetSoft();
+    setRadarStatus('INITIALISING');
   };
 
   const runScan = () => {
-    if (scanning) return;
-    if (!symbol || !chartUri) {
+    if (radarStatus === 'DETECTING') return;
+    if (!symbol || !chartUri || stage2 !== 'done') {
       setDetectError('Upload an MT5 chart first so the symbol can be read.');
       return;
     }
-    if (stage2 !== 'done') {
-      setDetectError('Detection must succeed before analysis.');
-      return;
-    }
-
     setScanPromptOpen(false);
     const lotSize = parsePositive(lotRaw, 0.1, 50);
     const trades = Math.max(
@@ -712,10 +882,10 @@ export function ChartScannerScreen() {
       return;
     }
 
-    setScanning(true);
     setOutcome(null);
     setStage3('active');
     setStage4('idle');
+    setRadarStatus('ANALYSING');
     setScansLeft((n) => Math.max(0, n - 1));
 
     const seed = hashSeed(symbol + (timeframe || '') + chartUri.slice(0, 80));
@@ -734,39 +904,53 @@ export function ChartScannerScreen() {
       trades,
     );
 
+    // Sequential: ANALYSE → MATCH; EXECUTE/CONFIRM only if live engine
     setTimeout(() => {
-      setOutcome({
-        bias,
-        confidence,
-        timeframe: tf,
-        tp: levels.tp,
-        sl: levels.sl,
-        explanation,
-      });
       setStage3('done');
       setStage4('active');
-      setHistory((prev) =>
-        [
-          {
-            id: `scan_${Date.now()}`,
-            symbol: sym,
-            timeframe: tf,
-            bias,
-            confidence,
-            message: explanation,
-            lotSize,
-            trades,
-            tp: levels.tp,
-            sl: levels.sl,
-            chartUri: uriSnap,
-            at: new Date().toISOString(),
-          },
-          ...prev,
-        ].slice(0, 24),
-      );
-      setStage4('done');
-      setScanning(false);
-    }, 950);
+      setRadarStatus('DETECTING');
+      setTimeout(() => {
+        setOutcome({
+          bias,
+          confidence,
+          timeframe: tf,
+          tp: levels.tp,
+          sl: levels.sl,
+          explanation,
+        });
+        setStage4('done');
+        setRadarStatus('SIGNAL DETECTED');
+        setHistory((prev) =>
+          [
+            {
+              id: `scan_${Date.now()}`,
+              symbol: sym,
+              timeframe: tf,
+              bias,
+              confidence,
+              message: explanation,
+              lotSize,
+              trades,
+              tp: levels.tp,
+              sl: levels.sl,
+              chartUri: uriSnap,
+              at: new Date().toISOString(),
+            },
+            ...prev,
+          ].slice(0, 24),
+        );
+        // Never fake EXECUTE/CONFIRM without a live backend.
+        if (liveEngine) {
+          setStage5('active');
+          // Real backend would resolve here — none wired.
+          setStage5('error');
+          setStage6('blocked');
+        } else {
+          setStage5('blocked');
+          setStage6('blocked');
+        }
+      }, 700);
+    }, 900);
   };
 
   const goHome = () => {
@@ -791,9 +975,9 @@ export function ChartScannerScreen() {
   const statusColor =
     radarStatus === 'SIGNAL DETECTED'
       ? BASE.green
-      : radarStatus === 'ANALYSING'
-        ? accent
-        : BASE.muted;
+      : radarStatus === 'INITIALISING'
+        ? BASE.muted
+        : accent;
 
   return (
     <View style={styles.root}>
@@ -848,12 +1032,19 @@ export function ChartScannerScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* 3) Trade Engine ABOVE radar */}
-        <TradeEnginePanel accent={accent} stages={stages} />
+        <TradeEnginePanel
+          accent={accent}
+          stages={stages}
+          liveEngine={liveEngine}
+        />
 
-        {/* 2) Centered radar + statuses */}
         <View style={styles.radarBlock}>
-          <EdgesRadar accent={accent} status={radarStatus} size={radarSize} />
+          <EdgesRadar
+            accent={accent}
+            status={radarStatus}
+            size={radarSize}
+            chartUri={chartUri}
+          />
           <Text style={[styles.radarStatus, { color: statusColor }]}>
             {radarStatus}
           </Text>
@@ -863,26 +1054,10 @@ export function ChartScannerScreen() {
               : symbol
                 ? `${symbol}${timeframe ? ` · ${timeframe}` : ''} · from image`
                 : chartUri
-                  ? 'Reading chart…'
-                  : 'Radar READY — upload an MT5 chart to begin'}
+                  ? 'Chart loaded in radar — detecting…'
+                  : 'Upload an MT5 chart — it appears inside the radar'}
           </Text>
-        </View>
-
-        {/* 1) Upload preview */}
-        <Text style={styles.sectionLabel}>Chart</Text>
-        {chartUri ? (
-          <View
-            style={[
-              styles.previewBox,
-              { borderColor: hexToRgba(accent, 0.5) },
-            ]}
-          >
-            <Image
-              source={{ uri: chartUri }}
-              style={styles.previewImg}
-              resizeMode="contain"
-              accessibilityLabel="Uploaded chart preview"
-            />
+          {chartUri ? (
             <View style={styles.previewActions}>
               <Pressable
                 accessibilityRole="button"
@@ -893,7 +1068,7 @@ export function ChartScannerScreen() {
                   { borderColor: hexToRgba(accent, 0.55) },
                 ]}
               >
-                <Ionicons name="trash-outline" size={16} color={accent} />
+                <Ionicons name="trash-outline" size={15} color={accent} />
                 <Text style={[styles.previewBtnText, { color: accent }]}>
                   Remove
                 </Text>
@@ -907,30 +1082,14 @@ export function ChartScannerScreen() {
                   { borderColor: hexToRgba(accent, 0.55) },
                 ]}
               >
-                <Ionicons name="swap-horizontal" size={16} color={accent} />
+                <Ionicons name="swap-horizontal" size={15} color={accent} />
                 <Text style={[styles.previewBtnText, { color: accent }]}>
                   Replace
                 </Text>
               </Pressable>
             </View>
-          </View>
-        ) : (
-          <View
-            style={[
-              styles.previewEmpty,
-              { borderColor: hexToRgba(accent, 0.35) },
-            ]}
-          >
-            <MaterialCommunityIcons
-              name="image-off-outline"
-              size={28}
-              color={BASE.dim}
-            />
-            <Text style={styles.previewEmptyText}>
-              No chart yet — preview appears here after upload
-            </Text>
-          </View>
-        )}
+          ) : null}
+        </View>
 
         <View style={styles.captureRow}>
           <Pressable
@@ -967,7 +1126,7 @@ export function ChartScannerScreen() {
           </Pressable>
         </View>
 
-        <Text style={[styles.sectionLabel, { marginTop: 2 }]}>Size</Text>
+        <Text style={styles.sectionLabel}>Size</Text>
         <LotTradesFields
           accent={accent}
           lotRaw={lotRaw}
@@ -980,13 +1139,13 @@ export function ChartScannerScreen() {
           accessibilityRole="button"
           accessibilityLabel="run scan"
           onPress={runScan}
-          disabled={!symbol || detecting || scanning || stage2 !== 'done'}
+          disabled={!symbol || stage2 !== 'done' || stage3 === 'active'}
           style={({ pressed }) => [
             styles.runBtn,
             {
               borderColor: accent,
               opacity:
-                !symbol || detecting || scanning || stage2 !== 'done' || pressed
+                !symbol || stage2 !== 'done' || stage3 === 'active' || pressed
                   ? 0.5
                   : 1,
             },
@@ -1003,12 +1162,12 @@ export function ChartScannerScreen() {
             style={styles.runGrad}
           >
             <MaterialCommunityIcons
-              name={scanning ? 'radar' : 'chart-timeline-variant'}
+              name="radar"
               size={20}
               color={BASE.white}
             />
             <Text style={styles.runText}>
-              {scanning ? 'Analysing…' : 'Run scan'}
+              {stage3 === 'active' ? 'Analysing…' : 'Run scan'}
             </Text>
           </LinearGradient>
         </Pressable>
@@ -1133,7 +1292,6 @@ export function ChartScannerScreen() {
         ) : null}
       </ScrollView>
 
-      {/* Centered Scan now */}
       <Modal
         visible={scanPromptOpen}
         transparent
@@ -1141,9 +1299,7 @@ export function ChartScannerScreen() {
         onRequestClose={() => setScanPromptOpen(false)}
       >
         <View style={styles.centerBackdrop}>
-          <View
-            style={[styles.promptCard, { borderColor: accent }]}
-          >
+          <View style={[styles.promptCard, { borderColor: accent }]}>
             <Text style={styles.promptEyebrow}>Detected from chart</Text>
             <Text style={styles.promptTitle}>
               {symbol}
@@ -1152,8 +1308,9 @@ export function ChartScannerScreen() {
               ) : null}
             </Text>
             <Text style={styles.promptBody}>
-              Set lot size and trades, then run analysis. Trade Engine stages
-              advance only when each real step completes.
+              Chart is locked in the radar. Set lot size and trades, then run
+              analysis. EXECUTE/CONFIRM stay blocked without a live trade
+              engine.
             </Text>
             <LotTradesFields
               accent={accent}
@@ -1212,10 +1369,7 @@ export function ChartScannerScreen() {
             <View
               style={[
                 styles.detailCard,
-                {
-                  borderColor: accent,
-                  maxHeight: winH * 0.78,
-                },
+                { borderColor: accent, maxHeight: winH * 0.78 },
               ]}
             >
               <View style={styles.detailHeader}>
@@ -1405,10 +1559,11 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderRadius: 16,
     backgroundColor: BASE.panel,
-    padding: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
     gap: 10,
   },
-  engineHeader: { gap: 2 },
+  engineHeader: { gap: 2, paddingHorizontal: 4 },
   engineEyebrow: {
     color: BASE.white,
     fontSize: 13,
@@ -1420,35 +1575,36 @@ const styles = StyleSheet.create({
   engineRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+    gap: 2,
   },
   engineStep: {
-    flex: 1,
+    width: 58,
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     position: 'relative',
   },
   engineDot: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 2,
     backgroundColor: '#0A0A0A',
   },
-  engineNum: { fontSize: 12, fontWeight: '800' },
+  engineNum: { fontSize: 11, fontWeight: '800' },
   engineLabel: {
-    fontSize: 9,
+    fontSize: 8,
     fontWeight: '800',
-    letterSpacing: 0.4,
+    letterSpacing: 0.2,
   },
   engineRail: {
     position: 'absolute',
-    top: 13,
-    left: '55%',
-    right: '-55%',
+    top: 12,
+    right: '50%',
+    width: 34,
     height: 2,
     zIndex: 1,
   },
@@ -1464,7 +1620,17 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: 'rgba(0,0,0,0.75)',
   },
+  radarChart: {
+    position: 'absolute',
+  },
+  radarVeil: {
+    position: 'absolute',
+  },
   radarRing: { position: 'absolute', borderWidth: 1 },
+  pulseRing: {
+    position: 'absolute',
+    borderWidth: 1.5,
+  },
   radarCrossH: {
     position: 'absolute',
     width: '78%',
@@ -1483,10 +1649,31 @@ const styles = StyleSheet.create({
     marginTop: -1.5,
   },
   radarSweepArm: { width: '100%', height: 2, borderRadius: 1 },
+  laserTip: {
+    position: 'absolute',
+    right: -3,
+    top: -3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  lockFrame: {
+    position: 'absolute',
+  },
+  lockCorner: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    borderWidth: 2,
+  },
+  lockTL: { top: 0, left: 0, borderRightWidth: 0, borderBottomWidth: 0 },
+  lockTR: { top: 0, right: 0, borderLeftWidth: 0, borderBottomWidth: 0 },
+  lockBL: { bottom: 0, left: 0, borderRightWidth: 0, borderTopWidth: 0 },
+  lockBR: { bottom: 0, right: 0, borderLeftWidth: 0, borderTopWidth: 0 },
   radarCore: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1494,7 +1681,7 @@ const styles = StyleSheet.create({
   radarStatus: {
     fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 1.4,
+    letterSpacing: 1.2,
   },
   statusSub: {
     color: BASE.muted,
@@ -1503,28 +1690,11 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     maxWidth: 300,
   },
-  sectionLabel: {
-    color: BASE.muted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.1,
-    textTransform: 'uppercase',
-  },
-  previewBox: {
-    borderWidth: 1.5,
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#080808',
-  },
-  previewImg: {
-    width: '100%',
-    height: 160,
-    backgroundColor: '#000',
-  },
   previewActions: {
     flexDirection: 'row',
     gap: 8,
-    padding: 10,
+    width: '100%',
+    maxWidth: 320,
   },
   previewBtn: {
     flex: 1,
@@ -1534,24 +1704,16 @@ const styles = StyleSheet.create({
     gap: 6,
     borderWidth: 1.5,
     borderRadius: 999,
-    paddingVertical: 10,
+    paddingVertical: 9,
     backgroundColor: BASE.panel,
   },
-  previewBtnText: { fontSize: 13, fontWeight: '700' },
-  previewEmpty: {
-    height: 120,
-    borderWidth: 1.5,
-    borderRadius: 16,
-    borderStyle: 'dashed',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 20,
-  },
-  previewEmptyText: {
+  previewBtnText: { fontSize: 12, fontWeight: '700' },
+  sectionLabel: {
     color: BASE.muted,
-    fontSize: 12,
-    textAlign: 'center',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
   },
   captureRow: { flexDirection: 'row', gap: 10 },
   captureTile: {

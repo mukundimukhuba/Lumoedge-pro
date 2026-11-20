@@ -1268,7 +1268,7 @@ const styles = StyleSheet.create({
     width: 120,
     height: 28,
     borderRadius: 18,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: BASE.black,
     zIndex: 20,
   },
   homeIndicator: {
