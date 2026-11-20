@@ -7,3 +7,4 @@ dist-cdn/
 *.log
 mobile/node_modules/
 mobile/.expo/
+supabase/.temp/
