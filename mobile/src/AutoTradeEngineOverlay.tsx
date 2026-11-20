@@ -64,6 +64,10 @@ type Props = {
     symbol: string;
     direction: string;
     trades: number;
+    lotSize?: number;
+    requestedTrades?: number;
+    status: 'opened' | 'partial' | 'failed';
+    note?: string;
   }) => void;
 };
 
@@ -288,22 +292,36 @@ export function AutoTradeEngineOverlay({
           setPhase('error');
           setError(lastFail || 'Broker rejected the order.');
           setStatus('Trade send failed');
+          onExecuted?.({
+            symbol: chosenSymbol,
+            direction: String(chosen.direction),
+            trades: 0,
+            lotSize: sendLots,
+            requestedTrades: sendTrades,
+            status: 'failed',
+            note: lastFail || 'Broker rejected the order.',
+          });
           return;
         }
 
         setPhase('done');
+        const partial = opened < sendTrades;
         setStatus(
-          opened < sendTrades
+          partial
             ? `Opened ${opened}/${sendTrades} · ${chosenSymbol} — ${lastFail || 'remaining legs failed'}`
             : `Opened ${opened} trade(s) · ${chosenSymbol} · ${sendLots} lot`,
         );
-        if (opened < sendTrades && lastFail) {
+        if (partial && lastFail) {
           setError(`Partial fill: ${lastFail}`);
         }
         onExecuted?.({
           symbol: chosenSymbol,
           direction: String(chosen.direction),
           trades: opened,
+          lotSize: sendLots,
+          requestedTrades: sendTrades,
+          status: partial ? 'partial' : 'opened',
+          note: partial ? lastFail : undefined,
         });
       } catch (e) {
         if (ac.signal.aborted || id !== runId.current) return;
