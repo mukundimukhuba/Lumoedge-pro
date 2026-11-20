@@ -20,6 +20,11 @@ import {
   saveLicenseCatalog,
   sessionFromLicenseKey,
 } from './licenseStorage';
+import {
+  eaPictureVaultKey,
+  vaultGetPicture,
+  vaultPutEaPicture,
+} from './pictureVault';
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
@@ -195,8 +200,22 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (activeRaw) {
           const parsed = JSON.parse(activeRaw) as ActiveEaSession;
           if (parsed?.licenseKey && parsed?.name) {
-            setActiveEa(parsed);
-            setSelected(parsed.symbols ?? []);
+            let session = parsed;
+            if (!session.pictureUri && session.eaId) {
+              const vaultPic = await vaultGetPicture(
+                eaPictureVaultKey(session.eaId),
+              );
+              if (vaultPic) session = { ...session, pictureUri: vaultPic };
+            }
+            // Prefer live catalog picture if still missing.
+            if (!session.pictureUri) {
+              const live = catalog.eas.find((e) => e.id === session.eaId);
+              if (live?.pictureUri) {
+                session = { ...session, pictureUri: live.pictureUri };
+              }
+            }
+            setActiveEa(session);
+            setSelected(session.symbols ?? []);
           }
         }
       } catch {
@@ -257,6 +276,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       id: uid('ea'),
       createdAt: new Date().toISOString(),
     };
+    if (pictureUri) {
+      await vaultPutEaPicture(ea.id, pictureUri);
+    }
     const nextEas = [ea, ...easRef.current];
     applyCatalog(nextEas, keysRef.current);
     await saveLicenseCatalog(nextEas, keysRef.current);
@@ -331,6 +353,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     applyCatalog(found.eas, found.keys);
     // Strict key → EA mapping (snapshot + matching eaId only).
     const session = sessionFromLicenseKey(found.key, found.eas);
+    if (session.pictureUri) {
+      await vaultPutEaPicture(session.eaId, session.pictureUri);
+    }
     await AsyncStorage.setItem(ACTIVE_EA_KEY, JSON.stringify(session));
     setActiveEa(session);
     setSelected(session.symbols);

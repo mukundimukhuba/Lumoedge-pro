@@ -1,7 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { compressCatalogPictures, compressEaPicture } from './eaPicture';
+import {
+  hydrateEasFromVault,
+  hydrateKeysFromVault,
+  vaultCatalogPictures,
+} from './pictureVault';
 import { getSupabase, isSupabaseConfigured } from './supabase/client';
+import { persistPictureRemote } from './supabase/eaPictureUpload';
 
 /** Shared storage keys — portal License Keys + app Activate MUST use these. */
 export const EAS_STORAGE_KEY = 'edges-managed-eas-v1';
@@ -188,7 +194,24 @@ async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
   const sb = getSupabase();
   if (!sb) return false;
   try {
-    const eaRows = eas.map((e) => ({
+    // Prefer Storage URLs for data-URL pictures so rows stay small + durable.
+    const easRemote = await Promise.all(
+      eas.map(async (e) => ({
+        ...e,
+        pictureUri: await persistPictureRemote(`eas/${e.id}`, e.pictureUri),
+      })),
+    );
+    const keysRemote = await Promise.all(
+      keys.map(async (k) => ({
+        ...k,
+        eaPictureUri: await persistPictureRemote(
+          `keys/${k.id}`,
+          k.eaPictureUri,
+        ),
+      })),
+    );
+
+    const eaRows = easRemote.map((e) => ({
       id: e.id,
       name: e.name,
       picture_uri: e.pictureUri,
@@ -196,7 +219,7 @@ async function pushRemoteCatalog(eas: StoredEa[], keys: StoredLicenseKey[]) {
       created_at: e.createdAt,
       updated_at: new Date().toISOString(),
     }));
-    const keyRows = keys.map((k) => ({
+    const keyRows = keysRemote.map((k) => ({
       id: k.id,
       ea_id: k.eaId,
       ea_name: k.eaName,
@@ -272,9 +295,32 @@ export async function loadLicenseCatalog(): Promise<{
   eas = mergeEaPreferPicture(eas, remoteEas);
   let keys = mergeKeysByKeyString(memoryKeys, diskKeys);
   keys = mergeKeysByKeyString(keys, remoteKeys);
+
+  // Rehydrate any pictures stripped from localStorage by quota — IndexedDB vault.
+  eas = await hydrateEasFromVault(eas);
+  keys = await hydrateKeysFromVault(keys);
+
   memoryEas = eas;
   memoryKeys = keys;
   return { eas, keys };
+}
+
+function stripDataUrlPicsFromEas(eas: StoredEa[]): StoredEa[] {
+  return eas.map((e) => ({
+    ...e,
+    pictureUri:
+      e.pictureUri && e.pictureUri.startsWith('data:') ? null : e.pictureUri,
+  }));
+}
+
+function stripDataUrlPicsFromKeys(keys: StoredLicenseKey[]): StoredLicenseKey[] {
+  return keys.map((k) => ({
+    ...k,
+    eaPictureUri:
+      k.eaPictureUri && k.eaPictureUri.startsWith('data:')
+        ? null
+        : k.eaPictureUri,
+  }));
 }
 
 export async function saveLicenseCatalog(
@@ -284,6 +330,9 @@ export async function saveLicenseCatalog(
   // Compress data-URL pictures before any disk write.
   const compressed = await compressCatalogPictures(eas, keys);
   const prepared = prepareForDisk(compressed.eas, compressed.keys);
+
+  // ALWAYS vault pictures first so quota-stripped catalog JSON cannot lose them.
+  await vaultCatalogPictures(prepared.eas, prepared.keys);
 
   memoryEas = prepared.eas;
   memoryKeys = prepared.keys;
@@ -296,27 +345,17 @@ export async function saveLicenseCatalog(
   let easOk = webLocalSet(EAS_STORAGE_KEY, easJson);
 
   if (!easOk) {
-    // Keep EA metadata; pictures already on keys for Activate.
-    const metaEas = prepared.eas.map((e) => ({
-      ...e,
-      pictureUri:
-        e.pictureUri && e.pictureUri.startsWith('data:') ? null : e.pictureUri,
-    }));
-    easOk = webLocalSet(EAS_STORAGE_KEY, JSON.stringify(metaEas));
+    // Metadata only in localStorage — pictures remain in IndexedDB vault.
+    easOk = webLocalSet(
+      EAS_STORAGE_KEY,
+      JSON.stringify(stripDataUrlPicsFromEas(prepared.eas)),
+    );
   }
 
   if (!keysOk) {
-    // Last resort: keys without pictures (Activate may still resolve via memory/EA).
-    const skinnyKeys = prepared.keys.map((k) => ({
-      ...k,
-      eaPictureUri:
-        k.eaPictureUri && k.eaPictureUri.startsWith('data:')
-          ? null
-          : k.eaPictureUri,
-    }));
     keysOk = webLocalSet(
       LICENSE_KEYS_STORAGE_KEY,
-      JSON.stringify(skinnyKeys),
+      JSON.stringify(stripDataUrlPicsFromKeys(prepared.keys)),
     );
   }
 
@@ -325,26 +364,34 @@ export async function saveLicenseCatalog(
     try {
       await AsyncStorage.setItem(EAS_STORAGE_KEY, easJson);
     } catch {
-      const metaEas = prepared.eas.map((e) => ({
-        ...e,
-        pictureUri:
-          e.pictureUri && e.pictureUri.startsWith('data:')
-            ? null
-            : e.pictureUri,
-      }));
-      await AsyncStorage.setItem(EAS_STORAGE_KEY, JSON.stringify(metaEas));
+      await AsyncStorage.setItem(
+        EAS_STORAGE_KEY,
+        JSON.stringify(stripDataUrlPicsFromEas(prepared.eas)),
+      );
     }
   } catch {
-    console.warn(
-      '[edges] license catalog disk write failed; using in-memory bridge',
-      { keysOk, easOk, keysBytes: keysJson.length, easBytes: easJson.length },
-    );
+    try {
+      await AsyncStorage.setItem(
+        LICENSE_KEYS_STORAGE_KEY,
+        JSON.stringify(stripDataUrlPicsFromKeys(prepared.keys)),
+      );
+      await AsyncStorage.setItem(
+        EAS_STORAGE_KEY,
+        JSON.stringify(stripDataUrlPicsFromEas(prepared.eas)),
+      );
+    } catch {
+      console.warn(
+        '[edges] catalog JSON write failed; pictures kept in vault + memory',
+        { keysOk, easOk, keysBytes: keysJson.length, easBytes: easJson.length },
+      );
+    }
   }
 
   if (isSupabaseConfigured()) {
     await pushRemoteCatalog(prepared.eas, prepared.keys);
   }
 
+  // Return in-memory catalog WITH pictures (never return stripped copies).
   return prepared;
 }
 
