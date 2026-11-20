@@ -145,8 +145,15 @@ export function EaControlScreen() {
   );
   const safeTop = Math.max(insets.top, Platform.OS === 'web' ? 8 : 0);
   const scale = Math.min(1.08, Math.max(0.85, layoutH / 844));
-  /** Measured reference hero band ≈ 52.9% of phone height. */
-  const heroH = Math.max(240, Math.min(Math.round(layoutH * 0.529), 460));
+  /**
+   * Measured reference: face hero + neck/body strip ≈ 52.9% total.
+   * Face ~80% of that band; neck strip ~20% (lower-body crop of same pic).
+   */
+  const heroTotalH = Math.max(240, Math.min(Math.round(layoutH * 0.529), 460));
+  const neckH = Math.max(48, Math.round(heroTotalH * 0.2));
+  const faceH = heroTotalH - neckH;
+  /** Shared image height so face shows top, neck shows bottom of same pic. */
+  const bleedImgH = Math.round(faceH * 1.55);
   const dockPad = Math.max(6, 2 + safeBottom);
   const dockH = Math.round(50 * scale) + dockPad;
   /** Reference stack gaps ≈ 10–15px (use 12). */
@@ -353,14 +360,11 @@ export function EaControlScreen() {
         keyboardShouldPersistTaps="handled"
         nestedScrollEnabled
       >
+        {/* Face band: full-bleed EA picture (pic bg fills — no black gutters). */}
         <View
-          style={[styles.hero, { height: heroH, backgroundColor: accent }]}
+          style={[styles.heroFace, { height: faceH, backgroundColor: accent }]}
           pointerEvents="box-none"
         >
-          <View
-            style={[styles.heroFill, { backgroundColor: accent }]}
-            pointerEvents="none"
-          />
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Edges logo — triple tap for Mentors Portal"
@@ -376,13 +380,14 @@ export function EaControlScreen() {
           >
             <Image
               source={eaPicture}
-              style={styles.mascot}
+              style={[styles.heroBleedImg, { height: bleedImgH }]}
               resizeMode="cover"
             />
           </Pressable>
+          {/* Light bottom shade for title only — do not paint black over pic bg. */}
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.25)', 'rgba(0,0,0,0.85)', BASE.black]}
-            locations={[0.45, 0.7, 0.9, 1]}
+            colors={['transparent', 'rgba(0,0,0,0.45)']}
+            locations={[0.55, 1]}
             style={styles.heroFade}
             pointerEvents="none"
           />
@@ -396,6 +401,32 @@ export function EaControlScreen() {
           >
             {eaTitle}
           </Text>
+        </View>
+
+        {/* Neck/lower-body strip: same pic, cropped to lower portion (Algo Nova style). */}
+        <View
+          style={[
+            styles.heroNeck,
+            {
+              height: neckH,
+              backgroundColor: accent,
+              // Overlap 1px to avoid a black hairline seam between bands.
+              marginTop: -1,
+            },
+          ]}
+          pointerEvents="none"
+        >
+          <Image
+            source={eaPicture}
+            style={[
+              styles.heroBleedImg,
+              {
+                height: bleedImgH,
+                marginTop: -(bleedImgH - neckH),
+              },
+            ]}
+            resizeMode="cover"
+          />
         </View>
 
         <View
@@ -1307,26 +1338,28 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     paddingBottom: 8,
   },
-  hero: {
+  heroFace: {
     width: '100%',
     maxWidth: '100%',
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
-  heroFill: { ...StyleSheet.absoluteFill },
+  heroNeck: {
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden',
+  },
+  /** Full-bleed cover — no black Image bg so uploaded pic colour fills the band. */
+  heroBleedImg: {
+    width: '100%',
+    alignSelf: 'stretch',
+  },
   logoHit: {
     ...StyleSheet.absoluteFill,
     zIndex: 25,
     elevation: 25,
-  },
-  mascot: {
-    width: '118%',
-    height: '118%',
-    marginLeft: '-9%',
-    marginTop: '-6%',
-    alignSelf: 'center',
-    backgroundColor: '#0A0A0A',
+    overflow: 'hidden',
   },
   heroFade: { ...StyleSheet.absoluteFill },
   title: {
