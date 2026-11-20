@@ -97,11 +97,19 @@ export function LicenseActivateScreen() {
             <TextInput
               style={styles.input}
               value={key}
-              onChangeText={setKey}
+              onChangeText={(t) =>
+                setKey(
+                  t
+                    .toUpperCase()
+                    .replace(/O/g, '0')
+                    .replace(/[IL]/g, '1'),
+                )
+              }
               placeholder="EDGES-XXXX-XXXX-XXXX-XXXX"
               placeholderTextColor="#6B7280"
               autoCapitalize="characters"
               autoCorrect={false}
+              autoComplete="off"
               editable={!busy}
             />
             {error ? <Text style={styles.error}>{error}</Text> : null}
