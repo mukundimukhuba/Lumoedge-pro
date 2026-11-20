@@ -778,8 +778,8 @@ export function EaControlScreen() {
             {sheet === 'broker' ? (
               <View style={styles.toolBody}>
                 <Text style={styles.settingsHint}>
-                  Link a broker account so Edges can sync sessions (demo
-                  connect — no live credentials stored).
+                  Link a broker for a live MT5 session — real balance, equity,
+                  and open trades.
                 </Text>
                 <View
                   style={[
@@ -798,7 +798,7 @@ export function EaControlScreen() {
                   />
                   <Text style={styles.scanResult}>
                     {brokerConnected
-                      ? 'Broker linked · demo MT5 · Edges session ready'
+                      ? 'Broker linked · Live MT5 · Edges session ready'
                       : 'No broker linked yet'}
                   </Text>
                 </View>

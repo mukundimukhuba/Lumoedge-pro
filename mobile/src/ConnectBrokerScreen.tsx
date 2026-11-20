@@ -250,9 +250,11 @@ function LiveAccountPanel({
   const currency = String(account.currency || '').trim() || undefined;
   const trades = account.trades || [];
   const hasTrades = trades.length > 0;
-  const equityDelta = account.equity - account.balance;
+  const openPl = account.equity - account.balance;
   const deltaColor =
-    equityDelta > 0 ? BASE.green : equityDelta < 0 ? BASE.red : BASE.muted;
+    openPl > 0 ? BASE.green : openPl < 0 ? BASE.red : BASE.muted;
+  // Floating P/L = equity − balance. Hide when flat and no open trades.
+  const showOpenPl = hasTrades || Math.abs(openPl) >= 0.005;
 
   return (
     <View style={styles.liveBlock} accessibilityLabel="Live account">
@@ -290,10 +292,15 @@ function LiveAccountPanel({
           <Text style={styles.metricValue}>
             {formatMoney(account.equity, currency)}
           </Text>
-          <Text style={[styles.metricDelta, { color: deltaColor }]}>
-            {equityDelta >= 0 ? '+' : ''}
-            {formatMoney(equityDelta, currency)}
-          </Text>
+          {showOpenPl ? (
+            <Text
+              style={[styles.metricDelta, { color: deltaColor }]}
+              accessibilityLabel="Open profit and loss"
+            >
+              Open P/L {openPl >= 0 ? '+' : ''}
+              {formatMoney(openPl, currency)}
+            </Text>
+          ) : null}
         </View>
       </View>
 
@@ -1277,7 +1284,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
   },
-  metricDelta: { fontSize: 12, fontWeight: '700' },
+  metricDelta: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 2,
+    letterSpacing: 0.2,
+  },
   tradesBlock: { gap: 8 },
   tradeRow: {
     flexDirection: 'row',
