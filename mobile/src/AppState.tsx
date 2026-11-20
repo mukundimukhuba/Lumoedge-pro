@@ -28,6 +28,33 @@ import {
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
+const QUOTE_SETUPS_KEY = 'edges-quote-setups-v1';
+
+/** Per Quotes symbol — used by Auto Trade Start */
+export type QuoteSetup = {
+  symbol: string;
+  lotSize: number;
+  trades: number;
+};
+
+export function normalizeQuoteSetup(input: {
+  symbol: string;
+  lotSize?: number;
+  trades?: number;
+}): QuoteSetup | null {
+  const symbol = String(input.symbol || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .toUpperCase();
+  if (!symbol) return null;
+  let lot = Number(input.lotSize);
+  if (!Number.isFinite(lot) || lot <= 0) lot = 0.01;
+  lot = Math.min(100, Math.max(0.01, Math.round(lot * 100) / 100));
+  let trades = Math.round(Number(input.trades));
+  if (!Number.isFinite(trades) || trades < 1) trades = 1;
+  trades = Math.min(10, Math.max(1, trades));
+  return { symbol, lotSize: lot, trades };
+}
 
 export type EaAccess = {
   email: string;
@@ -107,6 +134,10 @@ type AppStateValue = {
   setStatus: (s: BotStatus) => void;
   selected: string[];
   setSelected: (s: string[]) => void;
+  quoteSetups: QuoteSetup[];
+  upsertQuoteSetup: (setup: QuoteSetup) => void;
+  removeQuoteSetup: (symbol: string) => void;
+  getQuoteSetup: (symbol: string) => QuoteSetup | undefined;
   accent: string;
   setAccent: (c: string) => void;
   mentor: MentorSession | null;
@@ -155,6 +186,9 @@ function makeLicenseKey() {
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<BotStatus>('running');
   const [selected, setSelected] = useState<string[]>([]);
+  const [quoteSetups, setQuoteSetups] = useState<QuoteSetup[]>([]);
+  const quoteSetupsRef = useRef(quoteSetups);
+  quoteSetupsRef.current = quoteSetups;
   const [accent, setAccent] = useState('#FF0000');
   const [mentor, setMentor] = useState<MentorSession | null>(null);
   const [eas, setEas] = useState<ManagedEa[]>([]);
@@ -185,9 +219,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        const [accessRaw, activeRaw] = await Promise.all([
+        const [accessRaw, activeRaw, setupsRaw] = await Promise.all([
           AsyncStorage.getItem(EA_ACCESS_KEY),
           AsyncStorage.getItem(ACTIVE_EA_KEY),
+          AsyncStorage.getItem(QUOTE_SETUPS_KEY),
         ]);
         const catalog = await loadLicenseCatalog();
         if (cancelled) return;
@@ -197,6 +232,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         }
         applyCatalog(catalog.eas, catalog.keys);
         await saveLicenseCatalog(catalog.eas, catalog.keys);
+        let loadedSetups: QuoteSetup[] = [];
+        if (setupsRaw) {
+          try {
+            const parsed = JSON.parse(setupsRaw) as QuoteSetup[];
+            if (Array.isArray(parsed)) {
+              loadedSetups = parsed
+                .map((row) => normalizeQuoteSetup(row))
+                .filter((x): x is QuoteSetup => Boolean(x));
+            }
+          } catch {
+            loadedSetups = [];
+          }
+        }
         if (activeRaw) {
           const parsed = JSON.parse(activeRaw) as ActiveEaSession;
           if (parsed?.licenseKey && parsed?.name) {
@@ -215,8 +263,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               }
             }
             setActiveEa(session);
-            setSelected(session.symbols ?? []);
+            const syms = session.symbols ?? [];
+            setSelected(syms);
+            // Keep setups for selected symbols; seed defaults for missing
+            const bySym = new Map(
+              loadedSetups.map((s) => [s.symbol, s] as const),
+            );
+            const synced = syms.map(
+              (sym) =>
+                bySym.get(sym) ||
+                normalizeQuoteSetup({ symbol: sym })!,
+            );
+            setQuoteSetups(synced);
+            loadedSetups = synced;
+          } else if (loadedSetups.length) {
+            setQuoteSetups(loadedSetups);
+            setSelected(loadedSetups.map((s) => s.symbol));
           }
+        } else if (loadedSetups.length) {
+          setQuoteSetups(loadedSetups);
+          setSelected(loadedSetups.map((s) => s.symbol));
         }
       } catch {
         /* ignore corrupt storage */
@@ -312,6 +378,86 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return row;
   };
 
+  const persistQuoteSetups = useCallback(async (rows: QuoteSetup[]) => {
+    try {
+      await AsyncStorage.setItem(QUOTE_SETUPS_KEY, JSON.stringify(rows));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setSelectedAndSyncSetups = useCallback(
+    (syms: string[]) => {
+      const clean = [
+        ...new Set(
+          syms
+            .map((s) =>
+              String(s || '')
+                .trim()
+                .replace(/\s+/g, '')
+                .toUpperCase(),
+            )
+            .filter(Boolean),
+        ),
+      ];
+      setSelected(clean);
+      setQuoteSetups((prev) => {
+        const bySym = new Map(prev.map((s) => [s.symbol, s] as const));
+        const next = clean.map(
+          (sym) => bySym.get(sym) || normalizeQuoteSetup({ symbol: sym })!,
+        );
+        void persistQuoteSetups(next);
+        return next;
+      });
+    },
+    [persistQuoteSetups],
+  );
+
+  const upsertQuoteSetup = useCallback(
+    (setup: QuoteSetup) => {
+      const normalized = normalizeQuoteSetup(setup);
+      if (!normalized) return;
+      setQuoteSetups((prev) => {
+        const next = [
+          ...prev.filter((s) => s.symbol !== normalized.symbol),
+          normalized,
+        ];
+        void persistQuoteSetups(next);
+        return next;
+      });
+      setSelected((prev) =>
+        prev.includes(normalized.symbol)
+          ? prev
+          : [...prev, normalized.symbol],
+      );
+    },
+    [persistQuoteSetups],
+  );
+
+  const removeQuoteSetup = useCallback(
+    (symbol: string) => {
+      const sym = String(symbol || '')
+        .trim()
+        .replace(/\s+/g, '')
+        .toUpperCase();
+      setQuoteSetups((prev) => {
+        const next = prev.filter((s) => s.symbol !== sym);
+        void persistQuoteSetups(next);
+        return next;
+      });
+      setSelected((prev) => prev.filter((s) => s !== sym));
+    },
+    [persistQuoteSetups],
+  );
+
+  const getQuoteSetup = useCallback((symbol: string) => {
+    const sym = String(symbol || '')
+      .trim()
+      .replace(/\s+/g, '')
+      .toUpperCase();
+    return quoteSetupsRef.current.find((s) => s.symbol === sym);
+  }, []);
+
   const activateLicenseKey: AppStateValue['activateLicenseKey'] = async (
     rawKey,
   ) => {
@@ -358,7 +504,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
     await AsyncStorage.setItem(ACTIVE_EA_KEY, JSON.stringify(session));
     setActiveEa(session);
-    setSelected(session.symbols);
+    setSelectedAndSyncSetups(session.symbols);
     setStatus('running');
     return { ok: true, session };
   };
@@ -367,6 +513,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.removeItem(ACTIVE_EA_KEY);
     setActiveEa(null);
     setSelected([]);
+    setQuoteSetups([]);
+    void persistQuoteSetups([]);
     setStatus('stopped');
   };
 
@@ -375,7 +523,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       status,
       setStatus,
       selected,
-      setSelected,
+      setSelected: setSelectedAndSyncSetups,
+      quoteSetups,
+      upsertQuoteSetup,
+      removeQuoteSetup,
+      getQuoteSetup,
       accent,
       setAccent,
       mentor,
@@ -395,6 +547,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [
       status,
       selected,
+      setSelectedAndSyncSetups,
+      quoteSetups,
+      upsertQuoteSetup,
+      removeQuoteSetup,
+      getQuoteSetup,
       accent,
       mentor,
       eas,

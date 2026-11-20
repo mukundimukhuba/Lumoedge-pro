@@ -13,6 +13,9 @@ import {
   type AutoScanSignal,
 } from './scan/autoApi';
 import { buildTpLadder, formatPrice } from './scan/strategy';
+import { sendBrokerOrder } from './brokers/api';
+import type { QuoteSetup } from './AppState';
+import { normalizeQuoteSetup } from './AppState';
 
 const BASE = {
   black: '#000000',
@@ -46,6 +49,9 @@ type Props = {
   mt5Token?: string | null;
   /** Symbols from Home Quotes selection — scans ONLY these */
   symbols?: string[] | null;
+  /** Per-symbol lot + trade count from Quotes prompt */
+  quoteSetups?: QuoteSetup[] | null;
+  /** Fallback when no per-symbol setup */
   lotSize?: number;
   trades?: number;
   onClose: () => void;
@@ -61,6 +67,7 @@ export function AutoTradeEngineOverlay({
   accent,
   mt5Token,
   symbols,
+  quoteSetups,
   lotSize = 0.01,
   trades = 1,
   onClose,
@@ -213,20 +220,84 @@ export function AutoTradeEngineOverlay({
         if (ac.signal.aborted || id !== runId.current) return;
 
         setPhase('execute');
-        setStatus('Executing…');
-        await sleep(700, ac.signal);
+        setStatus('Sending order to MT5…');
+
+        const setup =
+          (quoteSetups || []).find((s) => s.symbol === chosenSymbol) ||
+          normalizeQuoteSetup({
+            symbol: chosenSymbol,
+            lotSize,
+            trades,
+          });
+        const sendLots = setup?.lotSize ?? lotSize;
+        const sendTrades = setup?.trades ?? trades;
+        const side = chosen.direction === 'sell' ? 'sell' : 'buy';
+        const operation: 0 | 1 = side === 'sell' ? 1 : 0;
+        const tps = Array.isArray(chosen.takeProfits)
+          ? chosen.takeProfits.filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+        const sl =
+          chosen.stopLoss != null && Number(chosen.stopLoss) > 0
+            ? Number(chosen.stopLoss)
+            : undefined;
+
+        let opened = 0;
+        let lastFail = '';
+        for (let n = 0; n < sendTrades; n++) {
+          if (ac.signal.aborted || id !== runId.current) return;
+          setStatus(
+            `OrderSend ${n + 1}/${sendTrades} · ${chosenSymbol} · ${sendLots} lot`,
+          );
+          const tp =
+            tps.length > 0
+              ? Number(tps[Math.min(n, tps.length - 1)])
+              : undefined;
+          const send = await sendBrokerOrder({
+            id: token,
+            symbol: chosenSymbol,
+            operation,
+            volume: sendLots,
+            stopLoss: sl,
+            takeProfit: tp,
+            comment: 'Lumo Edge Auto',
+            slippage: 10000,
+          });
+          if (ac.signal.aborted || id !== runId.current) return;
+          if (!send.ok) {
+            lastFail =
+              String(send.error || '').trim() ||
+              'OrderSend failed — no reason from API';
+            // Stop on first hard reject so the user sees the real problem
+            break;
+          }
+          opened += 1;
+          if (n < sendTrades - 1) {
+            await sleep(250, ac.signal).catch(() => undefined);
+          }
+        }
+
         if (ac.signal.aborted || id !== runId.current) return;
+
+        if (opened === 0) {
+          setPhase('error');
+          setError(lastFail || 'Broker rejected the order.');
+          setStatus('Trade send failed');
+          return;
+        }
 
         setPhase('done');
         setStatus(
-          chosen.demo
-            ? `Preview executed · ${chosenSymbol} ${(chosen.direction || '').toUpperCase()}`
-            : `Opened ${trades} trade(s) · ${chosenSymbol}`,
+          opened < sendTrades
+            ? `Opened ${opened}/${sendTrades} · ${chosenSymbol} — ${lastFail || 'remaining legs failed'}`
+            : `Opened ${opened} trade(s) · ${chosenSymbol} · ${sendLots} lot`,
         );
+        if (opened < sendTrades && lastFail) {
+          setError(`Partial fill: ${lastFail}`);
+        }
         onExecuted?.({
           symbol: chosenSymbol,
           direction: String(chosen.direction),
-          trades,
+          trades: opened,
         });
       } catch (e) {
         if (ac.signal.aborted || id !== runId.current) return;
@@ -240,7 +311,7 @@ export function AutoTradeEngineOverlay({
       ac.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible, mt5Token, symbols]);
+  }, [visible, mt5Token, symbols, quoteSetups, lotSize, trades]);
 
   const phaseLabel =
     phase === 'scanning'
@@ -407,8 +478,25 @@ export function AutoTradeEngineOverlay({
             </View>
           ) : null}
 
-          {error && (phase === 'error' || !signal) ? (
-            <Text style={styles.error}>{error}</Text>
+          {error ? (
+            <View
+              style={[
+                styles.errorBox,
+                {
+                  borderColor:
+                    phase === 'error'
+                      ? hexToRgba(BASE.red, 0.65)
+                      : hexToRgba(accent, 0.35),
+                },
+              ]}
+              accessibilityRole="alert"
+              accessibilityLabel="Trade send problem"
+            >
+              <Text style={styles.errorTitle}>
+                {phase === 'error' ? 'Trade send failed' : 'Notice'}
+              </Text>
+              <Text style={styles.error}>{error}</Text>
+            </View>
           ) : null}
 
           <Pressable
@@ -524,7 +612,28 @@ const styles = StyleSheet.create({
   signalLevels: { color: BASE.muted, fontSize: 12, marginTop: 2 },
   signalSum: { color: BASE.muted, fontSize: 12, marginTop: 4 },
   demoNote: { color: BASE.dim, fontSize: 11, marginTop: 4 },
-  error: { color: BASE.red, fontSize: 13, fontWeight: '600' },
+  errorBox: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255, 82, 82, 0.08)',
+    gap: 4,
+  },
+  errorTitle: {
+    color: BASE.red,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  error: {
+    color: BASE.white,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
   closeBtn: {
     marginTop: 8,
     borderWidth: 1.5,

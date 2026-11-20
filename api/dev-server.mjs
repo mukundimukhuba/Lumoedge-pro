@@ -13,6 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const listHandler = require(path.join(__dirname, 'brokers', 'index.js'));
 const connectHandler = require(path.join(__dirname, 'brokers', 'connect.js'));
 const accountHandler = require(path.join(__dirname, 'brokers', 'account.js'));
+const orderHandler = require(path.join(__dirname, 'brokers', 'order.js'));
 
 const PORT = Number(process.env.BROKERS_DEV_PORT || 8787);
 
@@ -47,6 +48,14 @@ const server = http.createServer(async (req, res) => {
     ) {
       req.url = `/api/brokers/account${url.search}`;
       await accountHandler(req, fakeRes);
+      return;
+    }
+    if (
+      url.pathname === '/api/brokers/order' ||
+      url.pathname === '/brokers/order'
+    ) {
+      req.url = '/api/brokers/order';
+      await orderHandler(req, fakeRes);
       return;
     }
     if (url.pathname === '/health') {
