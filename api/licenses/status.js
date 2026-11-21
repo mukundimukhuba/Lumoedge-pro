@@ -20,15 +20,27 @@ module.exports = async function handler(req, res) {
   if (!admin.serviceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY');
   if (!admin.anonKey) missing.push('SUPABASE_ANON_KEY');
 
+  // Booleans only — never values or lengths of secrets.
+  const present = (name) => Boolean(String(process.env[name] || '').trim());
+  const envPresence = {
+    SUPABASE_URL: present('SUPABASE_URL'),
+    SUPABASE_SERVICE_ROLE_KEY: present('SUPABASE_SERVICE_ROLE_KEY'),
+    SUPABASE_ANON_KEY: present('SUPABASE_ANON_KEY'),
+    EXPO_PUBLIC_SUPABASE_URL: present('EXPO_PUBLIC_SUPABASE_URL'),
+    EXPO_PUBLIC_SUPABASE_ANON_KEY: present('EXPO_PUBLIC_SUPABASE_ANON_KEY'),
+    supabase_alias: present('supabase'),
+  };
+
   const out = {
     ok: true,
     urlConfigured: Boolean(admin.url),
     serviceRoleConfigured: Boolean(admin.serviceKey),
     anonConfigured: Boolean(admin.anonKey),
     missingEnvNames: missing,
+    envPresence,
     hint:
       missing.length > 0
-        ? 'Set missing names in Vercel → Settings → Environment Variables, then redeploy. Cursor secrets do not bind to Vercel.'
+        ? 'Set exact names SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_ROLE_KEY on the Vercel project that owns Production (GitHub Vercel check URL), for Production, then Redeploy. Cursor secrets do not bind to Vercel.'
         : undefined,
     tables: { managed_eas: 'unknown', license_keys: 'unknown' },
   };
