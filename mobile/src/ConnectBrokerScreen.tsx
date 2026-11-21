@@ -5,6 +5,7 @@ import {
   Animated,
   Easing,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -211,36 +212,52 @@ function ConnectPulse({
     };
   }, [active, spin, pulse, scale]);
 
-  if (!active) return null;
   const rotate = spin.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
   return (
-    <View style={styles.pulseWrap} accessibilityLabel="Connecting">
-      <Animated.View
-        style={[
-          styles.pulseRing,
-          {
-            borderColor: hexToRgba(accent, 0.65),
-            opacity: pulse,
-            transform: [{ rotate }],
-          },
-        ]}
-      />
-      <Animated.View style={{ transform: [{ scale }] }}>
-        {broker ? (
-          <BrokerMark name={broker} size={48} />
-        ) : (
-          <Ionicons name="link" size={28} color={accent} />
-        )}
-      </Animated.View>
-      <Text style={[styles.pulseText, { color: accent }]}>
-        Linking {broker || 'account'}…
-      </Text>
-      <Text style={styles.pulseSub}>Live MT5 session</Text>
-    </View>
+    <Modal
+      visible={active}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={() => undefined}
+    >
+      <View style={styles.pulseBackdrop} accessibilityLabel="Connecting">
+        <View
+          style={[
+            styles.pulseCard,
+            { borderColor: hexToRgba(accent, 0.55) },
+          ]}
+        >
+          <View style={styles.pulseWrap}>
+            <Animated.View
+              style={[
+                styles.pulseRing,
+                {
+                  borderColor: hexToRgba(accent, 0.65),
+                  opacity: pulse,
+                  transform: [{ rotate }],
+                },
+              ]}
+            />
+            <Animated.View style={{ transform: [{ scale }] }}>
+              {broker ? (
+                <BrokerMark name={broker} size={56} />
+              ) : (
+                <Ionicons name="link" size={32} color={accent} />
+              )}
+            </Animated.View>
+          </View>
+          <Text style={[styles.pulseText, { color: accent }]}>
+            Linking {broker || 'account'}…
+          </Text>
+          <Text style={styles.pulseSub}>Live MT5 session</Text>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -984,45 +1001,44 @@ export function ConnectBrokerScreen() {
 
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-            <ConnectPulse
-              accent={accent}
-              active={connecting}
-              broker={selected}
-            />
-
-            {!connecting ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Connect broker"
-                onPress={onConnect}
-                style={({ pressed }) => [
-                  styles.connectBtn,
-                  {
-                    borderColor: accent,
-                    opacity: pressed ? 0.7 : 1,
-                  },
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Connect broker"
+              onPress={onConnect}
+              disabled={connecting}
+              style={({ pressed }) => [
+                styles.connectBtn,
+                {
+                  borderColor: accent,
+                  opacity: connecting ? 0.45 : pressed ? 0.7 : 1,
+                },
+              ]}
+            >
+              <LinearGradient
+                colors={[
+                  hexToRgba(accent, 0.55),
+                  hexToRgba(accent, 0.18),
+                  '#0A0000',
                 ]}
+                start={{ x: 0.15, y: 0 }}
+                end={{ x: 0.85, y: 1 }}
+                style={styles.connectGrad}
               >
-                <LinearGradient
-                  colors={[
-                    hexToRgba(accent, 0.55),
-                    hexToRgba(accent, 0.18),
-                    '#0A0000',
-                  ]}
-                  start={{ x: 0.15, y: 0 }}
-                  end={{ x: 0.85, y: 1 }}
-                  style={styles.connectGrad}
-                >
-                  <Ionicons name="link-outline" size={18} color={BASE.white} />
-                  <Text style={styles.connectText}>Connect live MT5</Text>
-                </LinearGradient>
-              </Pressable>
-            ) : null}
+                <Ionicons name="link-outline" size={18} color={BASE.white} />
+                <Text style={styles.connectText}>Connect live MT5</Text>
+              </LinearGradient>
+            </Pressable>
           </View>
         ) : null}
           </>
         ) : null}
       </ScrollView>
+
+      <ConnectPulse
+        accent={accent}
+        active={connecting}
+        broker={selected}
+      />
 
       <EdgesBottomDock />
     </View>
@@ -1253,26 +1269,45 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     fontSize: 15,
   },
-  pulseWrap: {
+  pulseBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.78)',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 18,
-    gap: 10,
+    padding: 24,
+  },
+  pulseCard: {
+    width: '100%',
+    maxWidth: 340,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    backgroundColor: BASE.panel,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    gap: 12,
+  },
+  pulseWrap: {
+    width: 96,
+    height: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pulseRing: {
     position: 'absolute',
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     borderWidth: 2.5,
     borderTopColor: 'transparent',
   },
-  pulseText: { fontSize: 13, fontWeight: '700', marginTop: 8 },
+  pulseText: { fontSize: 16, fontWeight: '800', textAlign: 'center' },
   pulseSub: {
     color: BASE.muted,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
     letterSpacing: 0.4,
+    textAlign: 'center',
   },
   disconnectBtn: {
     flexDirection: 'row',
