@@ -155,6 +155,7 @@ module.exports = async function handler(req, res) {
       via: 'storage',
       key_normalized: keyNorm,
       configured: true,
+      serviceKeyKind: admin.serviceKeyKind,
       tableError: tableError || undefined,
       hint:
         tableError && /PGRST205|schema cache|does not exist/i.test(tableError)
@@ -162,11 +163,17 @@ module.exports = async function handler(req, res) {
           : undefined,
     });
   } catch (err) {
+    const rls = err?.code === 'STORAGE_RLS';
+    const kind = err?.keyKind || admin.serviceKeyKind;
     return json(res, 502, {
       ok: false,
       error: String(err?.message || err),
       tableError: tableError || undefined,
       configured: true,
+      serviceKeyKind: kind,
+      hint: rls
+        ? 'Storage RLS blocked the write. serviceKeyKind should be sb_secret or jwt:service_role. Apply supabase/migrations/*.sql (public INSERT on ea-pictures) or replace SERVICE_ROLE value with the project Secret key — no need to re-link Shared env.'
+        : undefined,
     });
   }
 };
