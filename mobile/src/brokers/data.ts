@@ -25,7 +25,8 @@ export const BROKER_RECORDS: BrokerRecord[] = [
     domain: 'rcgmarkets.com',
     region: 'za',
     color: '#0B3D91',
-    servers: s('RCG-Live', 'RCGMarkets-MT5', 'RCG-Demo'),
+    // Exact MetaQuotes /Search names (droplet mt5rest): RCGMarkets-Real, RCGMarkets-Demo
+    servers: s('RCGMarkets-Real', 'RCGMarkets-Demo'),
   },
   {
     name: 'Banxso',
