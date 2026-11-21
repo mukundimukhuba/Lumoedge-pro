@@ -1,5 +1,7 @@
 /**
- * Live MT5 via https://lumoedge.com/api/mt5* (droplet bridge).
+ * Live MT5 via BROKER_API_URL / LUMOEDGE_MT5_URL.
+ * - Native mt5rest droplet: GET /ConnectEx, /AccountSummary, …
+ * - Legacy lumoedge.com bridge: POST /api/mt5/connect, GET /api/mt5/…
  * Never logs passwords. No mock balances/trades.
  *
  * OpenedOrders: mt5Api returns a raw array (see openedOrders()).
@@ -18,6 +20,25 @@ function mt5Root() {
   return LUMOEDGE_MT5;
 }
 
+/** Native mt5rest vs lumoedge /api/mt5 bridge. */
+function isMt5Rest() {
+  const mode = String(process.env.MT5_API_MODE || '').trim().toLowerCase();
+  if (mode === 'mt5rest' || mode === 'rest') return true;
+  if (mode === 'bridge' || mode === 'lumoedge') return false;
+  try {
+    const host = new URL(
+      /:\/\//.test(LUMOEDGE_MT5) ? LUMOEDGE_MT5 : `http://${LUMOEDGE_MT5}`,
+    ).hostname;
+    if (/lumoedge\.com$/i.test(host)) return false;
+  } catch {
+    /* fall through */
+  }
+  // Any non-lumoedge BROKER_API_URL (e.g. DigitalOcean droplet) → mt5rest.
+  return Boolean(
+    (process.env.LUMOEDGE_MT5_URL || process.env.BROKER_API_URL || '').trim(),
+  );
+}
+
 async function readJson(res) {
   const text = (await res.text()).trim();
   if (!text) return null;
@@ -28,44 +49,80 @@ async function readJson(res) {
   }
 }
 
+function extractToken(data) {
+  if (data == null) return '';
+  if (typeof data === 'string') {
+    return data.trim().replace(/^"|"$/g, '');
+  }
+  if (typeof data === 'object') {
+    return String(
+      data.token || data.id || data.Id || data.Token || '',
+    ).trim();
+  }
+  return '';
+}
+
+function extractError(data, status) {
+  if (data && typeof data === 'object') {
+    return String(data.error || data.message || data.Message || '').trim();
+  }
+  if (typeof data === 'string' && data.trim()) return data.trim();
+  return `Connect failed (${status})`;
+}
+
 /**
- * POST /api/mt5/connect → { token }
- * Body: { user, password, server }
+ * Connect live MT5 → session token.
+ * mt5rest: GET /ConnectEx?user&password&server
+ * bridge:  POST /api/mt5/connect { user, password, server }
  */
 async function connectLiveMt5({ user, password, server }) {
-  const url = `${mt5Root()}/api/mt5/connect`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 22000);
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    let res;
+    if (isMt5Rest()) {
+      const qs = new URLSearchParams({
         user: String(user).trim(),
         password: String(password),
         server: String(server).trim(),
-      }),
-      signal: ctrl.signal,
-    });
+        connectTimeoutSeconds: '15',
+        errorReplyStatusCode: '400',
+      });
+      res = await fetch(`${mt5Root()}/ConnectEx?${qs.toString()}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json, text/plain, */*' },
+        signal: ctrl.signal,
+      });
+    } else {
+      res = await fetch(`${mt5Root()}/api/mt5/connect`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user: String(user).trim(),
+          password: String(password),
+          server: String(server).trim(),
+        }),
+        signal: ctrl.signal,
+      });
+    }
     const data = await readJson(res);
     if (!res.ok) {
-      const err =
-        (data && typeof data === 'object' && (data.error || data.message)) ||
-        (typeof data === 'string' ? data : '') ||
-        `Connect failed (${res.status})`;
-      return { ok: false, status: res.status, error: String(err) };
+      return {
+        ok: false,
+        status: res.status,
+        error: extractError(data, res.status),
+      };
     }
-    const token =
-      data && typeof data === 'object'
-        ? String(data.token || data.id || '').trim()
-        : typeof data === 'string'
-          ? data.trim().replace(/^"|"$/g, '')
-          : '';
+    const token = extractToken(data);
     if (!token || /error|fail|invalid/i.test(token)) {
-      return { ok: false, status: 502, error: token || 'No session token returned' };
+      return {
+        ok: false,
+        status: 502,
+        error: token || extractError(data, res.status) || 'No session token returned',
+      };
     }
     return { ok: true, token };
   } catch (err) {
@@ -83,7 +140,8 @@ async function connectLiveMt5({ user, password, server }) {
 }
 
 async function mt5Get(pathWithQuery) {
-  const url = `${mt5Root()}/api/mt5${pathWithQuery}`;
+  const prefix = isMt5Rest() ? '' : '/api/mt5';
+  const url = `${mt5Root()}${prefix}${pathWithQuery}`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 15000);
   try {
