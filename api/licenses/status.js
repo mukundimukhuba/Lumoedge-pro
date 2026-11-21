@@ -1,8 +1,13 @@
 const { applyCors, json } = require('../_lib/cors');
-const { getSupabaseAdmin, sbFetch } = require('../_lib/supabaseAdmin');
+const {
+  getSupabaseAdmin,
+  sbFetch,
+  probeStorageWrite,
+} = require('../_lib/supabaseAdmin');
 
 /**
  * GET /api/licenses/status — env + table reachability (no secrets).
+ * Optional ?probeStorage=1 runs a write probe under catalog/_probe/.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -36,6 +41,8 @@ module.exports = async function handler(req, res) {
     urlConfigured: Boolean(admin.url),
     serviceRoleConfigured: Boolean(admin.serviceKey),
     anonConfigured: Boolean(admin.anonKey),
+    serviceKeyKind: admin.serviceKeyKind,
+    anonKeyKind: admin.anonKeyKind,
     missingEnvNames: missing,
     envPresence,
     hint:
@@ -70,5 +77,25 @@ module.exports = async function handler(req, res) {
   out.storageFallback =
     out.tables.managed_eas === 'missing' ||
     out.tables.license_keys === 'missing';
+
+  let probeStorage = false;
+  try {
+    const u = new URL(req.url || '', 'http://localhost');
+    probeStorage = u.searchParams.get('probeStorage') === '1';
+  } catch {
+    probeStorage = false;
+  }
+  if (probeStorage) {
+    out.storageWrite = await probeStorageWrite();
+    if (
+      out.storageWrite &&
+      !out.storageWrite.ok &&
+      /publishable|jwt:anon/i.test(String(out.storageWrite.keyKind || ''))
+    ) {
+      out.hint =
+        'SUPABASE_SERVICE_ROLE_KEY is present but not a privileged Secret/service_role key (see serviceKeyKind). Use the project Secret key, or apply supabase/migrations/*.sql so Storage public INSERT policies allow catalog writes.';
+    }
+  }
+
   return json(res, 200, out);
 };

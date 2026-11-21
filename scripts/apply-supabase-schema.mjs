@@ -165,11 +165,18 @@ async function main() {
     return;
   }
 
+  // Write a single paste-ready file (no secrets) for SQL editor.
+  const combinedPath = path.join(migrationsDir, '_combined_for_sql_editor.sql');
+  fs.writeFileSync(
+    combinedPath,
+    `-- Combined ${files.join(' + ')}\n-- Paste into Supabase → SQL → New query → Run\n\n${sql}\n`,
+    'utf8',
+  );
   console.warn(
     'Auto-apply of SQL skipped (hosted Supabase has no /pg/query; no SUPABASE_ACCESS_TOKEN).',
   );
   console.warn(
-    'Apply manually: Supabase → SQL → New query → paste supabase/migrations/*.sql → Run.',
+    `Apply manually: Supabase → SQL → New query → paste ${path.relative(root, combinedPath)} → Run.`,
   );
   console.warn(
     'Or add Cloud Agent secret SUPABASE_ACCESS_TOKEN (Management API) and re-run supabase:apply.',

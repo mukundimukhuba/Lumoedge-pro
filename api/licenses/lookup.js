@@ -96,7 +96,7 @@ module.exports = async function handler(req, res) {
     /* continue */
   }
 
-  // 3) Storage catalog fallback
+  // 3) Storage catalog fallback (auth get, then public URL)
   try {
     const stored = await storageGetJson(`catalog/keys/${keyNorm}.json`);
     if (stored && stored.key) {
@@ -112,6 +112,7 @@ module.exports = async function handler(req, res) {
       ok: false,
       error: String(err?.message || err),
       configured: true,
+      serviceKeyKind: admin.serviceKeyKind,
     });
   }
 
@@ -120,6 +121,7 @@ module.exports = async function handler(req, res) {
     error: 'License key not found in Supabase tables or Storage catalog.',
     key_normalized: keyNorm,
     configured: true,
+    serviceKeyKind: admin.serviceKeyKind,
   });
 };
 
