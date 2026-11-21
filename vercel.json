@@ -1,7 +1,7 @@
 {
   "installCommand": "npm install --prefix mobile",
   "buildCommand": "npm run export:web",
-  "outputDirectory": ".",
+  "outputDirectory": "dist-web",
   "rewrites": [
     { "source": "/portal", "destination": "/portal/index.html" },
     { "source": "/portal/", "destination": "/portal/index.html" },

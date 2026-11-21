@@ -29,11 +29,13 @@ If Mentors Portal shows **“Supabase env incomplete on server”**, the Vercel 
 | Cursor `bind-app-secrets` / publish-app | Cursor-hosted apps only — **not** the Vercel `lumoedgepro` deployment |
 | **Vercel project env** | Required for production `/api/licenses/*` |
 
-**You must set these in Vercel** → Project `lumoedgepro` → **Settings → Environment Variables** (Production + Preview), then **Redeploy**:
+**You must set these in Vercel** on the project that owns Production (open a GitHub **Vercel** check to see the project URL) → **Settings → Environment Variables**, then **Redeploy**:
 
 1. `SUPABASE_URL`
 2. `SUPABASE_ANON_KEY`
 3. `SUPABASE_SERVICE_ROLE_KEY` (use this exact name on Vercel — do not rely on the Cloud Agent alias `supabase`)
+
+**Shared tab is not enough:** team **Shared** Environment Variables apply only after they are **linked to the project** (and include **Production**). Prefer **Project** env for these three, or use **Link Shared Environment Variables** on the project, then Redeploy. Untargeted Shared vars never reach `/api/licenses/*`.
 
 CLI (with your Vercel login/token; never paste values into chat):
 
@@ -65,7 +67,9 @@ Local: `npm run brokers:dev` → `http://127.0.0.1:8787` (Expo web on `:8081` ca
 
 ## Vercel
 
-`vercel.json` builds with `npm run export:web`. On the Vercel project set:
+`vercel.json` builds with `npm run export:web` into **`dist-web`** (static only). Root **`api/`** stays outside that folder so Vercel Serverless Functions receive project env at runtime.
+
+On the Vercel project that owns Production set:
 
 1. `SUPABASE_URL` + `SUPABASE_ANON_KEY` — baked into the static client via `mobile/app.config.js`
 2. `SUPABASE_SERVICE_ROLE_KEY` — **server-only** for `/api/licenses/*` (Generate Key cloud sync + Activate worldwide lookup). Never expose this in client env / `EXPO_PUBLIC_*`.
