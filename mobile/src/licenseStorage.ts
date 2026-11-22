@@ -2,11 +2,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { compressCatalogPictures, compressEaPicture } from './eaPicture';
 import {
+  eaPictureVaultKey,
   hydrateEasFromVault,
   hydrateKeysFromVault,
   listVaultPictureKeys,
   vaultCatalogPictures,
   vaultGetPicture,
+  vaultPutEaPicture,
 } from './pictureVault';
 import { getSupabase } from './supabase/client';
 import { persistPictureRemote } from './supabase/eaPictureUpload';
@@ -624,6 +626,11 @@ export async function loadLicenseCatalog(): Promise<{
     eas = await recoverEasFromVault(eas);
   }
 
+  // Promote key/vault pictures onto managed EA, then push branding onto all keys.
+  const repaired = await repairManagedEaBranding(eas, keys);
+  eas = repaired.eas;
+  keys = repaired.keys;
+
   memoryEas = eas;
   memoryKeys = keys;
   return { eas, keys };
@@ -870,9 +877,74 @@ export async function findIssuedLicense(
 }
 
 /**
- * Build the activated session strictly from the license → EA mapping.
- * Key snapshot is authoritative for picture/name/symbols; live EA fills gaps
- * only when same eaId.
+ * Apply managed-EA branding onto every license key for that eaId.
+ * Managed EA is source of truth for name + picture.
+ */
+export function syncKeysFromManagedEa(
+  eas: StoredEa[],
+  keys: StoredLicenseKey[],
+  eaId?: string,
+): { eas: StoredEa[]; keys: StoredLicenseKey[] } {
+  const targets = eaId ? eas.filter((e) => e.id === eaId) : eas;
+  if (!targets.length) return { eas, keys };
+  const byId = new Map(targets.map((e) => [e.id, e]));
+  const nextKeys = keys.map((k) => {
+    const live = byId.get(k.eaId);
+    if (!live) return k;
+    const name = (live.name || '').trim() || k.eaName;
+    const pic = live.pictureUri || k.eaPictureUri;
+    if (name === k.eaName && pic === k.eaPictureUri) return k;
+    return { ...k, eaName: name, eaPictureUri: pic };
+  });
+  return { eas, keys: nextKeys };
+}
+
+/**
+ * Repair: if managed EA has no picture but a child key / vault does,
+ * promote that picture onto the EA (source of truth).
+ */
+export async function repairManagedEaBranding(
+  eas: StoredEa[],
+  keys: StoredLicenseKey[],
+): Promise<{ eas: StoredEa[]; keys: StoredLicenseKey[]; repaired: boolean }> {
+  let repaired = false;
+  const nextEas = await Promise.all(
+    eas.map(async (e) => {
+      let pic = e.pictureUri;
+      let name = e.name;
+      if (!pic) {
+        const fromKey = keys.find((k) => k.eaId === e.id && k.eaPictureUri);
+        if (fromKey?.eaPictureUri) {
+          pic = fromKey.eaPictureUri;
+          repaired = true;
+        }
+      }
+      if (!pic) {
+        const vaultPic = await vaultGetPicture(eaPictureVaultKey(e.id));
+        if (vaultPic) {
+          pic = vaultPic;
+          repaired = true;
+        }
+      }
+      if (!name?.trim()) {
+        const fromKey = keys.find((k) => k.eaId === e.id && k.eaName?.trim());
+        if (fromKey?.eaName?.trim()) {
+          name = fromKey.eaName.trim();
+          repaired = true;
+        }
+      }
+      if (pic === e.pictureUri && name === e.name) return e;
+      if (pic) await vaultPutEaPicture(e.id, pic);
+      return { ...e, pictureUri: pic, name: name || e.name };
+    }),
+  );
+  const synced = syncKeysFromManagedEa(nextEas, keys);
+  return { eas: synced.eas, keys: synced.keys, repaired };
+}
+
+/**
+ * Build the activated session from license → managed EA mapping.
+ * Managed EA is source of truth for name + picture; key snapshot fills gaps.
  */
 export function sessionFromLicenseKey(
   issued: StoredLicenseKey,
@@ -886,14 +958,15 @@ export function sessionFromLicenseKey(
   activatedAt: string;
 } {
   const live = eas.find((e) => e.id === issued.eaId);
+  // Managed EA branding wins; key snapshot is fallback only.
   const name =
-    (issued.eaName || '').trim() ||
     (live && live.id === issued.eaId ? live.name.trim() : '') ||
+    (issued.eaName || '').trim() ||
     'EA';
-  // Prefer picture stored on the key (mentor upload snapshot).
   const pictureUri =
+    (live && live.id === issued.eaId ? live.pictureUri : null) ||
     issued.eaPictureUri ||
-    (live && live.id === issued.eaId ? live.pictureUri : null);
+    null;
   const symbols =
     issued.eaSymbols?.length
       ? [...issued.eaSymbols]

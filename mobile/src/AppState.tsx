@@ -21,6 +21,7 @@ import {
   sessionFromLicenseKey,
   subscribeCatalogUpdated,
   syncIssuedLicenseRemote,
+  syncKeysFromManagedEa,
 } from './licenseStorage';
 import {
   eaPictureVaultKey,
@@ -30,6 +31,10 @@ import {
   vaultPutKeyPicture,
 } from './pictureVault';
 import { persistPictureRemote } from './supabase/eaPictureUpload';
+import {
+  fetchEaRemote,
+  putEaBrandingRemote,
+} from './licenses/remoteApi';
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
@@ -159,6 +164,11 @@ type AppStateValue = {
   addEa: (
     ea: Omit<ManagedEa, 'id' | 'createdAt'>,
   ) => Promise<ManagedEa>;
+  /** Update managed EA name/picture and cascade to all keys + active Home. */
+  updateEaBranding: (
+    eaId: string,
+    input: { name?: string; pictureUri?: string | null },
+  ) => Promise<ManagedEa | null>;
   licenseKeys: LicenseKey[];
   generateLicenseKey: (
     eaId: string,
@@ -178,6 +188,8 @@ type AppStateValue = {
   >;
   clearActiveEa: () => Promise<void>;
   refreshLicenseCatalog: () => Promise<void>;
+  /** Pull latest managed-EA name/picture into the active Home session. */
+  refreshActiveEaBranding: () => Promise<void>;
 };
 
 const Ctx = createContext<AppStateValue | null>(null);
@@ -219,8 +231,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const easRef = useRef(eas);
   const keysRef = useRef(licenseKeys);
+  const activeEaRef = useRef(activeEa);
   easRef.current = eas;
   keysRef.current = licenseKeys;
+  activeEaRef.current = activeEa;
 
   const applyCatalog = (nextEas: ManagedEa[], nextKeys: LicenseKey[]) => {
     setEas(nextEas);
@@ -385,9 +399,41 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return record;
   };
 
+  const persistActiveSession = useCallback(async (session: ActiveEaSession) => {
+    const diskSession =
+      session.pictureUri && session.pictureUri.startsWith('data:')
+        ? { ...session, pictureUri: null }
+        : session;
+    try {
+      await AsyncStorage.setItem(ACTIVE_EA_KEY, JSON.stringify(diskSession));
+    } catch {
+      try {
+        await AsyncStorage.setItem(
+          ACTIVE_EA_KEY,
+          JSON.stringify({ ...session, pictureUri: null }),
+        );
+      } catch {
+        /* memory still holds branding */
+      }
+    }
+  }, []);
+
+  const applyBrandingToActive = useCallback(
+    async (eaId: string, name: string, pictureUri: string | null) => {
+      setActiveEa((prev) => {
+        if (!prev || prev.eaId !== eaId) return prev;
+        if (prev.name === name && prev.pictureUri === pictureUri) return prev;
+        const next = { ...prev, name, pictureUri: pictureUri || prev.pictureUri };
+        void persistActiveSession(next);
+        return next;
+      });
+    },
+    [persistActiveSession],
+  );
+
   const addEa: AppStateValue['addEa'] = async (input) => {
     const pictureUri = await compressEaPicture(input.pictureUri);
-    const ea: ManagedEa = {
+    let ea: ManagedEa = {
       ...input,
       pictureUri,
       id: uid('ea'),
@@ -398,9 +444,172 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
     const nextEas = [ea, ...easRef.current];
     applyCatalog(nextEas, keysRef.current);
-    await saveLicenseCatalog(nextEas, keysRef.current);
+    await saveLicenseCatalog(nextEas, keysRef.current, { skipRemote: true });
+    // Push managed EA branding immediately (even before any key is issued).
+    const remote = await putEaBrandingRemote(ea);
+    if (remote.ok && (remote.pictureUri || remote.ea)) {
+      const durable =
+        remote.pictureUri || remote.ea?.pictureUri || ea.pictureUri;
+      ea = {
+        ...ea,
+        name: remote.ea?.name || ea.name,
+        pictureUri: durable,
+      };
+      applyCatalog(
+        nextEas.map((e) => (e.id === ea.id ? ea : e)),
+        keysRef.current,
+      );
+      await saveLicenseCatalog(
+        easRef.current,
+        keysRef.current,
+        { skipRemote: true, broadcast: false },
+      );
+    }
     return ea;
   };
+
+  const updateEaBranding: AppStateValue['updateEaBranding'] = async (
+    eaId,
+    input,
+  ) => {
+    const current = easRef.current.find((e) => e.id === eaId);
+    if (!current) return null;
+    let pictureUri = current.pictureUri;
+    if (input.pictureUri !== undefined) {
+      pictureUri = input.pictureUri
+        ? (await compressEaPicture(input.pictureUri)) || input.pictureUri
+        : null;
+    }
+    const name =
+      input.name !== undefined
+        ? input.name.trim() || current.name
+        : current.name;
+    let ea: ManagedEa = { ...current, name, pictureUri };
+    if (pictureUri) {
+      await vaultPutEaPicture(ea.id, pictureUri);
+    }
+    // Cascade branding onto every local key under this EA.
+    let nextEas = easRef.current.map((e) => (e.id === eaId ? ea : e));
+    let nextKeys = syncKeysFromManagedEa(nextEas, keysRef.current, eaId).keys;
+    for (const k of nextKeys) {
+      if (k.eaId === eaId && k.eaPictureUri) {
+        await vaultPutKeyPicture(k.id, k.eaPictureUri);
+      }
+    }
+    applyCatalog(nextEas, nextKeys);
+    await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
+    const remote = await putEaBrandingRemote(ea);
+    if (remote.ok) {
+      const durable =
+        remote.pictureUri || remote.ea?.pictureUri || ea.pictureUri;
+      const remoteName = remote.ea?.name || ea.name;
+      ea = { ...ea, name: remoteName, pictureUri: durable };
+      nextEas = nextEas.map((e) => (e.id === eaId ? ea : e));
+      nextKeys = syncKeysFromManagedEa(nextEas, nextKeys, eaId).keys;
+      applyCatalog(nextEas, nextKeys);
+      await saveLicenseCatalog(nextEas, nextKeys, {
+        skipRemote: true,
+        broadcast: false,
+      });
+    }
+    await applyBrandingToActive(eaId, ea.name, ea.pictureUri);
+    return ea;
+  };
+
+  const refreshActiveEaBranding: AppStateValue['refreshActiveEaBranding'] =
+    useCallback(async () => {
+      const session = activeEaRef.current;
+      const raw = await AsyncStorage.getItem(ACTIVE_EA_KEY);
+      let eaId = session?.eaId;
+      let licenseKey = session?.licenseKey;
+      if (!eaId && raw) {
+        try {
+          const parsed = JSON.parse(raw) as ActiveEaSession;
+          eaId = parsed?.eaId;
+          licenseKey = parsed?.licenseKey || licenseKey;
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!eaId) return;
+
+      const catalog = await loadLicenseCatalog();
+      applyCatalog(catalog.eas, catalog.keys);
+
+      let live = catalog.eas.find((e) => e.id === eaId) || null;
+      const remote = await fetchEaRemote(eaId);
+      if (remote.ok && remote.ea) {
+        live = {
+          id: remote.ea.id,
+          name: remote.ea.name,
+          pictureUri: remote.ea.pictureUri,
+          symbols: remote.ea.symbols || live?.symbols || [],
+          createdAt:
+            remote.ea.createdAt ||
+            live?.createdAt ||
+            new Date().toISOString(),
+        };
+        const nextEas = catalog.eas.some((e) => e.id === live!.id)
+          ? catalog.eas.map((e) => (e.id === live!.id ? { ...e, ...live! } : e))
+          : [live, ...catalog.eas];
+        const synced = syncKeysFromManagedEa(nextEas, catalog.keys, eaId);
+        applyCatalog(synced.eas, synced.keys);
+        await saveLicenseCatalog(synced.eas, synced.keys, {
+          skipRemote: true,
+          broadcast: false,
+        });
+      }
+
+      if (!live) return;
+      const name = (live.name || '').trim() || session?.name || 'EA';
+      let pictureUri = live.pictureUri;
+      if (!pictureUri) {
+        pictureUri =
+          (await vaultGetPicture(eaPictureVaultKey(eaId))) ||
+          session?.pictureUri ||
+          null;
+      }
+      const nextSession: ActiveEaSession = {
+        licenseKey: licenseKey || session?.licenseKey || '',
+        eaId,
+        name,
+        pictureUri,
+        symbols: session?.symbols?.length
+          ? session.symbols
+          : live.symbols || [],
+        activatedAt: session?.activatedAt || new Date().toISOString(),
+      };
+      setActiveEa(nextSession);
+      await persistActiveSession(nextSession);
+    }, [persistActiveSession]);
+
+  // Home: pull latest managed-EA branding (no re-activate required).
+  useEffect(() => {
+    if (!activeEa?.eaId) return;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const kick = () => {
+      void refreshActiveEaBranding();
+    };
+    kick();
+    timer = setInterval(kick, 20_000);
+    const onFocus = () => kick();
+    const onVis = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        kick();
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus);
+      document.addEventListener('visibilitychange', onVis);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus);
+        document.removeEventListener('visibilitychange', onVis);
+      }
+    };
+  }, [activeEa?.eaId, refreshActiveEaBranding]);
 
   const generateLicenseKey: AppStateValue['generateLicenseKey'] = async (
     eaId,
@@ -658,23 +867,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
     void syncIssuedLicenseRemote(activatedKey, liveEa || nextEas.find((e) => e.id === session.eaId) || null);
 
-    // Persist session: http URLs stay in AsyncStorage; data: only in memory + vault.
-    const diskSession =
-      session.pictureUri && session.pictureUri.startsWith('data:')
-        ? { ...session, pictureUri: null }
-        : session;
-    try {
-      await AsyncStorage.setItem(ACTIVE_EA_KEY, JSON.stringify(diskSession));
-    } catch {
-      try {
-        await AsyncStorage.setItem(
-          ACTIVE_EA_KEY,
-          JSON.stringify({ ...session, pictureUri: null }),
-        );
-      } catch {
-        /* memory session still set below */
-      }
-    }
+    await persistActiveSession(session);
     setActiveEa(session);
     setSelectedAndSyncSetups(session.symbols);
     setStatus('running');
@@ -706,6 +899,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setMentor,
       eas,
       addEa,
+      updateEaBranding,
       licenseKeys,
       generateLicenseKey,
       eaAccess,
@@ -715,6 +909,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       activateLicenseKey,
       clearActiveEa,
       refreshLicenseCatalog,
+      refreshActiveEaBranding,
     }),
     [
       status,
@@ -731,6 +926,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       eaAccess,
       accessReady,
       activeEa,
+      refreshActiveEaBranding,
     ],
   );
 
