@@ -49,7 +49,8 @@ export function PortalHomeScreen() {
     accent,
     setAccent,
   } = useAppState();
-  const [menuOpen, setMenuOpen] = useState(true);
+  /** Closed by default — user opens via corner logo. */
+  const [menuOpen, setMenuOpen] = useState(false);
   const [section, setSection] = useState<NavId>('dashboard');
 
   useEffect(() => {
@@ -78,15 +79,24 @@ export function PortalHomeScreen() {
     router.setParams({ section: id });
   };
 
+  /** Pin brand mark (dark sphere + cyan glow + white bar/chevron). */
+  const cornerLogo = require('../../assets/app-corner-logo.jpg');
+
   return (
     <View style={styles.root}>
       <View style={styles.topBar}>
         <Pressable
           onPress={() => setMenuOpen(true)}
-          style={styles.iconBtn}
-          accessibilityLabel="open menu"
+          style={styles.logoBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Open Edges Mentors Portal menu"
+          hitSlop={8}
         >
-          <Ionicons name="menu" size={22} color="#E5E7EB" />
+          <Image
+            source={cornerLogo}
+            style={styles.cornerLogo}
+            resizeMode="cover"
+          />
         </Pressable>
         <Text style={styles.topTitle}>Mentors Portal</Text>
         <Pressable
@@ -185,13 +195,13 @@ export function PortalHomeScreen() {
           <View style={styles.drawer}>
             <View style={styles.drawerHead}>
               <Image
-                source={require('../../assets/mascot.jpg')}
+                source={cornerLogo}
                 style={styles.avatar}
-                resizeMode="contain"
+                resizeMode="cover"
               />
               <Text style={styles.userName} numberOfLines={1}>
-                  {mentor.mentorName || mentor.name}
-                </Text>
+                {mentor.mentorName || mentor.name}
+              </Text>
               <Pressable
                 onPress={() => setMenuOpen(false)}
                 style={styles.headBtn}
@@ -294,6 +304,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#151A24',
+  },
+  logoBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#000000',
+    borderWidth: 1,
+    borderColor: GLOW,
+    overflow: 'hidden',
+  },
+  cornerLogo: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
   },
   content: { padding: 16, gap: 10, paddingBottom: 40 },
   h1: { color: '#fff', fontSize: 24, fontWeight: '800' },
