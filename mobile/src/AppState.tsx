@@ -24,9 +24,12 @@ import {
 } from './licenseStorage';
 import {
   eaPictureVaultKey,
+  licensePictureVaultKey,
   vaultGetPicture,
   vaultPutEaPicture,
+  vaultPutKeyPicture,
 } from './pictureVault';
+import { persistPictureRemote } from './supabase/eaPictureUpload';
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
@@ -292,6 +295,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
                 session = { ...session, pictureUri: live.pictureUri };
               }
             }
+            if (!session.pictureUri && session.licenseKey) {
+              const keyRow = catalog.keys.find((k) =>
+                licenseKeysMatch(k.key, session.licenseKey),
+              );
+              if (keyRow?.eaPictureUri) {
+                session = { ...session, pictureUri: keyRow.eaPictureUri };
+              } else if (keyRow?.id) {
+                const keyVault = await vaultGetPicture(
+                  licensePictureVaultKey(keyRow.id),
+                );
+                if (keyVault) {
+                  session = { ...session, pictureUri: keyVault };
+                }
+              }
+            }
             setActiveEa(session);
             const syms = session.symbols ?? [];
             setSelected(syms);
@@ -408,15 +426,32 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       activatedAt: null,
     };
     // Also keep compressed picture on the live EA so Manage EAs + Activate match.
-    const nextEas = easRef.current.map((e) =>
+    let nextEas = easRef.current.map((e) =>
       e.id === ea.id && eaPictureUri ? { ...e, pictureUri: eaPictureUri } : e,
     );
-    const nextKeys = [row, ...keysRef.current];
+    let nextKeys = [row, ...keysRef.current];
+    if (eaPictureUri) {
+      await vaultPutEaPicture(ea.id, eaPictureUri);
+      await vaultPutKeyPicture(row.id, eaPictureUri);
+    }
     applyCatalog(nextEas, nextKeys);
     // Local first (skip remote bulk) then explicit single-key remote write.
     await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
     const liveEa = nextEas.find((e) => e.id === ea.id) || ea;
     const remote = await syncIssuedLicenseRemote(row, liveEa);
+    // Prefer durable http URLs returned from sync so Activate/Home never lose the logo.
+    if (remote.keyPictureUri || remote.eaPictureUri) {
+      const durable =
+        remote.keyPictureUri || remote.eaPictureUri || eaPictureUri;
+      nextKeys = nextKeys.map((k) =>
+        k.id === row.id ? { ...k, eaPictureUri: durable } : k,
+      );
+      nextEas = nextEas.map((e) =>
+        e.id === ea.id ? { ...e, pictureUri: durable } : e,
+      );
+      applyCatalog(nextEas, nextKeys);
+      row.eaPictureUri = durable;
+    }
     return { key: row, remote };
   };
 
@@ -547,28 +582,99 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
 
     const activatedAt = new Date().toISOString();
-    const activatedKey: LicenseKey = {
+    let activatedKey: LicenseKey = {
       ...found.key,
       status: 'active',
       activatedAt,
     };
+
+    // Recover logo from vault when catalog/remote stripped data: URLs.
+    if (!activatedKey.eaPictureUri) {
+      const fromKeyVault = await vaultGetPicture(
+        licensePictureVaultKey(activatedKey.id),
+      );
+      const fromEaVault = await vaultGetPicture(
+        eaPictureVaultKey(activatedKey.eaId),
+      );
+      const recovered = fromKeyVault || fromEaVault;
+      if (recovered) {
+        activatedKey = { ...activatedKey, eaPictureUri: recovered };
+      }
+    }
+
     const nextKeys = found.keys.map((k) =>
       k.id === activatedKey.id || licenseKeysMatch(k.key, activatedKey.key)
-        ? { ...k, status: 'active', activatedAt }
+        ? {
+            ...k,
+            status: 'active',
+            activatedAt,
+            eaPictureUri: activatedKey.eaPictureUri || k.eaPictureUri,
+          }
         : k,
     );
-    applyCatalog(found.eas, nextKeys);
-    await saveLicenseCatalog(found.eas, nextKeys, { skipRemote: true });
+    let nextEas = found.eas.map((e) =>
+      e.id === activatedKey.eaId && activatedKey.eaPictureUri && !e.pictureUri
+        ? { ...e, pictureUri: activatedKey.eaPictureUri }
+        : e,
+    );
+    applyCatalog(nextEas, nextKeys);
+    await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
     const liveEa =
-      found.eas.find((e) => e.id === activatedKey.eaId) || null;
-    void syncIssuedLicenseRemote(activatedKey, liveEa);
+      nextEas.find((e) => e.id === activatedKey.eaId) || null;
 
     // Strict key → EA mapping (snapshot + matching eaId only).
-    const session = sessionFromLicenseKey(activatedKey, found.eas);
+    let session = sessionFromLicenseKey(activatedKey, nextEas);
+    if (!session.pictureUri) {
+      const vaultPic =
+        (await vaultGetPicture(eaPictureVaultKey(session.eaId))) ||
+        (await vaultGetPicture(licensePictureVaultKey(activatedKey.id)));
+      if (vaultPic) session = { ...session, pictureUri: vaultPic };
+    }
     if (session.pictureUri) {
       await vaultPutEaPicture(session.eaId, session.pictureUri);
+      await vaultPutKeyPicture(activatedKey.id, session.pictureUri);
+      // Prefer a durable http URL for ACTIVE_EA (localStorage quota + cross-device).
+      if (session.pictureUri.startsWith('data:')) {
+        const remoteUrl = await persistPictureRemote(
+          `eas/${session.eaId}`,
+          session.pictureUri,
+        );
+        if (remoteUrl && remoteUrl.startsWith('http')) {
+          session = { ...session, pictureUri: remoteUrl };
+          activatedKey = { ...activatedKey, eaPictureUri: remoteUrl };
+          nextEas = nextEas.map((e) =>
+            e.id === session.eaId ? { ...e, pictureUri: remoteUrl } : e,
+          );
+          applyCatalog(
+            nextEas,
+            nextKeys.map((k) =>
+              k.id === activatedKey.id
+                ? { ...k, eaPictureUri: remoteUrl }
+                : k,
+            ),
+          );
+        }
+      }
     }
-    await AsyncStorage.setItem(ACTIVE_EA_KEY, JSON.stringify(session));
+    void syncIssuedLicenseRemote(activatedKey, liveEa || nextEas.find((e) => e.id === session.eaId) || null);
+
+    // Persist session: http URLs stay in AsyncStorage; data: only in memory + vault.
+    const diskSession =
+      session.pictureUri && session.pictureUri.startsWith('data:')
+        ? { ...session, pictureUri: null }
+        : session;
+    try {
+      await AsyncStorage.setItem(ACTIVE_EA_KEY, JSON.stringify(diskSession));
+    } catch {
+      try {
+        await AsyncStorage.setItem(
+          ACTIVE_EA_KEY,
+          JSON.stringify({ ...session, pictureUri: null }),
+        );
+      } catch {
+        /* memory session still set below */
+      }
+    }
     setActiveEa(session);
     setSelectedAndSyncSetups(session.symbols);
     setStatus('running');

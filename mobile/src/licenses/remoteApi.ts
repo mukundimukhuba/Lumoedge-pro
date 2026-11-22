@@ -17,6 +17,9 @@ export type RemoteSyncResult = {
   tableError?: string;
   configured?: boolean;
   key_normalized?: string;
+  /** Public http URL after server uploaded a data: logo (if any). */
+  eaPictureUri?: string | null;
+  keyPictureUri?: string | null;
 };
 
 export type RemoteLookupResult = {
@@ -118,6 +121,10 @@ export async function putLicenseRemote(
         configured: data.configured !== false,
       };
     }
+    const eaPic =
+      typeof data.ea_picture_uri === 'string' ? data.ea_picture_uri : null;
+    const keyPic =
+      typeof data.key_picture_uri === 'string' ? data.key_picture_uri : null;
     return {
       ok: true,
       via: data.via ? String(data.via) : undefined,
@@ -127,6 +134,8 @@ export async function putLicenseRemote(
       key_normalized: data.key_normalized
         ? String(data.key_normalized)
         : normalizeLicenseKey(key.key),
+      eaPictureUri: eaPic,
+      keyPictureUri: keyPic,
     };
   } catch (err) {
     return {
