@@ -64,13 +64,15 @@ function pickWebFile(accept: string, capture?: string): Promise<string | null> {
 }
 
 export function ManageEasPanel() {
-  const { eas, addEa } = useAppState();
+  const { eas, addEa, updateEaBranding } = useAppState();
   const [name, setName] = useState('');
   const [pictureDataUrl, setPictureDataUrl] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [symbolDraft, setSymbolDraft] = useState('');
   const [savedMsg, setSavedMsg] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
   const picking = useRef(false);
 
   const normalizeSymbol = (raw: string) =>
@@ -364,26 +366,149 @@ export function ManageEasPanel() {
       {eas.length > 0 ? (
         <View style={styles.card}>
           <Text style={styles.h2}>Your robots</Text>
-          {eas.map((ea) => (
-            <View key={ea.id} style={styles.eaRow}>
-              <Image
-                source={
-                  ea.pictureUri?.startsWith('data:') ||
-                  ea.pictureUri?.startsWith('blob:') ||
-                  ea.pictureUri?.startsWith('http')
-                    ? { uri: ea.pictureUri }
-                    : fallbackMascot
-                }
-                style={styles.eaThumb}
-              />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.eaName}>{ea.name}</Text>
-                <Text style={styles.hint} numberOfLines={1}>
-                  {ea.symbols.join(' · ')}
-                </Text>
+          <Text style={styles.hint}>
+            Managed EA is the source of truth — change name or picture here and
+            every license key + Home updates for all clients (no re-activate).
+          </Text>
+          {eas.map((ea) => {
+            const missingPic =
+              !ea.pictureUri ||
+              !(
+                ea.pictureUri.startsWith('data:') ||
+                ea.pictureUri.startsWith('blob:') ||
+                ea.pictureUri.startsWith('http')
+              );
+            const isEditing = editingId === ea.id;
+            return (
+              <View key={ea.id} style={styles.eaRowWrap}>
+                <View style={styles.eaRow}>
+                  <Image
+                    source={
+                      !missingPic ? { uri: ea.pictureUri! } : fallbackMascot
+                    }
+                    style={styles.eaThumb}
+                  />
+                  <View style={{ flex: 1 }}>
+                    {isEditing ? (
+                      <TextInput
+                        value={editName}
+                        onChangeText={setEditName}
+                        style={styles.input}
+                        autoCorrect={false}
+                        accessibilityLabel={`Edit name for ${ea.name}`}
+                      />
+                    ) : (
+                      <Text style={styles.eaName}>{ea.name}</Text>
+                    )}
+                    <Text style={styles.hint} numberOfLines={1}>
+                      {ea.symbols.join(' · ')}
+                      {missingPic ? ' · needs picture' : ''}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.eaActions}>
+                  <Pressable
+                    style={styles.eaActionBtn}
+                    disabled={busy}
+                    onPress={async () => {
+                      if (picking.current) return;
+                      picking.current = true;
+                      setBusy(true);
+                      try {
+                        let dataUrl: string | null = null;
+                        if (Platform.OS === 'web') {
+                          dataUrl = await pickWebFile('image/*');
+                        } else {
+                          const perm =
+                            await ImagePicker.requestMediaLibraryPermissionsAsync();
+                          if (!perm.granted) {
+                            setSavedMsg('Gallery permission required.');
+                            return;
+                          }
+                          const result =
+                            await ImagePicker.launchImageLibraryAsync({
+                              mediaTypes: ['images'],
+                              quality: 0.85,
+                              base64: true,
+                            });
+                          if (result.canceled || !result.assets?.[0]) return;
+                          const asset = result.assets[0];
+                          if (asset.base64) {
+                            const mime = asset.mimeType || 'image/jpeg';
+                            dataUrl = `data:${mime};base64,${asset.base64}`;
+                          } else if (asset.uri) {
+                            dataUrl = await uriToDataUrl(asset.uri);
+                          }
+                        }
+                        if (!dataUrl) return;
+                        const compressed =
+                          (await compressEaPicture(dataUrl)) || dataUrl;
+                        const updated = await updateEaBranding(ea.id, {
+                          pictureUri: compressed,
+                          name: isEditing ? editName : undefined,
+                        });
+                        setSavedMsg(
+                          updated
+                            ? `Updated “${updated.name}” picture — synced to all keys.`
+                            : 'Update failed.',
+                        );
+                        setEditingId(null);
+                      } finally {
+                        picking.current = false;
+                        setBusy(false);
+                      }
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Update picture for ${ea.name}`}
+                  >
+                    <Ionicons name="image-outline" size={16} color="#fff" />
+                    <Text style={styles.eaActionText}>
+                      {missingPic ? 'Add picture' : 'Change picture'}
+                    </Text>
+                  </Pressable>
+                  {isEditing ? (
+                    <Pressable
+                      style={styles.eaActionBtn}
+                      disabled={busy}
+                      onPress={async () => {
+                        setBusy(true);
+                        try {
+                          const updated = await updateEaBranding(ea.id, {
+                            name: editName,
+                          });
+                          setSavedMsg(
+                            updated
+                              ? `Renamed to “${updated.name}” — synced to all keys.`
+                              : 'Rename failed.',
+                          );
+                          setEditingId(null);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Save name for ${ea.name}`}
+                    >
+                      <Text style={styles.eaActionText}>Save name</Text>
+                    </Pressable>
+                  ) : (
+                    <Pressable
+                      style={styles.eaActionBtn}
+                      disabled={busy}
+                      onPress={() => {
+                        setEditingId(ea.id);
+                        setEditName(ea.name);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Rename ${ea.name}`}
+                    >
+                      <Text style={styles.eaActionText}>Rename</Text>
+                    </Pressable>
+                  )}
+                </View>
               </View>
-            </View>
-          ))}
+            );
+          })}
         </View>
       ) : null}
     </View>
@@ -492,14 +617,28 @@ const styles = StyleSheet.create({
   },
   saveText: { color: '#fff', fontWeight: '900', fontSize: 15, letterSpacing: 0.8 },
   msg: { color: '#86EFAC', fontSize: 13 },
+  eaRowWrap: {
+    gap: 8,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#1F2937',
+  },
   eaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#1F2937',
   },
   eaThumb: { width: 40, height: 40, borderRadius: 10 },
   eaName: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  eaActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  eaActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1F2937',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  eaActionText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 });

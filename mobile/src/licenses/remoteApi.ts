@@ -188,3 +188,107 @@ export async function lookupLicenseRemote(
     };
   }
 }
+
+export type EaRemoteResult = {
+  ok: boolean;
+  via?: string;
+  error?: string;
+  configured?: boolean;
+  ea?: StoredEa | null;
+  cascaded?: number;
+  pictureUri?: string | null;
+};
+
+/** Fetch managed EA branding by id (source of truth for Home). */
+export async function fetchEaRemote(eaId: string): Promise<EaRemoteResult> {
+  const id = String(eaId || '').trim();
+  if (!id) return { ok: false, error: 'ea id required' };
+  try {
+    const res = await fetch(`${apiBase()}/api/eas/get`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (res.status === 404 || data.ok === false) {
+      return {
+        ok: false,
+        error: String(data.error || 'EA not found'),
+        configured: data.configured !== false,
+      };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: String(data.error || `HTTP ${res.status}`),
+        configured: data.configured !== false,
+      };
+    }
+    const ea = (data.ea as StoredEa | null | undefined) ?? null;
+    return {
+      ok: true,
+      via: data.via ? String(data.via) : undefined,
+      ea,
+      configured: true,
+      pictureUri: ea?.pictureUri ?? null,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'eas/get unreachable',
+    };
+  }
+}
+
+/**
+ * Upsert managed EA branding and cascade name/picture to all license keys
+ * under that EA (server-side).
+ */
+export async function putEaBrandingRemote(
+  ea: StoredEa,
+): Promise<EaRemoteResult> {
+  try {
+    const res = await fetch(`${apiBase()}/api/eas/put`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        cascade: true,
+        ea: {
+          id: ea.id,
+          name: ea.name,
+          pictureUri: ea.pictureUri,
+          symbols: ea.symbols,
+          createdAt: ea.createdAt,
+        },
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: false,
+        error: String(data.error || `HTTP ${res.status}`),
+        configured: data.configured !== false,
+      };
+    }
+    const outEa = (data.ea as StoredEa | null | undefined) ?? null;
+    const pic =
+      (typeof data.picture_uri === 'string' ? data.picture_uri : null) ||
+      outEa?.pictureUri ||
+      null;
+    return {
+      ok: true,
+      via: data.via ? String(data.via) : undefined,
+      ea: outEa
+        ? { ...outEa, pictureUri: pic || outEa.pictureUri }
+        : { ...ea, pictureUri: pic || ea.pictureUri },
+      cascaded: typeof data.cascaded === 'number' ? data.cascaded : 0,
+      pictureUri: pic,
+      configured: true,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'eas/put unreachable',
+    };
+  }
+}
