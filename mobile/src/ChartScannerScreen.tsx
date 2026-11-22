@@ -1,6 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
-import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -1225,7 +1224,6 @@ export function ChartScannerScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" />
       <LinearGradient
         colors={['#0A0000', '#050505', '#000000']}
         locations={[0, 0.45, 1]}
