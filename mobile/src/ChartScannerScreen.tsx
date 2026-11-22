@@ -20,11 +20,8 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
-import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { EdgesBottomDock } from './EdgesBottomDock';
-import { loadMt5Token } from './brokers/mt5Token';
 import {
-  fetchScanStatus,
   normalizeScanResult,
   postChartScan,
 } from './scan/api';
@@ -835,12 +832,7 @@ export function ChartScannerScreen() {
   const params = useLocalSearchParams<{ proof?: string; demo?: string }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
-  const {
-    accent,
-    selected: quoteSymbols,
-    quoteSetups,
-    activeEa,
-  } = useAppState();
+  const { accent } = useAppState();
   const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
   const proofStarted = useRef(false);
@@ -855,9 +847,6 @@ export function ChartScannerScreen() {
   const [chartUri, setChartUri] = useState<string | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
-  const [autoEngineOpen, setAutoEngineOpen] = useState(false);
-  const [scanApiLive, setScanApiLive] = useState<boolean | null>(null);
-  const [mt5Token, setMt5Token] = useState<string | null>(null);
   const scanAbort = useRef<AbortController | null>(null);
   const [radarStatus, setRadarStatus] =
     useState<RadarStatus>('INITIALISING');
@@ -898,36 +887,6 @@ export function ChartScannerScreen() {
       return () => clearTimeout(t);
     }
   }, [chartUri, radarStatus]);
-
-  useEffect(() => {
-    let cancelled = false;
-    // Defer network so first paint isn't blocked / frozen on open
-    const kick = setTimeout(() => {
-      void (async () => {
-        try {
-          const st = await fetchScanStatus();
-          if (!cancelled) setScanApiLive(Boolean(st.configured));
-        } catch {
-          if (!cancelled) setScanApiLive(false);
-        }
-      })();
-    }, 0);
-    return () => {
-      cancelled = true;
-      clearTimeout(kick);
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const token = await loadMt5Token();
-      if (!cancelled) setMt5Token(token);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [autoEngineOpen]);
 
   const clearScanTimers = () => {
     scanTimers.current.forEach(clearTimeout);
@@ -1500,45 +1459,6 @@ export function ChartScannerScreen() {
           </View>
         ) : null}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Start Auto Trade Engine"
-          onPress={() => setAutoEngineOpen(true)}
-          style={({ pressed }) => [
-            styles.autoStartBtn,
-            {
-              borderColor: accent,
-              opacity: pressed ? 0.85 : 1,
-            },
-          ]}
-        >
-          <LinearGradient
-            colors={[
-              hexToRgba(accent, 0.55),
-              hexToRgba(accent, 0.18),
-              '#0A0000',
-            ]}
-            start={{ x: 0.15, y: 0 }}
-            end={{ x: 0.85, y: 1 }}
-            style={styles.autoStartGrad}
-          >
-            <Ionicons name="flash-outline" size={18} color={BASE.white} />
-            <Text style={styles.autoStartText}>Start Auto Trade</Text>
-          </LinearGradient>
-        </Pressable>
-        <Text style={styles.autoHint}>
-          Prefers Home Start/Stop · scans Quotes selected only · linked MT5 ·
-          M15→H1→M5→M1
-          {quoteSymbols.length
-            ? ` · ${quoteSymbols.length} symbol(s)`
-            : ' · pick Quotes on Home'}
-          {scanApiLive === true
-            ? ' · scan API live'
-            : scanApiLive === false
-              ? ' · scan API offline'
-              : ''}
-        </Text>
-
         {history.length > 0 ? (
           <View style={styles.historyBlock}>
             <Text style={styles.sectionLabel}>History</Text>
@@ -1749,18 +1669,6 @@ export function ChartScannerScreen() {
           ) : null}
         </View>
       </Modal>
-
-      <AutoTradeEngineOverlay
-        visible={autoEngineOpen}
-        accent={accent}
-        mt5Token={mt5Token}
-        symbols={quoteSymbols}
-        quoteSetups={quoteSetups}
-        botName={activeEa?.name}
-        lotSize={clampLot(parsePositive(lotRaw, 0.01, 1))}
-        trades={clampTrades(parsePositive(tradesRaw, 1, 3))}
-        onClose={() => setAutoEngineOpen(false)}
-      />
 
       <EdgesBottomDock />
     </View>
@@ -2107,29 +2015,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   tpChipVal: { color: BASE.white, fontSize: 13, fontWeight: '800' },
-  autoStartBtn: {
-    borderRadius: 14,
-    borderWidth: 1.5,
-    overflow: 'hidden',
-  },
-  autoStartGrad: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-  },
-  autoStartText: {
-    color: BASE.white,
-    fontWeight: '800',
-    fontSize: 15,
-  },
-  autoHint: {
-    color: BASE.dim,
-    fontSize: 11,
-    lineHeight: 15,
-    marginTop: -4,
-  },
   historyBlock: { gap: 8 },
   historyRow: {
     flexDirection: 'row',
