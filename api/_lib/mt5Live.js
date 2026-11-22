@@ -71,21 +71,74 @@ function extractError(data, status) {
 }
 
 /**
+ * Turn mt5rest/bridge noise into an actionable connect error.
+ * Keeps a short technical tail so support can still diagnose.
+ */
+function humanizeConnectError(raw, { server } = {}) {
+  const msg = String(raw || '').trim();
+  if (!msg) return 'MT5 connect failed';
+  const lower = msg.toLowerCase();
+  const srv = String(server || '').trim() || 'the broker server';
+  const tech = msg.length > 220 ? `${msg.slice(0, 220)}…` : msg;
+
+  if (/password.*(required|empty|missing)|empty password/i.test(msg)) {
+    return 'Trading password is required.';
+  }
+  if (/license\s*\/?\s*session|lic\d*\.mtapi\.io|license service/i.test(msg)) {
+    return `MT5 bridge license check failed while talking to ${srv}. The droplet mt5rest trial/license must reach lic*.mtapi.io — renew/activate the mtapi license on the broker API host, then retry. (${tech})`;
+  }
+  if (/wait \d+ milliseconds|refused a login on every cluster/i.test(msg)) {
+    return `Broker ${srv} is temporarily refusing logins (rate limit after failed attempts). Wait a few seconds, confirm the trading password, then retry.`;
+  }
+  if (/build-6000|needs the build|refused the legacy login/i.test(msg)) {
+    return `Broker ${srv} requires modern MT5 (build 6000+ / fb80) login. Update the mt5rest droplet image, then retry with the trading password. (${tech})`;
+  }
+  if (
+    /fb80 handshake|waiting fc reply|waiting hello reply|connect deadline elapsed|timeout at stage/i.test(
+      msg,
+    )
+  ) {
+    return `Could not finish the MT5 handshake with ${srv}. Check the trading password (not investor). If the password is correct, the broker may be closing API/bridge connections — ask RCG to allowlist the bridge IP, or retry later. (${tech})`;
+  }
+  if (/server not found|invalid server/i.test(msg)) {
+    return `MT5 server name not found. Use the exact terminal name (e.g. RCGMarkets-Real). (${tech})`;
+  }
+  if (/invalid.*(password|account|login)|auth|unauthorized|wrong password/i.test(lower)) {
+    return `Login rejected for ${srv}. Use the trading password (not investor) and confirm login number.`;
+  }
+  return tech;
+}
+
+/**
  * Connect live MT5 → session token.
  * mt5rest: GET /ConnectEx?user&password&server
  * bridge:  POST /api/mt5/connect { user, password, server }
  */
 async function connectLiveMt5({ user, password, server }) {
+  const userStr = String(user || '').trim();
+  const passStr = String(password ?? '');
+  const serverStr = String(server || '').trim();
+  if (!passStr.trim()) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Trading password is required.',
+    };
+  }
+
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 22000);
+  // ConnectEx may run up to ~45s (cluster members + nearest ping).
+  const t = setTimeout(() => ctrl.abort(), 55000);
   try {
     let res;
     if (isMt5Rest()) {
       const qs = new URLSearchParams({
-        user: String(user).trim(),
-        password: String(password),
-        server: String(server).trim(),
-        connectTimeoutSeconds: '15',
+        user: userStr,
+        password: passStr,
+        server: serverStr,
+        connectTimeoutSeconds: '45',
+        connectTimeoutClusterMemberSeconds: '20',
+        connectToNearestByPing: 'true',
         errorReplyStatusCode: '400',
       });
       res = await fetch(`${mt5Root()}/ConnectEx?${qs.toString()}`, {
@@ -101,9 +154,9 @@ async function connectLiveMt5({ user, password, server }) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          user: String(user).trim(),
-          password: String(password),
-          server: String(server).trim(),
+          user: userStr,
+          password: passStr,
+          server: serverStr,
         }),
         signal: ctrl.signal,
       });
@@ -113,7 +166,9 @@ async function connectLiveMt5({ user, password, server }) {
       return {
         ok: false,
         status: res.status,
-        error: extractError(data, res.status),
+        error: humanizeConnectError(extractError(data, res.status), {
+          server: serverStr,
+        }),
       };
     }
     const token = extractToken(data);
@@ -121,7 +176,10 @@ async function connectLiveMt5({ user, password, server }) {
       return {
         ok: false,
         status: 502,
-        error: token || extractError(data, res.status) || 'No session token returned',
+        error: humanizeConnectError(
+          token || extractError(data, res.status) || 'No session token returned',
+          { server: serverStr },
+        ),
       };
     }
     return { ok: true, token };
@@ -130,9 +188,11 @@ async function connectLiveMt5({ user, password, server }) {
       ok: false,
       status: 502,
       error:
-        err instanceof Error
-          ? `MT5 bridge unreachable: ${err.message}`
-          : 'MT5 bridge unreachable',
+        err instanceof Error && err.name === 'AbortError'
+          ? `MT5 connect timed out talking to ${serverStr || 'broker'}. Check trading password and bridge health.`
+          : err instanceof Error
+            ? `MT5 bridge unreachable: ${err.message}`
+            : 'MT5 bridge unreachable',
     };
   } finally {
     clearTimeout(t);
