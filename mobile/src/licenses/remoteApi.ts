@@ -91,6 +91,11 @@ export async function putLicenseRemote(
           createdAt: key.createdAt,
           eaPictureUri: key.eaPictureUri,
           eaSymbols: key.eaSymbols,
+          assigneeName: key.assigneeName ?? null,
+          assigneeEmail: key.assigneeEmail ?? null,
+          issuedByEmail: key.issuedByEmail ?? null,
+          status: key.status || 'unused',
+          activatedAt: key.activatedAt ?? null,
         },
         ea: ea
           ? {

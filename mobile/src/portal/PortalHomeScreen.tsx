@@ -10,15 +10,21 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ACCENTS, SYMBOLS, useAppState } from '../AppState';
+import { useAppState } from '../AppState';
 import { ManageEasPanel } from './ManageEasPanel';
 import { LicenseKeysPanel } from './LicenseKeysPanel';
 import { ProfilePanel } from './ProfilePanel';
+import { CommissionPanel } from './panels/CommissionPanel';
+import { DashboardPanel } from './panels/DashboardPanel';
+import { MentorsPanel } from './panels/MentorsPanel';
+import { SelfHostingPanel } from './panels/SelfHostingPanel';
+import { SettingsBrokersPanel } from './panels/SettingsBrokersPanel';
+import { SignalDirectionPanel } from './panels/SignalDirectionPanel';
+import { TopMentorsPanel } from './panels/TopMentorsPanel';
 
 const BG = '#0B0E14';
 const SIDE = '#0D0F16';
 const GLOW = '#5EC8FF';
-const ACCENT = '#7C5CFF';
 
 /** Exact order from mentor-sidebar-ref.jpg */
 const NAV = [
@@ -39,16 +45,7 @@ type NavId = (typeof NAV)[number]['id'];
 export function PortalHomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ section?: string }>();
-  const {
-    mentor,
-    setMentor,
-    status,
-    setStatus,
-    selected,
-    setSelected,
-    accent,
-    setAccent,
-  } = useAppState();
+  const { mentor, setMentor, accent, setAccent } = useAppState();
   /** Closed by default — user opens via corner logo. */
   const [menuOpen, setMenuOpen] = useState(false);
   const [section, setSection] = useState<NavId>('dashboard');
@@ -115,74 +112,27 @@ export function PortalHomeScreen() {
         </Text>
         <Text style={styles.brandLine}>Edges · Lumo Edge Pro</Text>
 
-        {section === 'manage-eas' ? (
+        {section === 'dashboard' ? (
+          <DashboardPanel />
+        ) : section === 'mentors' ? (
+          <MentorsPanel />
+        ) : section === 'top-mentors' ? (
+          <TopMentorsPanel />
+        ) : section === 'manage-eas' ? (
           <ManageEasPanel />
         ) : section === 'license-keys' ? (
           <LicenseKeysPanel />
         ) : section === 'profile' ? (
           <ProfilePanel mentor={mentor} />
-        ) : section === 'dashboard' ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>EA session control</Text>
-            <Text style={styles.meta}>status: {status}</Text>
-            <View style={styles.row}>
-              <Action label="Start" onPress={() => setStatus('running')} />
-              <Action label="Stop" onPress={() => setStatus('stopped')} />
-              <Action label="Remove" onPress={() => setStatus('removed')} />
-            </View>
-            <Text style={[styles.cardTitle, { marginTop: 14 }]}>Theme accent</Text>
-            <View style={styles.swatches}>
-              {ACCENTS.map((c) => (
-                <Pressable
-                  key={c.id}
-                  onPress={() => setAccent(c.value)}
-                  style={[
-                    styles.swatch,
-                    {
-                      backgroundColor: c.value,
-                      borderColor: accent === c.value ? '#fff' : 'transparent',
-                    },
-                  ]}
-                />
-              ))}
-            </View>
-            <Text style={[styles.cardTitle, { marginTop: 14 }]}>Symbols</Text>
-            <View style={styles.chips}>
-              {SYMBOLS.slice(0, 12).map((s) => {
-                const on = selected.includes(s);
-                return (
-                  <Pressable
-                    key={s}
-                    onPress={() =>
-                      setSelected(
-                        on ? selected.filter((x) => x !== s) : [...selected, s],
-                      )
-                    }
-                    style={[
-                      styles.chip,
-                      on && {
-                        backgroundColor: 'rgba(124,92,255,0.25)',
-                        borderColor: ACCENT,
-                      },
-                    ]}
-                  >
-                    <Text style={styles.chipText}>{s}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>
-              {NAV.find((n) => n.id === section)?.label}
-            </Text>
-            <Text style={styles.meta}>
-              Mock {section.replace(/-/g, ' ')} screen — Edges / Lumo Edge Pro.
-              Wire live data later.
-            </Text>
-          </View>
-        )}
+        ) : section === 'settings' ? (
+          <SettingsBrokersPanel />
+        ) : section === 'mentor-commission' ? (
+          <CommissionPanel />
+        ) : section === 'self-hosting' ? (
+          <SelfHostingPanel />
+        ) : section === 'add-signal-direction' ? (
+          <SignalDirectionPanel />
+        ) : null}
       </ScrollView>
 
       {menuOpen ? (
@@ -276,14 +226,6 @@ export function PortalHomeScreen() {
   );
 }
 
-function Action({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={styles.action}>
-      <Text style={styles.actionText}>{label}</Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG },
   topBar: {
@@ -325,43 +267,6 @@ const styles = StyleSheet.create({
   h1: { color: '#fff', fontSize: 24, fontWeight: '800' },
   meta: { color: '#9CA3AF', fontSize: 13 },
   brandLine: { color: '#6B7280', fontSize: 12, marginTop: 2 },
-  card: {
-    marginTop: 8,
-    backgroundColor: '#12151C',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 14,
-    gap: 10,
-  },
-  cardTitle: { color: '#fff', fontWeight: '700', fontSize: 15 },
-  row: { flexDirection: 'row', gap: 8 },
-  action: {
-    flex: 1,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: ACCENT,
-    backgroundColor: 'rgba(124,92,255,0.18)',
-    paddingVertical: 10,
-    alignItems: 'center',
-  },
-  actionText: { color: '#fff', fontWeight: '700' },
-  swatches: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  swatch: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 2,
-  },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    borderWidth: 1,
-    borderColor: '#374151',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  chipText: { color: '#E5E7EB', fontSize: 11, fontWeight: '600' },
   drawerScrim: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.55)',

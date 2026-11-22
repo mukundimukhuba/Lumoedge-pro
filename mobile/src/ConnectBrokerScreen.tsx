@@ -565,6 +565,15 @@ export function ConnectBrokerScreen() {
           server: server.trim(),
           login: login.trim(),
         });
+        // Best-effort: record for Mentors Portal Settings broker counts
+        void import('./portal/data/portalStats').then(({ recordBrokerConnection }) =>
+          recordBrokerConnection({
+            id: `bc_${mt5Id}`,
+            broker: selected,
+            server: server.trim(),
+            login: login.trim(),
+          }),
+        );
         // Account fetched live via poll — never trust seeded connect payload
         setAccount(null);
       } catch {
