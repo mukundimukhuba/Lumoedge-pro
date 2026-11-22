@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -145,14 +146,21 @@ export function PortalHomeScreen() {
         ) : null}
       </ScrollView>
 
-      {menuOpen ? (
-        <View style={styles.drawerScrim}>
+      <Modal
+        visible={menuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuOpen(false)}
+        statusBarTranslucent
+      >
+        <View style={styles.drawerRoot}>
           <Pressable
-            style={StyleSheet.absoluteFill}
+            style={styles.drawerScrim}
             onPress={() => setMenuOpen(false)}
-            accessibilityLabel="close menu scrim"
+            accessibilityRole="button"
+            accessibilityLabel="Close menu"
           />
-          <View style={styles.drawer}>
+          <View style={styles.drawer} accessibilityViewIsModal>
             <View style={styles.drawerHead}>
               <Image
                 source={cornerLogo}
@@ -171,7 +179,9 @@ export function PortalHomeScreen() {
                 <Ionicons name="close" size={18} color="#E5E7EB" />
               </Pressable>
               <Pressable
-                onPress={() => setAccent(accent === '#FF0000' ? '#3EE0FF' : '#FF0000')}
+                onPress={() =>
+                  setAccent(accent === '#FF0000' ? '#3EE0FF' : '#FF0000')
+                }
                 style={styles.headBtn}
                 accessibilityLabel="toggle theme"
                 hitSlop={6}
@@ -221,7 +231,10 @@ export function PortalHomeScreen() {
               })}
               <View style={styles.sep} />
               <Pressable
-                onPress={logout}
+                onPress={() => {
+                  setMenuOpen(false);
+                  logout();
+                }}
                 style={styles.navItem}
                 accessibilityRole="button"
                 accessibilityLabel="Logout"
@@ -231,7 +244,7 @@ export function PortalHomeScreen() {
             </ScrollView>
           </View>
         </View>
-      ) : null}
+      </Modal>
     </View>
   );
 }
@@ -312,19 +325,31 @@ const styles = StyleSheet.create({
   h1: { color: '#fff', fontSize: 24, fontWeight: '800' },
   meta: { color: '#9CA3AF', fontSize: 13 },
   brandLine: { color: '#6B7280', fontSize: 12, marginTop: 2 },
-  drawerScrim: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+  drawerRoot: {
+    flex: 1,
     flexDirection: 'row',
+    backgroundColor: 'transparent',
+  },
+  drawerScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.72)',
   },
   drawer: {
-    width: '78%',
+    width: '82%',
+    maxWidth: 340,
     height: '100%',
-    backgroundColor: SIDE,
-    paddingTop: 52,
+    backgroundColor: '#0B0E14',
+    paddingTop: 56,
     paddingHorizontal: 14,
     borderRightWidth: 1,
     borderRightColor: '#1F2937',
+    zIndex: 2,
+    elevation: 24,
+    // Solid opaque panel — no bleed-through of dashboard text
+    shadowColor: '#000',
+    shadowOpacity: 0.55,
+    shadowRadius: 18,
+    shadowOffset: { width: 4, height: 0 },
   },
   drawerHead: {
     flexDirection: 'row',
