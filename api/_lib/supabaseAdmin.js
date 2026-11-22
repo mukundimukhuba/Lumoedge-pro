@@ -348,6 +348,115 @@ function stripDataUrl(uri) {
   return uri;
 }
 
+function parseDataUrlImage(dataUrl) {
+  const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(
+    String(dataUrl || ''),
+  );
+  if (!m) return null;
+  const mime = m[1];
+  const b64 = m[2];
+  let buffer;
+  try {
+    buffer = Buffer.from(b64, 'base64');
+  } catch {
+    return null;
+  }
+  if (!buffer.length) return null;
+  const ext = /png/i.test(mime) ? 'png' : /webp/i.test(mime) ? 'webp' : 'jpg';
+  return { mime, buffer, ext };
+}
+
+/**
+ * Upload raw bytes to ea-pictures (service role). Used for EA logos so
+ * license rows store a public http URL instead of stripping data: URLs.
+ */
+async function storagePutBytes(objectPath, buffer, contentType) {
+  await ensureEaPicturesBucket();
+  const { url, serviceKey } = getSupabaseAdmin();
+  const attempts = [
+    { method: 'POST', upsert: false },
+    { method: 'POST', upsert: true },
+    { method: 'PUT', upsert: true },
+  ];
+  let lastStatus = 0;
+  let lastText = '';
+  for (const attempt of attempts) {
+    const headers = {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': contentType || 'application/octet-stream',
+    };
+    if (attempt.upsert) headers['x-upsert'] = 'true';
+    const res = await fetch(
+      `${url}/storage/v1/object/ea-pictures/${objectPath}`,
+      {
+        method: attempt.method,
+        headers,
+        body: buffer,
+      },
+    );
+    const text = await res.text();
+    lastStatus = res.status;
+    lastText = text;
+    if (res.ok) return true;
+    if (
+      res.status === 400 ||
+      res.status === 409 ||
+      /already|exists|Duplicate|ResourceAlreadyExists/i.test(text)
+    ) {
+      continue;
+    }
+    if (isRlsDenied(res.status, text, null)) {
+      const kind = getSupabaseAdmin().serviceKeyKind;
+      const err = new Error(
+        `storage put bytes RLS denied (${res.status}; keyKind=${kind}): ${text.slice(0, 160)}`,
+      );
+      err.code = 'STORAGE_RLS';
+      err.keyKind = kind;
+      throw err;
+    }
+  }
+  const err = new Error(
+    `storage put bytes failed (${lastStatus}): ${String(lastText).slice(0, 180)}`,
+  );
+  err.code = 'STORAGE_PUT';
+  throw err;
+}
+
+function publicObjectUrl(objectPath) {
+  const { url } = getSupabaseAdmin();
+  return `${url}/storage/v1/object/public/ea-pictures/${objectPath}`;
+}
+
+/**
+ * Turn a picture URI into a durable public URL.
+ * - http(s)/file paths pass through
+ * - data: image URLs are uploaded to ea-pictures/{objectBase}.jpg|png
+ * - on upload failure, returns null (never persist giant data URLs in rows)
+ */
+async function resolvePictureUri(objectBase, uri) {
+  if (!uri) return null;
+  const s = String(uri);
+  if (/^https?:\/\//i.test(s) || s.startsWith('file:') || s.startsWith('/')) {
+    return s;
+  }
+  if (!s.startsWith('data:')) return null;
+  const parsed = parseDataUrlImage(s);
+  if (!parsed) return null;
+  const objectPath = `${objectBase}.${parsed.ext}`;
+  try {
+    await storagePutBytes(objectPath, parsed.buffer, parsed.mime);
+    return publicObjectUrl(objectPath);
+  } catch (err) {
+    console.warn(
+      '[edges] resolvePictureUri upload failed',
+      objectBase,
+      String(err?.message || err).slice(0, 160),
+    );
+    return null;
+  }
+}
+
 module.exports = {
   getSupabaseAdmin,
   classifyKeyKind,
@@ -355,7 +464,9 @@ module.exports = {
   sbFetch,
   storagePutJson,
   storageGetJson,
+  storagePutBytes,
   ensureEaPicturesBucket,
   probeStorageWrite,
   stripDataUrl,
+  resolvePictureUri,
 };

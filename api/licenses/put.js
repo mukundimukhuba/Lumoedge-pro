@@ -4,6 +4,7 @@ const {
   normalizeLicenseKey,
   sbFetch,
   storagePutJson,
+  resolvePictureUri,
   stripDataUrl,
 } = require('../_lib/supabaseAdmin');
 
@@ -12,7 +13,8 @@ const {
  * Body: { ea?: {...}, key: {...} }
  * Writes EA + license key to Supabase tables when present; otherwise
  * durable Storage fallback under ea-pictures/catalog/.
- * Surfaces errors so Mentors Portal can show sync failures.
+ * Data-URL logos are uploaded to Storage and stored as public http URLs
+ * (never stripped to null without attempting upload).
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -55,29 +57,50 @@ module.exports = async function handler(req, res) {
     return json(res, 400, { ok: false, error: 'Invalid license key format' });
   }
 
-  const ea = eaIn
-    ? {
-        id: String(eaIn.id),
-        name: String(eaIn.name || keyIn.eaName || 'EA'),
-        picture_uri: stripDataUrl(eaIn.pictureUri || eaIn.picture_uri),
-        symbols: Array.isArray(eaIn.symbols) ? eaIn.symbols : [],
-        created_at: eaIn.createdAt || eaIn.created_at || new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-    : {
-        id: String(keyIn.eaId || keyIn.ea_id || ''),
-        name: String(keyIn.eaName || keyIn.ea_name || 'EA'),
-        picture_uri: stripDataUrl(keyIn.eaPictureUri || keyIn.ea_picture_uri),
-        symbols: Array.isArray(keyIn.eaSymbols || keyIn.ea_symbols)
-          ? keyIn.eaSymbols || keyIn.ea_symbols
-          : [],
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-  if (!ea.id) {
+  const eaId = String(
+    (eaIn && (eaIn.id || eaIn.eaId)) || keyIn.eaId || keyIn.ea_id || '',
+  );
+  if (!eaId) {
     return json(res, 400, { ok: false, error: 'ea id is required' });
   }
+
+  const rawEaPic =
+    (eaIn && (eaIn.pictureUri || eaIn.picture_uri)) ||
+    keyIn.eaPictureUri ||
+    keyIn.ea_picture_uri ||
+    null;
+  const rawKeyPic =
+    keyIn.eaPictureUri || keyIn.ea_picture_uri || rawEaPic || null;
+
+  // Upload data: logos → public URLs before any strip/row write.
+  const [eaPictureResolved, keyPictureResolved] = await Promise.all([
+    resolvePictureUri(`eas/${eaId}`, rawEaPic),
+    resolvePictureUri(`keys/${String(keyIn.id)}`, rawKeyPic),
+  ]);
+  const durableEaPic =
+    eaPictureResolved || keyPictureResolved || stripDataUrl(rawEaPic);
+  const durableKeyPic =
+    keyPictureResolved || eaPictureResolved || stripDataUrl(rawKeyPic);
+
+  const ea = {
+    id: eaId,
+    name: String(
+      (eaIn && (eaIn.name || eaIn.eaName)) ||
+        keyIn.eaName ||
+        keyIn.ea_name ||
+        'EA',
+    ),
+    picture_uri: durableEaPic,
+    symbols: Array.isArray(eaIn && (eaIn.symbols || eaIn.eaSymbols))
+      ? eaIn.symbols || eaIn.eaSymbols
+      : Array.isArray(keyIn.eaSymbols || keyIn.ea_symbols)
+        ? keyIn.eaSymbols || keyIn.ea_symbols
+        : [],
+    created_at:
+      (eaIn && (eaIn.createdAt || eaIn.created_at)) ||
+      new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
 
   const keyRow = {
     id: String(keyIn.id),
@@ -86,9 +109,7 @@ module.exports = async function handler(req, res) {
     key: String(keyIn.key),
     key_normalized: keyNorm,
     created_at: keyIn.createdAt || keyIn.created_at || new Date().toISOString(),
-    ea_picture_uri: stripDataUrl(
-      keyIn.eaPictureUri || keyIn.ea_picture_uri || ea.picture_uri,
-    ),
+    ea_picture_uri: durableKeyPic,
     ea_symbols: Array.isArray(keyIn.eaSymbols || keyIn.ea_symbols)
       ? keyIn.eaSymbols || keyIn.ea_symbols
       : ea.symbols,
@@ -137,6 +158,8 @@ module.exports = async function handler(req, res) {
           via: 'table',
           key_normalized: keyNorm,
           configured: true,
+          ea_picture_uri: durableEaPic,
+          key_picture_uri: durableKeyPic,
         });
       }
       tableError =
@@ -162,6 +185,8 @@ module.exports = async function handler(req, res) {
       configured: true,
       serviceKeyKind: admin.serviceKeyKind,
       tableError: tableError || undefined,
+      ea_picture_uri: durableEaPic,
+      key_picture_uri: durableKeyPic,
       hint:
         tableError && /PGRST205|schema cache|does not exist/i.test(tableError)
           ? 'Tables missing — wrote to Storage. Apply supabase/migrations/*.sql for relational sync.'

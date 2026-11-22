@@ -489,21 +489,103 @@ async function pushRemoteCatalog(
   }
 }
 
-/** Explicitly sync one newly generated key; returns write status for UI. */
+export type SyncIssuedResult = CatalogPushResult & {
+  /** Durable public URLs after upload (prefer these over data: locally). */
+  eaPictureUri?: string | null;
+  keyPictureUri?: string | null;
+  key?: StoredLicenseKey;
+  ea?: StoredEa | null;
+};
+
+/**
+ * Explicitly sync one newly generated key; returns write status for UI.
+ * Uploads data: logos (client + server) so Activate/Home get http URLs
+ * instead of null after stripDataUrl.
+ */
 export async function syncIssuedLicenseRemote(
   key: StoredLicenseKey,
   ea?: StoredEa | null,
-): Promise<CatalogPushResult> {
+): Promise<SyncIssuedResult> {
   try {
+    // Client-side upload first (anon) so put body is already http when possible.
+    const [eaPic, keyPic] = await Promise.all([
+      persistPictureRemote(
+        `eas/${ea?.id || key.eaId}`,
+        ea?.pictureUri || key.eaPictureUri || null,
+      ),
+      persistPictureRemote(
+        `keys/${key.id}`,
+        key.eaPictureUri || ea?.pictureUri || null,
+      ),
+    ]);
+    const eaOut: StoredEa | null = ea
+      ? { ...ea, pictureUri: eaPic || ea.pictureUri }
+      : ea ?? null;
+    const keyOut: StoredLicenseKey = {
+      ...key,
+      eaPictureUri: keyPic || eaPic || key.eaPictureUri,
+    };
+
     const { putLicenseRemote } = await import('./licenses/remoteApi');
-    const result = await putLicenseRemote(key, ea || null);
+    const result = await putLicenseRemote(keyOut, eaOut);
     if (result.ok) {
-      return { ok: true, via: result.via, hint: result.hint };
+      const durableKeyPic =
+        result.keyPictureUri ||
+        result.eaPictureUri ||
+        (keyOut.eaPictureUri?.startsWith('http') ? keyOut.eaPictureUri : null) ||
+        keyOut.eaPictureUri;
+      const durableEaPic =
+        result.eaPictureUri ||
+        result.keyPictureUri ||
+        (eaOut?.pictureUri?.startsWith('http') ? eaOut.pictureUri : null) ||
+        eaOut?.pictureUri ||
+        durableKeyPic;
+      // Keep memory/disk pointing at durable URLs so Activate sees the logo.
+      if (durableKeyPic || durableEaPic) {
+        const nextKeys = memoryKeys.map((k) =>
+          k.id === keyOut.id || licenseKeysMatch(k.key, keyOut.key)
+            ? { ...k, eaPictureUri: durableKeyPic || k.eaPictureUri }
+            : k,
+        );
+        const nextEas = memoryEas.map((e) =>
+          e.id === keyOut.eaId
+            ? { ...e, pictureUri: durableEaPic || e.pictureUri }
+            : e,
+        );
+        memoryKeys = nextKeys.length ? nextKeys : memoryKeys;
+        memoryEas = nextEas.length ? nextEas : memoryEas;
+        try {
+          await saveLicenseCatalog(
+            memoryEas,
+            memoryKeys.map((k) =>
+              k.id === keyOut.id
+                ? { ...k, eaPictureUri: durableKeyPic || k.eaPictureUri }
+                : k,
+            ),
+            { broadcast: false, skipRemote: true },
+          );
+        } catch {
+          /* memory already updated */
+        }
+      }
+      return {
+        ok: true,
+        via: result.via,
+        hint: result.hint,
+        eaPictureUri: durableEaPic,
+        keyPictureUri: durableKeyPic,
+        key: { ...keyOut, eaPictureUri: durableKeyPic || keyOut.eaPictureUri },
+        ea: eaOut
+          ? { ...eaOut, pictureUri: durableEaPic || eaOut.pictureUri }
+          : null,
+      };
     }
     return {
       ok: false,
       error: result.error || 'Remote write failed',
       hint: result.hint || result.tableError,
+      key: keyOut,
+      ea: eaOut,
     };
   } catch (err) {
     return {
