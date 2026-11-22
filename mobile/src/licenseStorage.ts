@@ -31,6 +31,11 @@ export type StoredLicenseKey = {
   createdAt: string;
   eaPictureUri: string | null;
   eaSymbols: string[];
+  assigneeName?: string | null;
+  assigneeEmail?: string | null;
+  issuedByEmail?: string | null;
+  status?: string | null;
+  activatedAt?: string | null;
 };
 
 /**
@@ -239,14 +244,36 @@ function rowToEa(row: Record<string, unknown>): StoredEa {
 function rowToKey(row: Record<string, unknown>): StoredLicenseKey {
   return {
     id: String(row.id),
-    eaId: String(row.ea_id),
-    eaName: String(row.ea_name ?? ''),
+    eaId: String(row.ea_id ?? row.eaId ?? ''),
+    eaName: String(row.ea_name ?? row.eaName ?? ''),
     key: String(row.key),
-    createdAt: String(row.created_at ?? new Date().toISOString()),
-    eaPictureUri: (row.ea_picture_uri as string | null) ?? null,
+    createdAt: String(row.created_at ?? row.createdAt ?? new Date().toISOString()),
+    eaPictureUri:
+      (row.ea_picture_uri as string | null) ??
+      (row.eaPictureUri as string | null) ??
+      null,
     eaSymbols: Array.isArray(row.ea_symbols)
       ? (row.ea_symbols as string[])
-      : [],
+      : Array.isArray(row.eaSymbols)
+        ? (row.eaSymbols as string[])
+        : [],
+    assigneeName:
+      (row.assignee_name as string | null) ??
+      (row.assigneeName as string | null) ??
+      null,
+    assigneeEmail:
+      (row.assignee_email as string | null) ??
+      (row.assigneeEmail as string | null) ??
+      null,
+    issuedByEmail:
+      (row.issued_by_email as string | null) ??
+      (row.issuedByEmail as string | null) ??
+      null,
+    status: (row.status as string | null) ?? 'unused',
+    activatedAt:
+      (row.activated_at as string | null) ??
+      (row.activatedAt as string | null) ??
+      null,
   };
 }
 
@@ -429,6 +456,11 @@ async function pushRemoteCatalog(
       created_at: k.createdAt,
       ea_picture_uri: k.eaPictureUri,
       ea_symbols: k.eaSymbols ?? [],
+      assignee_name: k.assigneeName ?? null,
+      assignee_email: k.assigneeEmail ?? null,
+      issued_by_email: k.issuedByEmail ?? null,
+      status: k.status || 'unused',
+      activated_at: k.activatedAt ?? null,
     }));
 
     if (eaRows.length) {

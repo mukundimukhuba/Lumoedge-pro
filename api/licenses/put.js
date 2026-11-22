@@ -92,6 +92,11 @@ module.exports = async function handler(req, res) {
     ea_symbols: Array.isArray(keyIn.eaSymbols || keyIn.ea_symbols)
       ? keyIn.eaSymbols || keyIn.ea_symbols
       : ea.symbols,
+    assignee_name: keyIn.assigneeName || keyIn.assignee_name || null,
+    assignee_email: keyIn.assigneeEmail || keyIn.assignee_email || null,
+    issued_by_email: keyIn.issuedByEmail || keyIn.issued_by_email || null,
+    status: keyIn.status || 'unused',
+    activated_at: keyIn.activatedAt || keyIn.activated_at || null,
   };
 
   // 1) Prefer relational tables when the schema is applied.

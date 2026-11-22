@@ -1,0 +1,219 @@
+/**
+ * Mentors Portal data helpers — prefer Supabase, fall back to local AsyncStorage.
+ */
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSupabase } from '../../supabase/client';
+import type { MentorSession } from '../../auth/mentorAuth';
+
+const LOCAL_PROFILES_KEY = 'edges-mentor-profiles-v1';
+
+export type MentorProfileRow = {
+  email: string;
+  mentorName: string;
+  name: string;
+  contact: string;
+  status: 'pending' | 'approved' | 'declined' | 'demo';
+  keyAllotment: number;
+  createdAt: string;
+  passwordHash?: string;
+};
+
+type LocalStored = {
+  email: string;
+  mentorName: string;
+  name: string;
+  contact: string;
+  createdAt: string;
+  status: MentorProfileRow['status'];
+  passwordHash?: string;
+  keyAllotment?: number;
+};
+
+function rowFromDb(r: Record<string, unknown>): MentorProfileRow {
+  const statusRaw = String(r.status || 'pending');
+  const status: MentorProfileRow['status'] =
+    statusRaw === 'approved' ||
+    statusRaw === 'declined' ||
+    statusRaw === 'demo'
+      ? statusRaw
+      : 'pending';
+  return {
+    email: String(r.email || '').toLowerCase(),
+    mentorName: String(r.mentor_name ?? r.mentorName ?? ''),
+    name: String(r.name ?? ''),
+    contact: String(r.contact ?? ''),
+    status,
+    keyAllotment: Number(r.key_allotment ?? r.keyAllotment ?? 0) || 0,
+    createdAt: String(r.created_at ?? r.createdAt ?? new Date().toISOString()),
+    passwordHash: r.password_hash ? String(r.password_hash) : undefined,
+  };
+}
+
+async function loadLocalProfiles(): Promise<MentorProfileRow[]> {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_PROFILES_KEY);
+    if (!raw) return [];
+    const map = JSON.parse(raw) as Record<string, LocalStored>;
+    return Object.values(map || {}).map((p) => ({
+      email: String(p.email || '').toLowerCase(),
+      mentorName: p.mentorName || '',
+      name: p.name || '',
+      contact: p.contact || '',
+      status: p.status || 'pending',
+      keyAllotment: Number(p.keyAllotment || 0) || 0,
+      createdAt: p.createdAt || new Date().toISOString(),
+      passwordHash: p.passwordHash,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function patchLocalProfile(
+  email: string,
+  patch: Partial<LocalStored>,
+): Promise<void> {
+  try {
+    const raw = await AsyncStorage.getItem(LOCAL_PROFILES_KEY);
+    const map = raw
+      ? (JSON.parse(raw) as Record<string, LocalStored>)
+      : {};
+    const key = email.trim().toLowerCase();
+    const prev = map[key];
+    if (!prev) return;
+    map[key] = { ...prev, ...patch, email: key };
+    await AsyncStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(map));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function listMentorProfiles(): Promise<MentorProfileRow[]> {
+  const local = await loadLocalProfiles();
+  const sb = getSupabase();
+  if (!sb) return local.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  try {
+    const { data, error } = await sb
+      .from('mentor_profiles')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error || !data) return local;
+
+    const remote = data.map((r) => rowFromDb(r as Record<string, unknown>));
+    const byEmail = new Map<string, MentorProfileRow>();
+    for (const row of local) byEmail.set(row.email, row);
+    for (const row of remote) {
+      const prev = byEmail.get(row.email);
+      byEmail.set(row.email, prev ? { ...prev, ...row } : row);
+    }
+    return [...byEmail.values()].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    );
+  } catch {
+    return local;
+  }
+}
+
+export async function upsertMentorProfile(input: {
+  email: string;
+  mentorName: string;
+  name: string;
+  contact: string;
+  status: MentorProfileRow['status'];
+  passwordHash?: string;
+  keyAllotment?: number;
+  createdAt?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const email = input.email.trim().toLowerCase();
+  const payload = {
+    email,
+    mentor_name: input.mentorName.trim(),
+    name: input.name.trim(),
+    contact: input.contact.trim(),
+    status: input.status,
+    password_hash: input.passwordHash || null,
+    key_allotment: Number(input.keyAllotment || 0) || 0,
+    created_at: input.createdAt || new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const sb = getSupabase();
+  if (!sb) return { ok: true };
+
+  try {
+    const { error } = await sb.from('mentor_profiles').upsert(payload, {
+      onConflict: 'email',
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function setMentorStatus(
+  email: string,
+  status: 'approved' | 'declined' | 'pending',
+  keyAllotment?: number,
+): Promise<{ ok: boolean; error?: string }> {
+  const key = email.trim().toLowerCase();
+  await patchLocalProfile(key, {
+    status,
+    ...(typeof keyAllotment === 'number' ? { keyAllotment } : {}),
+  });
+
+  const sb = getSupabase();
+  if (!sb) return { ok: true };
+
+  try {
+    const patch: Record<string, unknown> = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    if (typeof keyAllotment === 'number') {
+      patch.key_allotment = Math.max(0, Math.floor(keyAllotment));
+    }
+    const { error } = await sb
+      .from('mentor_profiles')
+      .update(patch)
+      .eq('email', key);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function setMentorAllotment(
+  email: string,
+  keyAllotment: number,
+): Promise<{ ok: boolean; error?: string }> {
+  return setMentorStatus(
+    email,
+    'approved',
+    Math.max(0, Math.floor(keyAllotment)),
+  );
+}
+
+export function sessionFromProfile(p: MentorProfileRow): MentorSession {
+  return {
+    email: p.email,
+    mentorName: p.mentorName,
+    name: p.name,
+    contact: p.contact,
+    createdAt: p.createdAt,
+    status:
+      p.status === 'demo'
+        ? 'demo'
+        : p.status === 'approved'
+          ? 'approved'
+          : 'pending',
+  };
+}

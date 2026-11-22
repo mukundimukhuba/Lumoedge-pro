@@ -3,6 +3,7 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { useAppState } from '../AppState';
@@ -10,10 +11,16 @@ import { fetchLicenseStatus } from '../licenses/remoteApi';
 
 const ACCENT = '#7C5CFF';
 
+function isValidEmail(v: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
+}
+
 export function LicenseKeysPanel() {
-  const { eas, licenseKeys, generateLicenseKey, refreshLicenseCatalog } =
+  const { eas, licenseKeys, generateLicenseKey, refreshLicenseCatalog, mentor } =
     useAppState();
   const [eaId, setEaId] = useState<string>(eas[0]?.id ?? '');
+  const [assigneeName, setAssigneeName] = useState('');
+  const [assigneeEmail, setAssigneeEmail] = useState('');
   const [flash, setFlash] = useState('');
   const [flashError, setFlashError] = useState(false);
   const [envLine, setEnvLine] = useState('Checking Supabase…');
@@ -61,15 +68,36 @@ export function LicenseKeysPanel() {
 
   const activeId = eas.some((e) => e.id === eaId) ? eaId : eas[0]?.id ?? '';
 
+  const myKeys = mentor?.email
+    ? licenseKeys.filter(
+        (k) =>
+          !k.issuedByEmail ||
+          k.issuedByEmail.toLowerCase() === mentor.email.toLowerCase(),
+      )
+    : licenseKeys;
+
   const onGenerate = async () => {
     if (!activeId) {
       setFlashError(true);
       setFlash('Create a robot in Manage EAs first.');
       return;
     }
+    if (!assigneeName.trim()) {
+      setFlashError(true);
+      setFlash('Enter the client name before generating a key.');
+      return;
+    }
+    if (!isValidEmail(assigneeEmail)) {
+      setFlashError(true);
+      setFlash('Enter a valid client email before generating a key.');
+      return;
+    }
     setFlashError(false);
     setFlash('Saving key to device + Supabase…');
-    const result = await generateLicenseKey(activeId);
+    const result = await generateLicenseKey(activeId, {
+      name: assigneeName.trim(),
+      email: assigneeEmail.trim(),
+    });
     if (!result) {
       setFlashError(true);
       setFlash('Could not generate key — pick a saved EA.');
@@ -79,10 +107,12 @@ export function LicenseKeysPanel() {
     if (remote.ok) {
       setFlashError(false);
       setFlash(
-        `Generated ${row.key} for ${row.eaName}. Cloud sync OK (${remote.via || 'remote'}) — Activate works on any device.${
+        `Generated ${row.key} for ${row.assigneeName} <${row.assigneeEmail}> · ${row.eaName}. Cloud sync OK (${remote.via || 'remote'}).${
           remote.hint ? ` Note: ${remote.hint}` : ''
         }`,
       );
+      setAssigneeName('');
+      setAssigneeEmail('');
     } else {
       setFlashError(true);
       setFlash(
@@ -98,10 +128,29 @@ export function LicenseKeysPanel() {
       <View style={styles.card}>
         <Text style={styles.h2}>Generate license keys</Text>
         <Text style={styles.hint}>
-          Generate a key for a saved Manage EAs robot. The user enters this key
-          after Lumo Edge Pro access to activate that EA (name, picture, symbols).
+          Ask for the client name and email, then generate a key for a saved
+          Manage EAs robot. Reuses the existing Generate → Activate path.
         </Text>
         <Text style={styles.env}>{envLine}</Text>
+
+        <Text style={styles.label}>CLIENT NAME</Text>
+        <TextInput
+          style={styles.input}
+          value={assigneeName}
+          onChangeText={setAssigneeName}
+          placeholder="Full name"
+          placeholderTextColor="#6B7280"
+        />
+        <Text style={styles.label}>CLIENT EMAIL</Text>
+        <TextInput
+          style={styles.input}
+          value={assigneeEmail}
+          onChangeText={setAssigneeEmail}
+          placeholder="client@email.com"
+          placeholderTextColor="#6B7280"
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
 
         <Text style={styles.label}>EA</Text>
         {eas.length === 0 ? (
@@ -140,17 +189,23 @@ export function LicenseKeysPanel() {
 
       <View style={styles.card}>
         <Text style={styles.h2}>Issued keys</Text>
-        {licenseKeys.length === 0 ? (
+        {myKeys.length === 0 ? (
           <Text style={styles.hint}>No keys yet.</Text>
         ) : (
-          licenseKeys.map((k) => (
+          myKeys.map((k) => (
             <View key={k.id} style={styles.keyRow}>
               <Text style={styles.keyEa}>{k.eaName}</Text>
               <Text style={styles.keyVal} selectable>
                 {k.key}
               </Text>
+              {k.assigneeName || k.assigneeEmail ? (
+                <Text style={styles.hint}>
+                  For {k.assigneeName || '—'}
+                  {k.assigneeEmail ? ` · ${k.assigneeEmail}` : ''}
+                </Text>
+              ) : null}
               <Text style={styles.hint}>
-                {new Date(k.createdAt).toLocaleString()}
+                {k.status || 'unused'} · {new Date(k.createdAt).toLocaleString()}
               </Text>
             </View>
           ))
@@ -179,6 +234,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.7,
     marginTop: 4,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#fff',
+    backgroundColor: '#0B0E14',
   },
   eaList: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   eaChip: {

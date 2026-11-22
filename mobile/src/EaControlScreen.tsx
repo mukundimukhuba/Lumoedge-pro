@@ -28,6 +28,8 @@ import { BotTradeFloat } from './BotTradeFloat';
 import { loadMt5Token } from './brokers/mt5Token';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
+import { GlobalEventsChip } from './portal/GlobalEventsChip';
+import { MirrorSignalListener } from './portal/MirrorSignalListener';
 import {
   useAppState,
   ACCENTS,
@@ -361,6 +363,8 @@ export function EaControlScreen() {
       }}
     >
       <StatusBar style="light" />
+      <GlobalEventsChip topOffset={safeTop + 48} />
+      <MirrorSignalListener />
 
       <Pressable
         accessibilityRole="button"

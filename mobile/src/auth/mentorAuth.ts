@@ -88,11 +88,27 @@ export async function verifyDemoMentor(
     // Prefer any locally edited/registered overlay for the seed email
     const map = await loadProfiles();
     const stored = map[normalized];
-    if (stored) {
-      const { passwordHash: _h, ...session } = stored;
-      return { ...demoMentorSession(), ...session, status: 'demo' };
+    const session = stored
+      ? (() => {
+          const { passwordHash: _h, ...rest } = stored;
+          return { ...demoMentorSession(), ...rest, status: 'demo' as const };
+        })()
+      : demoMentorSession();
+    try {
+      const { upsertMentorProfile } = await import('../portal/data/mentorsApi');
+      await upsertMentorProfile({
+        email: session.email,
+        mentorName: session.mentorName,
+        name: session.name,
+        contact: session.contact,
+        status: 'demo',
+        createdAt: session.createdAt,
+        keyAllotment: 999,
+      });
+    } catch {
+      /* local demo still valid */
     }
-    return demoMentorSession();
+    return session;
   }
 
   const map = await loadProfiles();
@@ -122,6 +138,22 @@ export async function registerMentor(fields: {
   const map = await loadProfiles();
   map[email] = { ...session, passwordHash };
   await saveProfiles(map);
+  // Best-effort cloud sync so Mentors approve/decline works across devices.
+  try {
+    const { upsertMentorProfile } = await import('../portal/data/mentorsApi');
+    await upsertMentorProfile({
+      email: session.email,
+      mentorName: session.mentorName,
+      name: session.name,
+      contact: session.contact,
+      status: 'pending',
+      passwordHash,
+      createdAt: session.createdAt,
+      keyAllotment: 0,
+    });
+  } catch {
+    /* local signup still valid */
+  }
   return session;
 }
 

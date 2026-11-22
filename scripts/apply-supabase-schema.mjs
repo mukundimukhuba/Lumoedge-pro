@@ -38,7 +38,7 @@ if (!url || !serviceKey) {
 const migrationsDir = path.join(root, 'supabase', 'migrations');
 const files = fs
   .readdirSync(migrationsDir)
-  .filter((f) => f.endsWith('.sql'))
+  .filter((f) => f.endsWith('.sql') && !f.startsWith('_'))
   .sort();
 
 if (!files.length) {

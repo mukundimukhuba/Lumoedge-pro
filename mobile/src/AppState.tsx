@@ -14,6 +14,7 @@ import {
   compressEaPicture,
   findIssuedLicense,
   findLocalIssuedKey,
+  licenseKeysMatch,
   loadLicenseCatalog,
   normalizeLicenseKey,
   saveLicenseCatalog,
@@ -86,6 +87,14 @@ export type LicenseKey = {
   /** Snapshot used when the user activates on the app */
   eaPictureUri: string | null;
   eaSymbols: string[];
+  /** Client the mentor generated this key for */
+  assigneeName?: string | null;
+  assigneeEmail?: string | null;
+  /** Mentor who generated the key */
+  issuedByEmail?: string | null;
+  /** unused | active | revoked */
+  status?: string | null;
+  activatedAt?: string | null;
 };
 
 /** Activated robot session on the EA control UI (requires a real license key). */
@@ -148,7 +157,10 @@ type AppStateValue = {
     ea: Omit<ManagedEa, 'id' | 'createdAt'>,
   ) => Promise<ManagedEa>;
   licenseKeys: LicenseKey[];
-  generateLicenseKey: (eaId: string) => Promise<{
+  generateLicenseKey: (
+    eaId: string,
+    assignee?: { name: string; email: string },
+  ) => Promise<{
     key: LicenseKey;
     remote: { ok: boolean; via?: string; error?: string; hint?: string };
   } | null>;
@@ -374,6 +386,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const generateLicenseKey: AppStateValue['generateLicenseKey'] = async (
     eaId,
+    assignee,
   ) => {
     const ea = easRef.current.find((e) => e.id === eaId);
     if (!ea) return null;
@@ -388,6 +401,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toISOString(),
       eaPictureUri,
       eaSymbols: [...ea.symbols],
+      assigneeName: assignee?.name?.trim() || null,
+      assigneeEmail: assignee?.email?.trim().toLowerCase() || null,
+      issuedByEmail: mentor?.email?.trim().toLowerCase() || null,
+      status: 'unused',
+      activatedAt: null,
     };
     // Also keep compressed picture on the live EA so Manage EAs + Activate match.
     const nextEas = easRef.current.map((e) =>
@@ -528,9 +546,25 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    applyCatalog(found.eas, found.keys);
+    const activatedAt = new Date().toISOString();
+    const activatedKey: LicenseKey = {
+      ...found.key,
+      status: 'active',
+      activatedAt,
+    };
+    const nextKeys = found.keys.map((k) =>
+      k.id === activatedKey.id || licenseKeysMatch(k.key, activatedKey.key)
+        ? { ...k, status: 'active', activatedAt }
+        : k,
+    );
+    applyCatalog(found.eas, nextKeys);
+    await saveLicenseCatalog(found.eas, nextKeys, { skipRemote: true });
+    const liveEa =
+      found.eas.find((e) => e.id === activatedKey.eaId) || null;
+    void syncIssuedLicenseRemote(activatedKey, liveEa);
+
     // Strict key → EA mapping (snapshot + matching eaId only).
-    const session = sessionFromLicenseKey(found.key, found.eas);
+    const session = sessionFromLicenseKey(activatedKey, found.eas);
     if (session.pictureUri) {
       await vaultPutEaPicture(session.eaId, session.pictureUri);
     }
