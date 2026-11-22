@@ -1,8 +1,8 @@
 import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppStateProvider } from '../src/AppState';
+import { DarkEdgeChrome } from '../src/DarkEdgeChrome';
 
 const EdgesDark = {
   ...DarkTheme,
@@ -19,16 +19,17 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <AppStateProvider>
         <ThemeProvider value={EdgesDark}>
-          <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              // Avoid fade-through-black flash when switching dock tabs
-              animation: 'none',
-              contentStyle: { backgroundColor: '#000000' },
-              animationDuration: 0,
-            }}
-          />
+          <DarkEdgeChrome>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                // Avoid fade-through-black flash when switching dock tabs
+                animation: 'none',
+                contentStyle: { backgroundColor: '#000000' },
+                animationDuration: 0,
+              }}
+            />
+          </DarkEdgeChrome>
         </ThemeProvider>
       </AppStateProvider>
     </SafeAreaProvider>

@@ -1,6 +1,5 @@
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
@@ -362,7 +361,6 @@ export function EaControlScreen() {
         if (h > 0) setLayoutH(h);
       }}
     >
-      <StatusBar style="light" />
       <MirrorSignalListener />
 
       <Pressable
@@ -1078,8 +1076,8 @@ function QuotesPanel({
       <Text style={styles.quotesSectionLabel}>Selected symbols</Text>
       {selected.length === 0 ? (
         <Text style={styles.empty}>
-          None yet — tap a symbol below or type a custom MT5 symbol. You will
-          set lot size and how many trades.
+          None selected — add from the catalog or type a custom MT5 symbol.
+          Nothing is auto-added; picks stay until you remove them.
         </Text>
       ) : (
         <View style={styles.selectedWrap}>

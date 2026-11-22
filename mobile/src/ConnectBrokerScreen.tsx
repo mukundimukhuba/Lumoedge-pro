@@ -1,5 +1,4 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
@@ -599,7 +598,6 @@ export function ConnectBrokerScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" />
       <LinearGradient
         colors={['#0A0000', '#050505', '#000000']}
         locations={[0, 0.45, 1]}

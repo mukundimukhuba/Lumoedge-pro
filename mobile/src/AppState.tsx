@@ -325,24 +325,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               }
             }
             setActiveEa(session);
-            const syms = session.symbols ?? [];
-            setSelected(syms);
-            // Keep setups for selected symbols; seed defaults for missing
-            const bySym = new Map(
-              loadedSetups.map((s) => [s.symbol, s] as const),
-            );
-            const synced = syms.map(
-              (sym) =>
-                bySym.get(sym) ||
-                normalizeQuoteSetup({ symbol: sym })!,
-            );
-            setQuoteSetups(synced);
-            loadedSetups = synced;
-          } else if (loadedSetups.length) {
-            setQuoteSetups(loadedSetups);
-            setSelected(loadedSetups.map((s) => s.symbol));
+            // Quotes selections are user-owned only — never seed from
+            // session.symbols / EA defaults (AN-79).
           }
-        } else if (loadedSetups.length) {
+        }
+        // Restore Quotes from AsyncStorage only (persist until user removes).
+        if (loadedSetups.length) {
           setQuoteSetups(loadedSetups);
           setSelected(loadedSetups.map((s) => s.symbol));
         }
@@ -869,7 +857,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     await persistActiveSession(session);
     setActiveEa(session);
-    setSelectedAndSyncSetups(session.symbols);
+    // Do not auto-select EA/license symbols into Quotes — user adds only.
     setStatus('running');
     return { ok: true, session };
   };
@@ -877,9 +865,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const clearActiveEa = async () => {
     await AsyncStorage.removeItem(ACTIVE_EA_KEY);
     setActiveEa(null);
-    setSelected([]);
-    setQuoteSetups([]);
-    void persistQuoteSetups([]);
+    // Keep Quotes selections until the user explicitly removes them.
     setStatus('stopped');
   };
 

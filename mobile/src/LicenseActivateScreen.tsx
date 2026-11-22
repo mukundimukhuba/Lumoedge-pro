@@ -38,26 +38,6 @@ export function LicenseActivateScreen() {
     void refreshLicenseCatalog();
   }, [refreshLicenseCatalog]);
 
-  // RN-web Stack card defaults to #f2f2f2 — paint it black so no white top strip.
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-    const paint = () => {
-      document.querySelectorAll('div').forEach((el) => {
-        const bg = getComputedStyle(el).backgroundColor;
-        if (bg === 'rgb(242, 242, 242)' || bg === 'rgb(255, 255, 255)') {
-          (el as HTMLElement).style.setProperty(
-            'background-color',
-            '#000000',
-            'important',
-          );
-        }
-      });
-    };
-    paint();
-    const id = window.setInterval(paint, 400);
-    return () => window.clearInterval(id);
-  }, []);
-
   const runActivate = async (raw: string) => {
     setError('');
     setBusy(true);
