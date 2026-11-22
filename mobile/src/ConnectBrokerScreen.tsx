@@ -527,8 +527,12 @@ export function ConnectBrokerScreen() {
       setError('Choose a broker from the suggestions.');
       return;
     }
-    if (!server.trim() || !login.trim() || !password.trim()) {
-      setError('Enter Server, Login, and Password.');
+    if (!server.trim() || !login.trim()) {
+      setError('Enter Server and Login.');
+      return;
+    }
+    if (!password.trim()) {
+      setError('Trading password is required (not the investor password).');
       return;
     }
     setError(null);
@@ -541,8 +545,8 @@ export function ConnectBrokerScreen() {
           login: login.trim(),
           password,
         });
-        setPassword('');
         if (!res.ok) {
+          // Keep password so the user can correct and retry without retyping.
           setError(res.error || 'Connect failed.');
           setConnected(false);
           setSessionId(null);
@@ -557,6 +561,7 @@ export function ConnectBrokerScreen() {
           setAccount(null);
           return;
         }
+        setPassword('');
         setConnected(true);
         setSessionId(mt5Id);
         void saveMt5Link({
@@ -577,7 +582,6 @@ export function ConnectBrokerScreen() {
         // Account fetched live via poll — never trust seeded connect payload
         setAccount(null);
       } catch {
-        setPassword('');
         setError('Broker API unreachable. Try again.');
         setConnected(false);
         setSessionId(null);

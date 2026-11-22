@@ -32,9 +32,15 @@ module.exports = async function handler(req, res) {
   if (!broker) {
     return json(res, 400, { error: 'broker is required' });
   }
-  if (!server || !login || !password) {
+  if (!server || !login) {
     return json(res, 400, {
-      error: 'server, login, and password are required',
+      error: 'server and login are required',
+    });
+  }
+  if (!password.trim()) {
+    return json(res, 400, {
+      ok: false,
+      error: 'Trading password is required.',
     });
   }
 
