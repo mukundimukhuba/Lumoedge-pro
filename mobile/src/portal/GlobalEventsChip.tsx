@@ -13,15 +13,30 @@ import {
 } from './data/signalsApi';
 
 /**
- * Floating global events signal chip — always visible when upcoming events exist.
- * Tap opens the upcoming events list.
+ * Floating global events signal chip on EA Home.
+ * Always visible (empty state when no upcoming events).
+ * Tap opens upcoming events published via Mentors Portal → Add Signal Direction.
  */
-export function GlobalEventsChip({ topOffset = 56 }: { topOffset?: number }) {
+export function GlobalEventsChip({
+  topOffset = 56,
+  /** Leave room for settings gear on the right */
+  rightInset = 56,
+}: {
+  topOffset?: number;
+  rightInset?: number;
+}) {
   const [events, setEvents] = useState<SignalEvent[]>([]);
   const [open, setOpen] = useState(false);
+  const [ready, setReady] = useState(false);
 
   const load = useCallback(async () => {
-    setEvents(await listUpcomingSignalEvents());
+    try {
+      setEvents(await listUpcomingSignalEvents());
+    } catch {
+      /* keep prior */
+    } finally {
+      setReady(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -30,9 +45,8 @@ export function GlobalEventsChip({ topOffset = 56 }: { topOffset?: number }) {
     return () => clearInterval(t);
   }, [load]);
 
-  if (events.length === 0) return null;
-
-  const next = events[0]!;
+  const next = events[0];
+  const hasEvents = events.length > 0;
 
   return (
     <>
@@ -41,17 +55,28 @@ export function GlobalEventsChip({ topOffset = 56 }: { topOffset?: number }) {
           void load();
           setOpen(true);
         }}
-        style={[styles.chip, { top: topOffset }]}
+        style={[
+          styles.chip,
+          { top: topOffset, right: rightInset },
+          !hasEvents && styles.chipEmpty,
+        ]}
         accessibilityRole="button"
         accessibilityLabel="Open upcoming events signals"
       >
         <Text style={styles.chipLabel}>Events signal</Text>
         <Text style={styles.chipTitle} numberOfLines={1}>
-          {next.direction.toUpperCase()}
-          {next.symbol ? ` · ${next.symbol}` : ''} · {next.title}
+          {hasEvents
+            ? `${next!.direction.toUpperCase()}${
+                next!.symbol ? ` · ${next!.symbol}` : ''
+              } · ${next!.title}`
+            : ready
+              ? 'No upcoming events'
+              : 'Loading events…'}
         </Text>
         <Text style={styles.chipMeta}>
-          {events.length} upcoming · tap to open
+          {hasEvents
+            ? `${events.length} upcoming · tap to open`
+            : 'Tap for calendar / signals'}
         </Text>
       </Pressable>
 
@@ -62,24 +87,37 @@ export function GlobalEventsChip({ topOffset = 56 }: { topOffset?: number }) {
         onRequestClose={() => setOpen(false)}
       >
         <Pressable style={styles.scrim} onPress={() => setOpen(false)}>
-          <Pressable style={styles.sheet} onPress={(e) => e.stopPropagation?.()}>
+          <Pressable
+            style={styles.sheet}
+            onPress={(e) => e.stopPropagation?.()}
+          >
             <Text style={styles.sheetTitle}>Upcoming events</Text>
+            <Text style={styles.sheetHint}>
+              Published from Mentors Portal → Add Signal Direction
+            </Text>
             <ScrollView style={{ maxHeight: 360 }}>
-              {events.map((e) => (
-                <View key={e.id} style={styles.row}>
-                  <Text style={styles.rowTitle}>{e.title}</Text>
-                  <Text style={styles.rowMeta}>
-                    {e.direction.toUpperCase()}
-                    {e.symbol ? ` · ${e.symbol}` : ''}
-                  </Text>
-                  <Text style={styles.rowMeta}>
-                    {new Date(e.startsAt).toLocaleString()}
-                  </Text>
-                  {e.note ? (
-                    <Text style={styles.rowNote}>{e.note}</Text>
-                  ) : null}
-                </View>
-              ))}
+              {events.length === 0 ? (
+                <Text style={styles.empty}>
+                  No upcoming events yet. When a mentor publishes a direction,
+                  it appears here for everyone.
+                </Text>
+              ) : (
+                events.map((e) => (
+                  <View key={e.id} style={styles.row}>
+                    <Text style={styles.rowTitle}>{e.title}</Text>
+                    <Text style={styles.rowMeta}>
+                      {e.direction.toUpperCase()}
+                      {e.symbol ? ` · ${e.symbol}` : ''}
+                    </Text>
+                    <Text style={styles.rowMeta}>
+                      {new Date(e.startsAt).toLocaleString()}
+                    </Text>
+                    {e.note ? (
+                      <Text style={styles.rowNote}>{e.note}</Text>
+                    ) : null}
+                  </View>
+                ))
+              )}
             </ScrollView>
             <Pressable
               style={styles.close}
@@ -99,15 +137,20 @@ const styles = StyleSheet.create({
   chip: {
     position: 'absolute',
     left: 12,
-    right: 12,
-    zIndex: 40,
+    zIndex: 200,
+    elevation: 24,
     borderRadius: 999,
-    backgroundColor: 'rgba(15, 23, 42, 0.94)',
-    borderWidth: 1,
-    borderColor: 'rgba(94,200,255,0.55)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 2,
+    backgroundColor: 'rgba(8, 8, 12, 0.96)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(94,200,255,0.75)',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    gap: 1,
+    // Keep above hero / settings stacking on web
+    ...( { pointerEvents: 'box-only' } as object),
+  },
+  chipEmpty: {
+    borderColor: 'rgba(94,200,255,0.45)',
   },
   chipLabel: {
     color: '#5EC8FF',
@@ -120,7 +163,7 @@ const styles = StyleSheet.create({
   chipMeta: { color: '#9CA3AF', fontSize: 11 },
   scrim: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     padding: 20,
   },
@@ -133,6 +176,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sheetTitle: { color: '#fff', fontWeight: '900', fontSize: 18 },
+  sheetHint: { color: '#9CA3AF', fontSize: 12, marginTop: -4 },
+  empty: { color: '#9CA3AF', fontSize: 13, lineHeight: 18, paddingVertical: 12 },
   row: {
     paddingVertical: 10,
     borderTopWidth: StyleSheet.hairlineWidth,

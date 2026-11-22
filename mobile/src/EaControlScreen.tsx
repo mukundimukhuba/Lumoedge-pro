@@ -363,7 +363,6 @@ export function EaControlScreen() {
       }}
     >
       <StatusBar style="light" />
-      <GlobalEventsChip topOffset={safeTop + 48} />
       <MirrorSignalListener />
 
       <Pressable
@@ -372,7 +371,7 @@ export function EaControlScreen() {
         onPress={onSettingsPress}
         style={({ pressed }) => [
           styles.settingsBtn,
-          { borderColor: accent, top: safeTop + 2 },
+          { borderColor: accent, top: safeTop + 2, zIndex: 210 },
           Platform.OS === 'web'
             ? ({ boxShadow: `0 0 12px ${hexToRgba(accent, 0.55)}` } as object)
             : null,
@@ -382,6 +381,9 @@ export function EaControlScreen() {
       >
         <Ionicons name="settings-outline" size={iconSm} color={BASE.white} />
       </Pressable>
+
+      {/* Floating global events chip — always on Home / EA control (above hero). */}
+      <GlobalEventsChip topOffset={safeTop + 8} rightInset={56} />
 
       <ScrollView
         style={styles.scroll}
@@ -1526,7 +1528,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 10,
     right: 10,
-    zIndex: 30,
+    zIndex: 210,
     elevation: 30,
     width: 30,
     height: 30,
