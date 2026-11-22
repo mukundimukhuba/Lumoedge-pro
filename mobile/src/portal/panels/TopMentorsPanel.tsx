@@ -1,56 +1,98 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAppState } from '../../AppState';
 import { listMentorProfiles } from '../data/mentorsApi';
 import { fetchTopMentors, type TopMentorRank } from '../data/portalStats';
 
+const LOAD_TIMEOUT_MS = 4_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timed out')), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(t);
+        reject(err);
+      },
+    );
+  });
+}
+
 export function TopMentorsPanel() {
   const { licenseKeys, mentor } = useAppState();
   const [ranks, setRanks] = useState<TopMentorRank[]>([]);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const keysRef = useRef(licenseKeys);
+  const mentorEmailRef = useRef(mentor?.email);
+  keysRef.current = licenseKeys;
+  mentorEmailRef.current = mentor?.email;
+
+  const buildLocal = useCallback(async (): Promise<TopMentorRank[]> => {
+    const localCounts = new Map<string, number>();
+    for (const k of keysRef.current) {
+      const email =
+        (k as { issuedByEmail?: string }).issuedByEmail ||
+        mentorEmailRef.current ||
+        '';
+      if (!email) continue;
+      const key = email.toLowerCase();
+      localCounts.set(key, (localCounts.get(key) || 0) + 1);
+    }
+    const profiles = await withTimeout(
+      listMentorProfiles(),
+      LOAD_TIMEOUT_MS,
+    ).catch(() => []);
+    const nameBy = new Map(
+      profiles.map((p) => [p.email, p.mentorName || p.name || p.email]),
+    );
+    return [...localCounts.entries()]
+      .map(([email, keysGenerated]) => ({
+        email,
+        mentorName: nameBy.get(email) || email,
+        keysGenerated,
+      }))
+      .sort((a, b) => b.keysGenerated - a.keysGenerated);
+  }, []);
 
   const load = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
-      const localCounts = new Map<string, number>();
-      for (const k of licenseKeys) {
-        const email =
-          (k as { issuedByEmail?: string }).issuedByEmail ||
-          mentor?.email ||
-          '';
-        if (!email) continue;
-        const key = email.toLowerCase();
-        localCounts.set(key, (localCounts.get(key) || 0) + 1);
-      }
-      const profiles = await listMentorProfiles();
-      const nameBy = new Map(
-        profiles.map((p) => [p.email, p.mentorName || p.name || p.email]),
-      );
-      const localFallback: TopMentorRank[] = [...localCounts.entries()]
-        .map(([email, keysGenerated]) => ({
-          email,
-          mentorName: nameBy.get(email) || email,
-          keysGenerated,
-        }))
-        .sort((a, b) => b.keysGenerated - a.keysGenerated);
-
-      const remote = await fetchTopMentors(localFallback);
+      const localFallback = await buildLocal();
+      setRanks(localFallback);
+      const remote = await withTimeout(
+        fetchTopMentors(localFallback),
+        LOAD_TIMEOUT_MS,
+      ).catch(() => localFallback);
       setRanks(remote);
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
-  }, [licenseKeys, mentor?.email]);
+  }, [buildLocal]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    // mount-once — avoid licenseKeys-driven refresh loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.hint}>
         Ranked by how many license keys each mentor has generated or sold.
       </Text>
-      <Pressable onPress={() => void load()} style={styles.refresh}>
+      <Pressable
+        onPress={() => void load()}
+        style={styles.refresh}
+        disabled={busy}
+      >
         <Text style={styles.refreshText}>
           {busy ? 'Refreshing…' : 'Refresh ranking'}
         </Text>

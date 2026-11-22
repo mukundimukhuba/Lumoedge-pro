@@ -82,27 +82,61 @@ export async function fetchDashboardStats(opts: {
   if (!sb) return local;
 
   try {
-    let keysQuery = sb
+    // Prefer enriched columns when migration 004 is applied; fall back to id-only.
+    let keysRes = await sb
       .from('license_keys')
-      .select(
-        'id, status, activated_at, assignee_email, issued_by_email',
-      );
-    if (opts.mentorEmail) {
-      keysQuery = keysQuery.eq('issued_by_email', opts.mentorEmail);
+      .select('id, status, activated_at, assignee_email, issued_by_email');
+    if (keysRes.error) {
+      keysRes = await sb.from('license_keys').select('id');
     }
-    const [keysRes, easRes] = await Promise.all([
-      keysQuery,
-      sb.from('managed_eas').select('id', { count: 'exact', head: true }),
-    ]);
+    const easRes = await sb
+      .from('managed_eas')
+      .select('id', { count: 'exact', head: true });
 
     if (keysRes.error) return local;
 
     const rows = keysRes.data || [];
+    if (!rows.length && !local.keysTotal) {
+      return {
+        ...local,
+        easCount: easRes.count ?? local.easCount,
+        source: 'supabase',
+      };
+    }
+
+    // If enriched fields missing (id-only rows), keep local active/unused math.
+    const hasMeta = rows.some(
+      (r) =>
+        (r as { status?: string }).status != null ||
+        (r as { assignee_email?: string }).assignee_email != null ||
+        (r as { activated_at?: string }).activated_at != null,
+    );
+    if (!hasMeta) {
+      return {
+        ...local,
+        keysTotal: Math.max(local.keysTotal, rows.length),
+        easCount: easRes.count ?? local.easCount,
+        source: 'supabase',
+      };
+    }
+
     let active = 0;
     let unused = 0;
     let revoked = 0;
     const assignees = new Set<string>();
+    let counted = 0;
     for (const r of rows) {
+      const issued = String(
+        (r as { issued_by_email?: string }).issued_by_email || '',
+      ).toLowerCase();
+      if (
+        opts.mentorEmail &&
+        issued &&
+        issued !== opts.mentorEmail.toLowerCase()
+      ) {
+        continue;
+      }
+      counted += 1;
       const st = normalizeStatus(
         (r as { status?: string }).status ||
           ((r as { activated_at?: string }).activated_at ? 'active' : 'unused'),
@@ -115,7 +149,7 @@ export async function fetchDashboardStats(opts: {
     }
 
     return {
-      keysTotal: rows.length || local.keysTotal,
+      keysTotal: counted || local.keysTotal,
       keysActive: active,
       keysUnused: unused,
       keysRevoked: revoked,

@@ -84,16 +84,22 @@ export function PortalHomeScreen() {
       <View style={styles.topBar}>
         <Pressable
           onPress={() => setMenuOpen(true)}
-          style={styles.logoBtn}
+          style={styles.menuOpener}
           accessibilityRole="button"
           accessibilityLabel="Open Edges Mentors Portal menu"
-          hitSlop={8}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Image
-            source={cornerLogo}
-            style={styles.cornerLogo}
-            resizeMode="cover"
-          />
+          <View style={styles.logoBtn}>
+            <Image
+              source={cornerLogo}
+              style={styles.cornerLogo}
+              resizeMode="cover"
+            />
+          </View>
+          <View style={styles.menuLabelWrap}>
+            <Text style={styles.menuLabel}>Menu</Text>
+            <Ionicons name="chevron-forward" size={14} color={GLOW} />
+          </View>
         </Pressable>
         <Text style={styles.topTitle}>Mentors Portal</Text>
         <Pressable
@@ -105,7 +111,11 @@ export function PortalHomeScreen() {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        style={styles.scroll}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.h1}>{NAV.find((n) => n.id === section)?.label}</Text>
         <Text style={styles.meta}>
           Signed in as {mentor.name || mentor.mentorName} · {mentor.email}
@@ -229,23 +239,47 @@ export function PortalHomeScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG },
   topBar: {
+    zIndex: 60,
+    elevation: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingTop: 48,
+    paddingHorizontal: 12,
+    paddingTop: 52,
     paddingBottom: 12,
+    backgroundColor: BG,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#1F2937',
   },
-  topTitle: { color: '#F9FAFB', fontWeight: '800', fontSize: 16 },
+  topTitle: {
+    color: '#F9FAFB',
+    fontWeight: '800',
+    fontSize: 15,
+    flexShrink: 1,
+    textAlign: 'center',
+  },
   iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#151A24',
+    borderWidth: 1,
+    borderColor: '#374151',
+  },
+  menuOpener: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 48,
+    paddingRight: 8,
+    paddingVertical: 2,
+    borderRadius: 14,
+    backgroundColor: 'rgba(94,200,255,0.12)',
+    borderWidth: 1.5,
+    borderColor: GLOW,
+    maxWidth: '46%',
   },
   logoBtn: {
     width: 44,
@@ -253,17 +287,28 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#000000',
-    borderWidth: 1,
-    borderColor: GLOW,
+    backgroundColor: '#0A1220',
     overflow: 'hidden',
   },
   cornerLogo: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
   },
-  content: { padding: 16, gap: 10, paddingBottom: 40 },
+  menuLabelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingRight: 6,
+  },
+  menuLabel: {
+    color: '#E0F2FE',
+    fontWeight: '800',
+    fontSize: 14,
+    letterSpacing: 0.2,
+  },
+  scroll: { flex: 1, zIndex: 1 },
+  content: { padding: 16, gap: 10, paddingBottom: 40, paddingTop: 12 },
   h1: { color: '#fff', fontSize: 24, fontWeight: '800' },
   meta: { color: '#9CA3AF', fontSize: 13 },
   brandLine: { color: '#6B7280', fontSize: 12, marginTop: 2 },
