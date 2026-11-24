@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -17,13 +17,17 @@ import { TripleTapLogo } from './TripleTapLogo';
 const RED = '#FF0000';
 const BG = '#050505';
 
+/** External checkout / payment contact — CapePulse (no in-app PayPal or demo pay). */
+export const LUMO_EDGE_PRO_CHECKOUT_URL =
+  'https://capepaulse.lovable.app/contact';
+
 function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 }
 
 /**
  * Front door before EA control UI.
- * Collects Email + Name, then mock Access for Lumo Edge Pro — $35.
+ * Collects Email + Name, opens real checkout, then continues to license-key activate.
  */
 export function AccessGateScreen() {
   const { unlockEaAccess } = useAppState();
@@ -31,7 +35,6 @@ export function AccessGateScreen() {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<'form' | 'paying'>('form');
 
   const onAccess = async () => {
     setError('');
@@ -44,14 +47,13 @@ export function AccessGateScreen() {
       return;
     }
     setBusy(true);
-    setPhase('paying');
     try {
-      // Mock Stripe / checkout — demo unlock after a short delay.
-      await new Promise((r) => setTimeout(r, 1100));
+      await Linking.openURL(LUMO_EDGE_PRO_CHECKOUT_URL);
+      // Record email + name so the user can activate with a mentor license key.
+      // Payment happens on the external checkout page (not in-app).
       await unlockEaAccess({ email: email.trim(), name: name.trim() });
     } catch {
-      setError('Could not complete access — try again.');
-      setPhase('form');
+      setError('Could not open checkout — try again.');
     } finally {
       setBusy(false);
     }
@@ -81,56 +83,49 @@ export function AccessGateScreen() {
             mentor license key.
           </Text>
 
-          {phase === 'paying' ? (
-            <View style={styles.paying}>
-              <ActivityIndicator color={RED} size="large" />
-              <Text style={styles.payingText}>Processing access…</Text>
-              <Text style={styles.payingHint}>Mock checkout · Stripe not required</Text>
-            </View>
-          ) : (
-            <View style={styles.form}>
-              <Text style={styles.label}>NAME</Text>
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="Your name"
-                placeholderTextColor="#6B7280"
-                autoCapitalize="words"
-                editable={!busy}
-              />
-              <Text style={styles.label}>EMAIL</Text>
-              <TextInput
-                style={styles.input}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@email.com"
-                placeholderTextColor="#6B7280"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!busy}
-              />
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.cta,
-                  pressed && { opacity: 0.85 },
-                  busy && { opacity: 0.6 },
-                ]}
-                onPress={onAccess}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel="Access Lumo Edge Pro for 35 dollars"
-              >
-                <Text style={styles.ctaText}>Access · Lumo Edge Pro — $35</Text>
-              </Pressable>
-              <Text style={styles.fine}>
-                Demo checkout — no real charge. Next you will enter a mentor
-                license key to activate your EA (name, picture, symbols).
-              </Text>
-            </View>
-          )}
+          <View style={styles.form}>
+            <Text style={styles.label}>NAME</Text>
+            <TextInput
+              style={styles.input}
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name"
+              placeholderTextColor="#6B7280"
+              autoCapitalize="words"
+              editable={!busy}
+            />
+            <Text style={styles.label}>EMAIL</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="you@email.com"
+              placeholderTextColor="#6B7280"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!busy}
+            />
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <Pressable
+              style={({ pressed }) => [
+                styles.cta,
+                pressed && { opacity: 0.85 },
+                busy && { opacity: 0.6 },
+              ]}
+              onPress={onAccess}
+              disabled={busy}
+              accessibilityRole="link"
+              accessibilityLabel="Open checkout for Lumo Edge Pro, 35 dollars"
+            >
+              <Text style={styles.ctaText}>Access · Lumo Edge Pro — $35</Text>
+            </Pressable>
+            <Text style={styles.fine}>
+              Opens checkout to complete your $35 purchase. After you pay, return
+              here and enter your mentor license key to activate your EA (name,
+              picture, symbols).
+            </Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -217,11 +212,4 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     textAlign: 'center',
   },
-  paying: {
-    marginTop: 48,
-    alignItems: 'center',
-    gap: 14,
-  },
-  payingText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  payingHint: { color: '#6B7280', fontSize: 12 },
 });
