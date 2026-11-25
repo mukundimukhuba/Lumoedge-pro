@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -10,7 +11,11 @@ import {
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAppState } from './AppState';
+import {
+  isCapePulseCheckoutPending,
+  LUMO_EDGE_PRO_CHECKOUT_URL,
+  useAppState,
+} from './AppState';
 import { toSafeUserMessage } from './portal/safeErrors';
 import {
   displaySubscriptionStatus,
@@ -23,7 +28,7 @@ const CYAN = '#38BDF8';
 
 /**
  * Client payment-approval wait only (NOT mentor /portal/pending).
- * Shown only when a genuine subscription row exists for this email.
+ * Shown for genuine pending rows, including Cape Pulse checkout-started.
  */
 export function PaymentPendingScreen() {
   const insets = useSafeAreaInsets();
@@ -37,8 +42,9 @@ export function PaymentPendingScreen() {
   const [msg, setMsg] = useState('');
   const [confirmSwitch, setConfirmSwitch] = useState(false);
 
-  const email = eaAccess?.email || clientSubscription?.clientEmail || '';
+  const email = (eaAccess?.email || clientSubscription?.clientEmail || '').trim();
   const sub = clientSubscription as SubscriptionRow | null;
+  const checkoutPending = isCapePulseCheckoutPending(sub);
   const status = String(sub?.status || 'pending').toLowerCase();
   const declined = status === 'declined';
   const expired = status === 'expired';
@@ -50,10 +56,12 @@ export function PaymentPendingScreen() {
       : 'Approval pending';
 
   const body = declined
-    ? 'Your payment was declined. Contact support or register again with updated payment proof.'
+    ? 'Your payment was declined. Contact support or start again from Access.'
     : expired
-      ? 'Your subscription has expired. Contact support to renew, or register with a different email.'
-      : 'Your account is awaiting approval. You can continue once a Super Admin approves your payment.';
+      ? 'Your subscription has expired. Contact support to renew, or start again with a different email.'
+      : checkoutPending && !email
+        ? 'Your account is awaiting approval. Complete payment on Cape Pulse if you have not already — coming Back keeps you on this waiting page.'
+        : 'Your account is awaiting approval. You can continue once a Super Admin approves your payment.';
 
   const checkStatus = async () => {
     setBusy(true);
@@ -70,7 +78,7 @@ export function PaymentPendingScreen() {
       }
       const st = String(next.status || '').toLowerCase();
       if (st === 'declined') {
-        setMsg('Your payment was declined. Contact support or register again.');
+        setMsg('Your payment was declined. Contact support or start again.');
         return;
       }
       if (st === 'expired') {
@@ -85,17 +93,37 @@ export function PaymentPendingScreen() {
     }
   };
 
+  const reopenCheckout = async () => {
+    setBusy(true);
+    setMsg('');
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign(LUMO_EDGE_PRO_CHECKOUT_URL);
+        return;
+      }
+      await Linking.openURL(LUMO_EDGE_PRO_CHECKOUT_URL);
+    } catch (err) {
+      setMsg(toSafeUserMessage(err, 'generic'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onSwitchEmail = async () => {
     if (!confirmSwitch) {
       setConfirmSwitch(true);
       setMsg(
-        'Switch email? Your current pending request is kept. You will return to registration.',
+        email
+          ? 'Switch email? Your current pending request is kept. You will return to Access.'
+          : 'Start over? You will return to Access. Pending checkout state is cleared only after you confirm.',
       );
       return;
     }
     setBusy(true);
     try {
-      await clearClientAccessSession({ keepSubscriptionRecord: true });
+      await clearClientAccessSession({
+        keepSubscriptionRecord: Boolean(email),
+      });
     } catch (err) {
       setMsg(toSafeUserMessage(err, 'generic'));
       setBusy(false);
@@ -136,10 +164,19 @@ export function PaymentPendingScreen() {
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.body}>{body}</Text>
 
-            <Text style={styles.meta}>Signed in as</Text>
-            <Text style={styles.email} selectable>
-              {email || '—'}
-            </Text>
+            {email ? (
+              <>
+                <Text style={styles.meta}>Signed in as</Text>
+                <Text style={styles.email} selectable>
+                  {email}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.meta}>Payment</Text>
+                <Text style={styles.email}>Cape Pulse checkout</Text>
+              </>
+            )}
             {sub?.id ? (
               <Text style={styles.subMeta}>
                 Status: {displaySubscriptionStatus(sub.status)}
@@ -164,17 +201,37 @@ export function PaymentPendingScreen() {
               </Pressable>
             ) : null}
 
+            {checkoutPending ? (
+              <Pressable
+                style={[styles.secondary, busy && styles.disabled]}
+                onPress={() => void reopenCheckout()}
+                disabled={busy}
+                accessibilityRole="button"
+                accessibilityLabel="Open payment page again"
+              >
+                <Text style={styles.secondaryText}>Open payment page again</Text>
+              </Pressable>
+            ) : null}
+
             <Pressable
               style={[styles.secondary, busy && styles.disabled]}
               onPress={() => void onSwitchEmail()}
               disabled={busy}
               accessibilityRole="button"
-              accessibilityLabel="Register with a different email"
+              accessibilityLabel={
+                email
+                  ? 'Register with a different email'
+                  : 'Start over from Access'
+              }
             >
               <Text style={styles.secondaryText}>
                 {confirmSwitch
-                  ? 'Confirm — use a different email'
-                  : 'Register with a different email'}
+                  ? email
+                    ? 'Confirm — use a different email'
+                    : 'Confirm — start over'
+                  : email
+                    ? 'Register with a different email'
+                    : 'Start over'}
               </Text>
             </Pressable>
             {confirmSwitch ? (

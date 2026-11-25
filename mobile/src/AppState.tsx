@@ -54,19 +54,43 @@ import {
   type SubscriptionRow,
 } from './subscriptions/types';
 
+/** External Cape Pulse checkout used by Access (not mentor portal). */
+export const LUMO_EDGE_PRO_CHECKOUT_URL =
+  'https://capepaulse.lovable.app/contact';
+
 /** True only for a real submitted/listed subscription — never invent pending. */
 export function isGenuineClientSubscription(
   row: SubscriptionRow | null | undefined,
 ): boolean {
-  if (!row?.id || !String(row.clientEmail || '').trim()) return false;
+  if (!row?.id) return false;
   const st = String(row.status || '').toLowerCase();
-  return ['pending', 'approved', 'declined', 'active', 'expired'].includes(st);
+  if (!['pending', 'approved', 'declined', 'active', 'expired'].includes(st)) {
+    return false;
+  }
+  // Cape Pulse checkout-started rows may omit email until the user links one.
+  if (isCapePulseCheckoutPending(row)) return true;
+  return Boolean(String(row.clientEmail || '').trim());
+}
+
+/** Local pending created when Access opens Cape Pulse (survives Back). */
+export function isCapePulseCheckoutPending(
+  row: SubscriptionRow | null | undefined,
+): boolean {
+  if (!row?.id) return false;
+  const method = String(row.paymentMethod || '').toLowerCase();
+  const ref = String(row.paymentReference || '');
+  return (
+    String(row.status || '').toLowerCase() === 'pending' &&
+    method.includes('cape pulse') &&
+    ref.startsWith('cape-pulse-')
+  );
 }
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
 const QUOTE_SETUPS_KEY = 'edges-quote-setups-v1';
 const CLIENT_SUB_KEY = 'edges-client-subscription-v1';
+const CLIENT_CHECKOUT_KEY = 'edges-client-checkout-v1';
 
 /** Per Quotes symbol — used by Auto Trade Start */
 export type QuoteSetup = {
@@ -237,6 +261,14 @@ type AppStateValue = {
     | { ok: true; access: EaAccess; subscription: SubscriptionRow }
     | { ok: false; error: string }
   >;
+  /**
+   * Access → Cape Pulse checkout. Persists a local pending row so browser/app
+   * Back lands on Approval pending (not the Access form again).
+   */
+  beginClientCheckout: () => Promise<
+    | { ok: true; checkoutUrl: string; subscription: SubscriptionRow }
+    | { ok: false; error: string }
+  >;
   refreshClientSubscription: () => Promise<SubscriptionRow | null>;
   /**
    * Leave client session to re-register. Does not delete server subscription
@@ -368,7 +400,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (accessRaw) {
           const parsed = JSON.parse(accessRaw) as EaAccess;
-          if (parsed?.email && parsed?.name) setEaAccess(parsed);
+          // Checkout-started sessions may have empty email until linked.
+          if (parsed?.name) setEaAccess(parsed);
         }
         if (subRaw) {
           try {
@@ -491,6 +524,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     async (opts?: { keepSubscriptionRecord?: boolean }) => {
       try {
         await AsyncStorage.removeItem(EA_ACCESS_KEY);
+        await AsyncStorage.removeItem(CLIENT_CHECKOUT_KEY);
         if (!opts?.keepSubscriptionRecord) {
           await AsyncStorage.removeItem(CLIENT_SUB_KEY);
         }
@@ -508,20 +542,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const refreshClientSubscription = useCallback(async () => {
     const email = eaAccess?.email?.trim().toLowerCase();
-    if (!email) {
-      setClientSubscription(null);
-      setSubscriptionReady(true);
-      return null;
-    }
 
     const readLocal = async (): Promise<SubscriptionRow | null> => {
       try {
         const raw = await AsyncStorage.getItem(CLIENT_SUB_KEY);
         if (!raw) return null;
         const local = JSON.parse(raw) as SubscriptionRow;
+        if (!isGenuineClientSubscription(local)) return null;
+        // Cape Pulse checkout rows survive without a linked email.
+        if (isCapePulseCheckoutPending(local)) return local;
         if (
-          isGenuineClientSubscription(local) &&
-          local.clientEmail.toLowerCase() === email
+          email &&
+          String(local.clientEmail || '')
+            .toLowerCase()
+            .trim() === email
         ) {
           return local;
         }
@@ -538,12 +572,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         await AsyncStorage.removeItem(CLIENT_SUB_KEY);
         await AsyncStorage.removeItem(EA_ACCESS_KEY);
+        await AsyncStorage.removeItem(CLIENT_CHECKOUT_KEY);
       } catch {
         /* ignore */
       }
       setClientSubscription(null);
       setEaAccess(null);
     };
+
+    // No email yet — keep a local Cape Pulse checkout pending (Back → waiting).
+    if (!email) {
+      const local = await readLocal();
+      if (local) {
+        setClientSubscription(local);
+        setSubscriptionReady(true);
+        return local;
+      }
+      setClientSubscription(null);
+      setSubscriptionReady(true);
+      return null;
+    }
 
     const res = await listSubscriptions({
       role: 'client',
@@ -558,14 +606,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setClientSubscription(latest);
         try {
           await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(latest));
+          await AsyncStorage.removeItem(CLIENT_CHECKOUT_KEY);
         } catch {
           /* ignore */
         }
         setSubscriptionReady(true);
         return latest;
       }
-      // Successful empty list → no genuine payment pending. Drop stale session
-      // so the user returns to registration/onboarding (not a false pending gate).
+      // Keep Cape Pulse checkout-started local pending — Back must not reset
+      // to Access while payment/approval is still in flight.
+      const localCheckout = await readLocal();
+      if (localCheckout && isCapePulseCheckoutPending(localCheckout)) {
+        setClientSubscription(localCheckout);
+        setSubscriptionReady(true);
+        return localCheckout;
+      }
       await dropStaleClientSession();
       if (!activeEaRef.current) {
         setClientSubscription(null);
@@ -590,13 +645,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [eaAccess?.email]);
 
   useEffect(() => {
-    if (!eaAccess?.email) {
+    if (!eaAccess) {
       setSubscriptionReady(true);
       return;
     }
     setSubscriptionReady(false);
     void refreshClientSubscription();
-  }, [eaAccess?.email, refreshClientSubscription]);
+  }, [eaAccess?.email, eaAccess?.unlockedAt, refreshClientSubscription]);
 
   const canAccessLicenseSection = isSubscriptionUsable(
     clientSubscription?.status,
@@ -606,6 +661,80 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     isGenuineClientSubscription(clientSubscription) &&
       !canAccessLicenseSection,
   );
+
+  const beginClientCheckout: AppStateValue['beginClientCheckout'] =
+    async () => {
+      const localId = uid('sub');
+      const ref = `cape-pulse-${Date.now()}`;
+      const now = new Date().toISOString();
+      const localSub: SubscriptionRow = {
+        id: localId,
+        clientName: 'Cape Pulse checkout',
+        clientEmail: '',
+        amountUsd: 35,
+        paymentMethod: 'Cape Pulse',
+        paymentReference: ref,
+        paymentProof: ref,
+        paymentDate: now,
+        status: 'pending',
+        createdAt: now,
+      };
+      const access: EaAccess = {
+        email: '',
+        name: 'Cape Pulse checkout',
+        unlockedAt: now,
+        product: 'Lumo Edge Pro',
+        priceUsd: 35,
+      };
+      try {
+        await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(localSub));
+        await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(access));
+        await AsyncStorage.setItem(
+          CLIENT_CHECKOUT_KEY,
+          JSON.stringify({
+            id: localId,
+            startedAt: now,
+            checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
+          }),
+        );
+      } catch {
+        return { ok: false, error: 'Could not save checkout state' };
+      }
+      setClientSubscription(localSub);
+      setEaAccess(access);
+      setSubscriptionReady(true);
+
+      // Best-effort remote pending row — local pending already gates the wait UI.
+      void submitSubscription({
+        clientName: 'Cape Pulse checkout',
+        clientEmail: `cape.${localId.replace(/[^a-z0-9]/gi, '').slice(-10)}@checkout.pending`,
+        paymentMethod: 'Cape Pulse',
+        paymentReference: ref,
+        paymentProof: ref,
+        amountUsd: 35,
+      }).then(async (submitted) => {
+        if (!submitted.ok) return;
+        try {
+          const merged = {
+            ...submitted.subscription,
+            // Keep local empty email until user links a real one.
+            clientEmail: submitted.subscription.clientEmail || '',
+            paymentMethod: 'Cape Pulse',
+            paymentReference: ref,
+          };
+          await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(merged));
+          setClientSubscription(merged);
+        } catch {
+          /* ignore */
+        }
+      });
+
+      return {
+        ok: true,
+        checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
+        subscription: localSub,
+      };
+    };
 
   const unlockEaAccess: AppStateValue['unlockEaAccess'] = async ({
     email,
@@ -637,6 +766,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       CLIENT_SUB_KEY,
       JSON.stringify(submitted.subscription),
     );
+    try {
+      await AsyncStorage.removeItem(CLIENT_CHECKOUT_KEY);
+    } catch {
+      /* ignore */
+    }
     setEaAccess(record);
     setClientSubscription(submitted.subscription);
     return {
@@ -1287,6 +1421,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       isClientPaymentPending,
       canAccessLicenseSection,
       unlockEaAccess,
+      beginClientCheckout,
       refreshClientSubscription,
       clearClientAccessSession,
       refreshScopedLicenseKeys,
