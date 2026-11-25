@@ -1,206 +1,121 @@
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useAppState } from './AppState';
+import {
+  LUMO_EDGE_PRO_CHECKOUT_URL,
+  useAppState,
+} from './AppState';
 import { TripleTapLogo } from './TripleTapLogo';
 import { toSafeUserMessage } from './portal/safeErrors';
-import { displaySubscriptionStatus } from './subscriptions/types';
 
 const RED = '#FF0000';
 const BG = '#050505';
 
-/** External checkout / payment contact — CapePulse. */
-export const LUMO_EDGE_PRO_CHECKOUT_URL =
-  'https://capepaulse.lovable.app/contact';
-
-const PAYMENT_METHODS = ['EFT / Bank transfer', 'PayPal', 'Crypto', 'Other'];
-
-function isValidEmail(v: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
-}
+/** @deprecated import from AppState — kept for existing callers */
+export { LUMO_EDGE_PRO_CHECKOUT_URL };
 
 /**
  * Front door before EA control UI.
- * Collects Email + Name + payment proof → pending subscription.
- * License activate only after super-admin approval.
+ * Access opens Cape Pulse checkout (no name/email/proof form).
+ * Pending state is persisted so Back lands on Approval pending.
  */
 export function AccessGateScreen() {
-  const { unlockEaAccess } = useAppState();
-  const [email, setEmail] = useState('');
-  const [name, setName] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]!);
-  const [paymentReference, setPaymentReference] = useState('');
+  const { beginClientCheckout } = useAppState();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const onAccess = async () => {
+  const openCheckout = async () => {
     setError('');
-    if (!name.trim()) {
-      setError('Enter your name');
-      return;
-    }
-    if (!isValidEmail(email)) {
-      setError('Enter a valid email');
-      return;
-    }
-    if (!paymentMethod.trim()) {
-      setError('Select a payment method');
-      return;
-    }
-    if (!paymentReference.trim()) {
-      setError('Enter payment reference / proof');
-      return;
-    }
     setBusy(true);
     try {
-      try {
-        await Linking.openURL(LUMO_EDGE_PRO_CHECKOUT_URL);
-      } catch {
-        /* checkout link optional — proof still submitted */
-      }
-      const result = await unlockEaAccess({
-        email: email.trim(),
-        name: name.trim(),
-        paymentMethod: paymentMethod.trim(),
-        paymentReference: paymentReference.trim(),
-      });
+      const result = await beginClientCheckout();
       if (!result.ok) {
         setError(toSafeUserMessage(result.error, 'register'));
+        setBusy(false);
+        return;
       }
+      // Persist first, then leave so browser Back restores waiting UI.
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign(result.checkoutUrl);
+        return;
+      }
+      try {
+        await Linking.openURL(result.checkoutUrl);
+      } catch {
+        setError(toSafeUserMessage('Could not open payment page', 'register'));
+        setBusy(false);
+        return;
+      }
+      // Native: checkout opens externally; pending gate already set in state.
+      setBusy(false);
     } catch (err) {
       setError(toSafeUserMessage(err, 'register'));
-    } finally {
       setBusy(false);
     }
   };
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} accessibilityLabel="Lumo Edge Pro access">
       <LinearGradient
         colors={['#2A0000', '#0A0A0A', BG]}
         locations={[0, 0.45, 1]}
         style={StyleSheet.absoluteFill}
       />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-        >
-          <TripleTapLogo size={112} borderColor={RED} />
-          <Text style={styles.brand}>EDGES</Text>
-          <Text style={styles.product}>Lumo Edge Pro</Text>
-          <Text style={styles.price}>$35</Text>
-          <Text style={styles.tagline}>
-            Step 1 — submit payment proof. After approval you can activate with
-            your mentor license key.
-          </Text>
+      <View style={styles.center}>
+        <TripleTapLogo size={112} borderColor={RED} />
+        <Text style={styles.brand}>EDGES</Text>
+        <Text style={styles.product}>Lumo Edge Pro</Text>
+        <Text style={styles.price}>$35</Text>
+        <Text style={styles.tagline}>
+          Continue to payment. After you pay, return here — your account waits
+          for Super Admin approval before license activation.
+        </Text>
 
-          <View style={styles.form}>
-            <Text style={styles.label}>NAME</Text>
-            <TextInput
-              style={styles.input}
-              value={name}
-              onChangeText={setName}
-              placeholder="Your name"
-              placeholderTextColor="#6B7280"
-              autoCapitalize="words"
-              editable={!busy}
-            />
-            <Text style={styles.label}>EMAIL</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              placeholder="you@email.com"
-              placeholderTextColor="#6B7280"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
-              editable={!busy}
-            />
-            <Text style={styles.label}>PAYMENT METHOD</Text>
-            <View style={styles.methodRow}>
-              {PAYMENT_METHODS.map((m) => {
-                const on = m === paymentMethod;
-                return (
-                  <Pressable
-                    key={m}
-                    onPress={() => setPaymentMethod(m)}
-                    style={[styles.methodChip, on && styles.methodChipOn]}
-                    disabled={busy}
-                  >
-                    <Text
-                      style={[styles.methodText, on && styles.methodTextOn]}
-                    >
-                      {m}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <Text style={styles.label}>PAYMENT REFERENCE / PROOF</Text>
-            <TextInput
-              style={styles.input}
-              value={paymentReference}
-              onChangeText={setPaymentReference}
-              placeholder="Transaction ID, receipt ref, or proof note"
-              placeholderTextColor="#6B7280"
-              editable={!busy}
-            />
-            {error ? <Text style={styles.error}>{error}</Text> : null}
-            <Pressable
-              style={({ pressed }) => [
-                styles.cta,
-                pressed && { opacity: 0.85 },
-                busy && { opacity: 0.6 },
-              ]}
-              onPress={onAccess}
-              disabled={busy}
-              accessibilityRole="button"
-              accessibilityLabel="Submit Lumo Edge Pro payment for approval"
-            >
-              {busy ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.ctaText}>
-                  Submit payment · Lumo Edge Pro — $35
-                </Text>
-              )}
-            </Pressable>
-            <Text style={styles.fine}>
-              Opens checkout if available, then submits your payment for super
-              admin approval ({displaySubscriptionStatus('pending')}). License
-              keys unlock only after approval.
-            </Text>
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <Pressable
+          style={({ pressed }) => [
+            styles.cta,
+            pressed && { opacity: 0.85 },
+            busy && { opacity: 0.6 },
+          ]}
+          onPress={() => void openCheckout()}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel="Continue to Cape Pulse payment"
+        >
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.ctaText}>Continue to payment · $35</Text>
+          )}
+        </Pressable>
+        <Text style={styles.fine}>
+          Opens Cape Pulse checkout. Going Back brings you to Approval pending —
+          not this screen again.
+        </Text>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG },
-  scroll: {
-    flexGrow: 1,
+  center: {
+    flex: 1,
     paddingHorizontal: 24,
     paddingTop: 56,
     paddingBottom: 40,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   brand: {
     marginTop: 4,
@@ -222,53 +137,23 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   tagline: {
-    marginTop: 10,
+    marginTop: 14,
     color: '#9CA3AF',
     fontSize: 14,
     lineHeight: 20,
     textAlign: 'center',
     maxWidth: 320,
   },
-  form: {
+  error: {
+    color: '#FF6B6B',
+    fontSize: 13,
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  cta: {
+    marginTop: 28,
     width: '100%',
     maxWidth: 360,
-    marginTop: 28,
-    gap: 8,
-  },
-  label: {
-    color: '#9CA3AF',
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    marginTop: 8,
-  },
-  input: {
-    backgroundColor: '#12151C',
-    borderWidth: 1,
-    borderColor: '#2A2F3A',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    color: '#fff',
-    fontSize: 16,
-  },
-  methodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  methodChip: {
-    borderWidth: 1,
-    borderColor: '#374151',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  methodChipOn: {
-    borderColor: RED,
-    backgroundColor: 'rgba(255,0,0,0.18)',
-  },
-  methodText: { color: '#E5E7EB', fontSize: 12, fontWeight: '600' },
-  methodTextOn: { color: '#fff' },
-  error: { color: '#FF6B6B', fontSize: 13, marginTop: 4 },
-  cta: {
-    marginTop: 18,
     backgroundColor: RED,
     borderRadius: 14,
     paddingVertical: 16,
@@ -283,10 +168,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   fine: {
-    marginTop: 12,
+    marginTop: 14,
     color: '#6B7280',
     fontSize: 12,
     lineHeight: 17,
     textAlign: 'center',
+    maxWidth: 320,
   },
 });
