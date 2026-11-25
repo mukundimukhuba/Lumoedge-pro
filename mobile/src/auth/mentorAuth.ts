@@ -33,9 +33,23 @@ export type MentorSession = {
   name: string;
   contact: string;
   createdAt: string;
-  /** demo | pending | approved */
-  status: 'demo' | 'pending' | 'approved';
+  /** demo | pending | approved | declined */
+  status: 'demo' | 'pending' | 'approved' | 'declined';
 };
+
+export const SUPER_ADMIN_EMAIL = DEMO_MENTOR_EMAIL;
+
+export function isSuperAdminEmail(email: string | null | undefined): boolean {
+  return (email || '').trim().toLowerCase() === SUPER_ADMIN_EMAIL;
+}
+
+function normalizeStatus(
+  raw: string | null | undefined,
+): MentorSession['status'] {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'approved' || s === 'demo' || s === 'declined') return s;
+  return 'pending';
+}
 
 type StoredProfile = MentorSession & {
   passwordHash: string;
@@ -115,7 +129,82 @@ export async function verifyDemoMentor(
   const stored = map[normalized];
   if (!stored || stored.passwordHash !== digest) return null;
   const { passwordHash: _h, ...session } = stored;
-  return session;
+
+  // Prefer cloud approval status so pending stays locked until approved.
+  try {
+    const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+    const remote = await fetchMentorProfile(normalized);
+    if (remote) {
+      const next: MentorSession = {
+        ...session,
+        mentorName: remote.mentorName || session.mentorName,
+        name: remote.name || session.name,
+        contact: remote.contact || session.contact,
+        status: normalizeStatus(remote.status),
+      };
+      map[normalized] = { ...next, passwordHash: digest };
+      await saveProfiles(map);
+      return next;
+    }
+  } catch {
+    /* keep local — still pending unless explicitly approved */
+  }
+  return { ...session, status: normalizeStatus(session.status) };
+}
+
+/** Re-read approval status from Supabase (or local). Never invents approved. */
+export async function refreshMentorApproval(
+  email: string,
+): Promise<MentorSession | null> {
+  const key = email.trim().toLowerCase();
+  const map = await loadProfiles();
+  const stored = map[key];
+  if (!stored && key !== DEMO_MENTOR_EMAIL) return null;
+
+  if (key === DEMO_MENTOR_EMAIL) {
+    return demoMentorSession();
+  }
+
+  try {
+    const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+    const remote = await fetchMentorProfile(key);
+    if (remote) {
+      const base = stored
+        ? (() => {
+            const { passwordHash: _h, ...rest } = stored;
+            return rest;
+          })()
+        : {
+            email: key,
+            mentorName: '',
+            name: '',
+            contact: '',
+            createdAt: remote.createdAt || new Date().toISOString(),
+            status: 'pending' as const,
+          };
+      const next: MentorSession = {
+        ...base,
+        email: key,
+        mentorName: remote.mentorName || base.mentorName,
+        name: remote.name || base.name,
+        contact: remote.contact || base.contact,
+        createdAt: remote.createdAt || base.createdAt,
+        status: normalizeStatus(remote.status),
+      };
+      if (stored) {
+        map[key] = { ...next, passwordHash: stored.passwordHash };
+        await saveProfiles(map);
+      }
+      return next;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  if (!stored) return null;
+  const { passwordHash: _h, ...session } = stored;
+  // Without a confirmed cloud approved/demo status, stay pending.
+  return { ...session, status: normalizeStatus(session.status) };
 }
 
 export async function registerMentor(fields: {

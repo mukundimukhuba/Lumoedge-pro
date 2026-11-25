@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Image,
   Modal,
@@ -22,47 +22,58 @@ import { SelfHostingPanel } from './panels/SelfHostingPanel';
 import { SettingsBrokersPanel } from './panels/SettingsBrokersPanel';
 import { SignalDirectionPanel } from './panels/SignalDirectionPanel';
 import { TopMentorsPanel } from './panels/TopMentorsPanel';
+import {
+  defaultSectionForEmail,
+  isPortalUnlocked,
+  isSuperAdminEmail,
+  navForEmail,
+  type NavId,
+} from './portalAccess';
 
 const BG = '#0B0E14';
-const SIDE = '#0D0F16';
 const GLOW = '#5EC8FF';
-
-/** Exact order from mentor-sidebar-ref.jpg */
-const NAV = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'mentors', label: 'Mentors' },
-  { id: 'top-mentors', label: 'Top Mentors' },
-  { id: 'manage-eas', label: 'Manage EAs' },
-  { id: 'license-keys', label: 'License Keys' },
-  { id: 'profile', label: 'Profile' },
-  { id: 'settings', label: 'Settings' },
-  { id: 'mentor-commission', label: 'Mentor Commission' },
-  { id: 'self-hosting', label: 'Self Hosting' },
-  { id: 'add-signal-direction', label: 'Add Signal Direction' },
-] as const;
-
-type NavId = (typeof NAV)[number]['id'];
 
 export function PortalHomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ section?: string }>();
   const { mentor, setMentor, accent, setAccent } = useAppState();
-  /** Closed by default — user opens via corner logo. */
   const [menuOpen, setMenuOpen] = useState(false);
   const [section, setSection] = useState<NavId>('dashboard');
+
+  const navItems = useMemo(
+    () => navForEmail(mentor?.email),
+    [mentor?.email],
+  );
+  const isAdmin = isSuperAdminEmail(mentor?.email);
+  const unlocked = Boolean(
+    mentor && isPortalUnlocked(mentor.status, mentor.email),
+  );
 
   useEffect(() => {
     if (!mentor) {
       router.replace('/portal');
+      return;
+    }
+    if (!isPortalUnlocked(mentor.status, mentor.email)) {
+      router.replace('/portal/pending');
     }
   }, [mentor, router]);
 
   useEffect(() => {
-    const s = String(params.section || '');
-    if (NAV.some((n) => n.id === s)) setSection(s as NavId);
-  }, [params.section]);
+    if (!mentor || !unlocked) return;
+    const next = defaultSectionForEmail(
+      mentor.email,
+      String(params.section || ''),
+    );
+    setSection(next);
+    const requested = String(params.section || '');
+    if (requested && requested !== next) {
+      router.setParams({ section: next });
+    }
+  }, [params.section, mentor, router, unlocked]);
 
-  if (!mentor) {
+  // Hard stop: never render Menu / sections for pending mentors.
+  if (!mentor || !unlocked) {
     return <View style={styles.root} />;
   }
 
@@ -72,12 +83,12 @@ export function PortalHomeScreen() {
   };
 
   const goSection = (id: NavId) => {
+    if (!navItems.some((n) => n.id === id)) return;
     setSection(id);
     setMenuOpen(false);
     router.setParams({ section: id });
   };
 
-  /** Pin brand mark (dark sphere + cyan glow + white bar/chevron). */
   const cornerLogo = require('../../assets/app-corner-logo.jpg');
 
   return (
@@ -117,17 +128,20 @@ export function PortalHomeScreen() {
         style={styles.scroll}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.h1}>{NAV.find((n) => n.id === section)?.label}</Text>
+        <Text style={styles.h1}>
+          {navItems.find((n) => n.id === section)?.label || 'Dashboard'}
+        </Text>
         <Text style={styles.meta}>
           Signed in as {mentor.name || mentor.mentorName} · {mentor.email}
+          {isAdmin ? ' · Super admin' : ''}
         </Text>
         <Text style={styles.brandLine}>Edges · Lumo Edge Pro</Text>
 
         {section === 'dashboard' ? (
           <DashboardPanel />
-        ) : section === 'mentors' ? (
+        ) : section === 'mentors' && isAdmin ? (
           <MentorsPanel />
-        ) : section === 'top-mentors' ? (
+        ) : section === 'top-mentors' && isAdmin ? (
           <TopMentorsPanel />
         ) : section === 'manage-eas' ? (
           <ManageEasPanel />
@@ -135,15 +149,17 @@ export function PortalHomeScreen() {
           <LicenseKeysPanel />
         ) : section === 'profile' ? (
           <ProfilePanel mentor={mentor} />
-        ) : section === 'settings' ? (
+        ) : section === 'settings' && isAdmin ? (
           <SettingsBrokersPanel />
-        ) : section === 'mentor-commission' ? (
+        ) : section === 'mentor-commission' && isAdmin ? (
           <CommissionPanel />
         ) : section === 'self-hosting' ? (
           <SelfHostingPanel />
         ) : section === 'add-signal-direction' ? (
           <SignalDirectionPanel />
-        ) : null}
+        ) : (
+          <Text style={styles.meta}>You do not have access to this section.</Text>
+        )}
       </ScrollView>
 
       <Modal
@@ -197,7 +213,7 @@ export function PortalHomeScreen() {
               contentContainerStyle={styles.navScrollContent}
               showsVerticalScrollIndicator={false}
             >
-              {NAV.map((item) => {
+              {navItems.map((item) => {
                 const on = section === item.id;
                 if (on) {
                   return (
@@ -331,7 +347,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   drawerScrim: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(0,0,0,0.72)',
   },
   drawer: {

@@ -88,6 +88,30 @@ async function patchLocalProfile(
   }
 }
 
+
+export async function fetchMentorProfile(
+  email: string,
+): Promise<MentorProfileRow | null> {
+  const key = email.trim().toLowerCase();
+  if (!key) return null;
+  const local =
+    (await loadLocalProfiles()).find((row) => row.email === key) || null;
+  const sb = getSupabase();
+  if (!sb) return local;
+  try {
+    const { data, error } = await sb
+      .from('mentor_profiles')
+      .select('*')
+      .eq('email', key)
+      .maybeSingle();
+    if (error || !data) return local;
+    const remote = rowFromDb(data as Record<string, unknown>);
+    return local ? { ...local, ...remote } : remote;
+  } catch {
+    return local;
+  }
+}
+
 export async function listMentorProfiles(): Promise<MentorProfileRow[]> {
   const local = await loadLocalProfiles();
   const sb = getSupabase();

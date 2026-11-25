@@ -1,0 +1,40 @@
+import { useEffect } from 'react';
+import { usePathname, useRouter } from 'expo-router';
+import { useAppState } from '../AppState';
+import { isAwaitingApproval, isPortalUnlocked } from './portalAccess';
+
+/**
+ * Hard route gate for every /portal/* screen.
+ * Pending / declined / unknown → only /portal/pending (or login).
+ * Never unlocks from local catalog sync.
+ */
+export function usePortalAuthGate() {
+  const { mentor } = useAppState();
+  const router = useRouter();
+  const pathname = usePathname() || '';
+
+  useEffect(() => {
+    const path = pathname.replace(/\/+$/, '') || '/portal';
+    const onLogin = path === '/portal' || path.endsWith('/portal');
+    const onPending =
+      path === '/portal/pending' || path.endsWith('/portal/pending');
+
+    if (!mentor) {
+      if (!onLogin) {
+        router.replace('/portal');
+      }
+      return;
+    }
+
+    if (isAwaitingApproval(mentor.status, mentor.email)) {
+      if (!onPending) {
+        router.replace('/portal/pending');
+      }
+      return;
+    }
+
+    if (isPortalUnlocked(mentor.status, mentor.email) && onPending) {
+      router.replace('/portal/dashboard');
+    }
+  }, [mentor, pathname, router]);
+}
