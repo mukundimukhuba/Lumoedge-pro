@@ -1,4 +1,8 @@
 import {
+  loadActiveMentorSession,
+  persistActiveMentorSession,
+} from './auth/mentorAuth';
+import {
   createContext,
   useCallback,
   useContext,
@@ -35,6 +39,11 @@ import {
   fetchEaRemote,
   putEaBrandingRemote,
 } from './licenses/remoteApi';
+import {
+  canManageEa,
+  isSuperAdminEmail,
+  normalizeMentorEmail,
+} from './portal/mentorScope';
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
@@ -83,6 +92,8 @@ export type ManagedEa = {
   pictureUri: string | null;
   symbols: string[];
   createdAt: string;
+  /** Mentors Portal owner — isolates Manage EA / Generate Key catalogs. */
+  ownerEmail?: string | null;
 };
 
 /** Issued key mapped to an EA (snapshot + live eaId). */
@@ -222,7 +233,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const quoteSetupsRef = useRef(quoteSetups);
   quoteSetupsRef.current = quoteSetups;
   const [accent, setAccent] = useState('#FF0000');
-  const [mentor, setMentor] = useState<MentorSession | null>(null);
+  const [mentor, setMentorState] = useState<MentorSession | null>(null);
+  const setMentor = useCallback((m: MentorSession | null) => {
+    setMentorState(m);
+    void persistActiveMentorSession(m);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const restored = await loadActiveMentorSession();
+      if (cancelled || !restored) return;
+      setMentorState(restored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [eas, setEas] = useState<ManagedEa[]>([]);
   const [licenseKeys, setLicenseKeys] = useState<LicenseKey[]>([]);
   const [eaAccess, setEaAccess] = useState<EaAccess | null>(null);
@@ -243,8 +271,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     keysRef.current = nextKeys;
   };
 
+  const catalogLoadOpts = useCallback(() => {
+    const email = normalizeMentorEmail(mentor?.email);
+    if (!email) return undefined;
+    const admin = isSuperAdminEmail(email);
+    return {
+      scopeOwnerEmail: admin ? null : email,
+      isSuperAdmin: admin,
+    };
+  }, [mentor?.email]);
+
   const refreshLicenseCatalog = useCallback(async () => {
-    const catalog = await loadLicenseCatalog();
+    const catalog = await loadLicenseCatalog(catalogLoadOpts());
     applyCatalog(catalog.eas, catalog.keys);
     // Only re-persist when there is something to keep — never rewrite empty.
     // Quiet + skipRemote: local disk only (avoid re-push storms on focus).
@@ -254,7 +292,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         skipRemote: true,
       });
     }
-  }, []);
+  }, [catalogLoadOpts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -371,6 +409,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshLicenseCatalog]);
 
+  // When a mentor signs in/out, reload catalog scoped to that mentor.
+  useEffect(() => {
+    void refreshLicenseCatalog();
+  }, [mentor?.email, refreshLicenseCatalog]);
+
   const unlockEaAccess: AppStateValue['unlockEaAccess'] = async ({
     email,
     name,
@@ -420,10 +463,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   );
 
   const addEa: AppStateValue['addEa'] = async (input) => {
+    const ownerEmail =
+      normalizeMentorEmail(mentor?.email) ||
+      normalizeMentorEmail(input.ownerEmail) ||
+      null;
     const pictureUri = await compressEaPicture(input.pictureUri);
     let ea: ManagedEa = {
       ...input,
       pictureUri,
+      ownerEmail,
       id: uid('ea'),
       createdAt: new Date().toISOString(),
     };
@@ -434,7 +482,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     applyCatalog(nextEas, keysRef.current);
     await saveLicenseCatalog(nextEas, keysRef.current, { skipRemote: true });
     // Push managed EA branding immediately (even before any key is issued).
-    const remote = await putEaBrandingRemote(ea);
+    const remote = await putEaBrandingRemote(ea, {
+      actorEmail: ownerEmail || mentor?.email || null,
+    });
     if (remote.ok && (remote.pictureUri || remote.ea)) {
       const durable =
         remote.pictureUri || remote.ea?.pictureUri || ea.pictureUri;
@@ -462,6 +512,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   ) => {
     const current = easRef.current.find((e) => e.id === eaId);
     if (!current) return null;
+    if (!canManageEa(current, mentor?.email)) {
+      return null;
+    }
     let pictureUri = current.pictureUri;
     if (input.pictureUri !== undefined) {
       pictureUri = input.pictureUri
@@ -486,7 +539,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
     applyCatalog(nextEas, nextKeys);
     await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
-    const remote = await putEaBrandingRemote(ea);
+    const remote = await putEaBrandingRemote(ea, {
+      actorEmail: mentor?.email || ea.ownerEmail || null,
+    });
     if (remote.ok) {
       const durable =
         remote.pictureUri || remote.ea?.pictureUri || ea.pictureUri;
@@ -605,9 +660,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   ) => {
     const ea = easRef.current.find((e) => e.id === eaId);
     if (!ea) return null;
+    if (!canManageEa(ea, mentor?.email)) {
+      return null;
+    }
     // Snapshot the mentor-uploaded picture onto the key (compressed).
     const eaPictureUri =
       (await compressEaPicture(ea.pictureUri)) || ea.pictureUri;
+    const issuer =
+      normalizeMentorEmail(mentor?.email) ||
+      normalizeMentorEmail(ea.ownerEmail) ||
+      null;
     const row: LicenseKey = {
       id: uid('lic'),
       eaId: ea.id,
@@ -618,7 +680,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       eaSymbols: [...ea.symbols],
       assigneeName: assignee?.name?.trim() || null,
       assigneeEmail: assignee?.email?.trim().toLowerCase() || null,
-      issuedByEmail: mentor?.email?.trim().toLowerCase() || null,
+      issuedByEmail: issuer,
       status: 'unused',
       activatedAt: null,
     };
@@ -634,7 +696,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     applyCatalog(nextEas, nextKeys);
     // Local first (skip remote bulk) then explicit single-key remote write.
     await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
-    const liveEa = nextEas.find((e) => e.id === ea.id) || ea;
+    const liveEa = nextEas.find((e) => e.id === ea.id) || {
+      ...ea,
+      ownerEmail: ea.ownerEmail || issuer,
+    };
+    if (!liveEa.ownerEmail && issuer) {
+      liveEa.ownerEmail = issuer;
+    }
     const remote = await syncIssuedLicenseRemote(row, liveEa);
     // Prefer durable http URLs returned from sync so Activate/Home never lose the logo.
     if (remote.keyPictureUri || remote.eaPictureUri) {

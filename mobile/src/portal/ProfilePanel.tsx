@@ -11,10 +11,23 @@ export function ProfilePanel({ mentor }: { mentor: MentorSession }) {
       label: 'ACCOUNT STATUS',
       value:
         mentor.status === 'demo'
-          ? 'Live mentor'
+          ? 'Super admin'
           : mentor.status === 'approved'
             ? 'Approved'
-            : 'Pending Super Admin approval',
+            : mentor.status === 'declined'
+              ? 'Declined'
+              : mentor.status === 'suspended'
+                ? 'Suspended'
+                : 'Pending Super Admin approval',
+    },
+    {
+      label: 'PORTAL ROLE',
+      value:
+        mentor.role === 'super_admin' || mentor.status === 'demo'
+          ? 'Super Admin'
+          : mentor.role === 'regular_admin'
+            ? 'Regular Admin'
+            : 'Mentor',
     },
     {
       label: 'REGISTERED',

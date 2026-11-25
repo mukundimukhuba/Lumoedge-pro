@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEMO_SALT = 'edges-ea-demo-v1';
 const PROFILES_KEY = 'edges-mentor-profiles-v1';
+const ACTIVE_SESSION_KEY = 'edges-mentor-active-session-v1';
 
 /** Seed mentor email (identifier only). */
 export const DEMO_MENTOR_EMAIL = 'mukundimukhuba8@gmail.com';
@@ -33,9 +34,45 @@ export type MentorSession = {
   name: string;
   contact: string;
   createdAt: string;
-  /** demo | pending | approved */
-  status: 'demo' | 'pending' | 'approved';
+  /** demo | pending | approved | declined | suspended */
+  status: 'demo' | 'pending' | 'approved' | 'declined' | 'suspended';
+  /** Portal role — register always creates mentor */
+  role?: 'super_admin' | 'mentor' | 'regular_admin';
 };
+
+export const SUPER_ADMIN_EMAIL = DEMO_MENTOR_EMAIL;
+
+export function isSuperAdminEmail(email: string | null | undefined): boolean {
+  return (email || '').trim().toLowerCase() === SUPER_ADMIN_EMAIL;
+}
+
+function normalizeStatus(
+  raw: string | null | undefined,
+): MentorSession['status'] {
+  const s = String(raw || '').trim().toLowerCase();
+  if (
+    s === 'approved' ||
+    s === 'demo' ||
+    s === 'declined' ||
+    s === 'suspended'
+  ) {
+    return s;
+  }
+  return 'pending';
+}
+
+export function normalizePortalRole(
+  raw: string | null | undefined,
+  email?: string | null,
+): NonNullable<MentorSession['role']> {
+  if ((email || '').trim().toLowerCase() === DEMO_MENTOR_EMAIL) {
+    return 'super_admin';
+  }
+  const r = String(raw || '').trim().toLowerCase();
+  if (r === 'regular_admin' || r === 'admin') return 'regular_admin';
+  if (r === 'super_admin') return 'super_admin';
+  return 'mentor';
+}
 
 type StoredProfile = MentorSession & {
   passwordHash: string;
@@ -56,6 +93,7 @@ export function demoMentorSession(): MentorSession {
     contact: '+27 82 000 0001',
     createdAt: '2026-01-15T10:00:00.000Z',
     status: 'demo',
+    role: 'super_admin',
   };
 }
 
@@ -115,7 +153,90 @@ export async function verifyDemoMentor(
   const stored = map[normalized];
   if (!stored || stored.passwordHash !== digest) return null;
   const { passwordHash: _h, ...session } = stored;
-  return session;
+
+  // Prefer cloud approval status so pending stays locked until approved.
+  try {
+    const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+    const remote = await fetchMentorProfile(normalized);
+    if (remote) {
+      const next: MentorSession = {
+        ...session,
+        mentorName: remote.mentorName || session.mentorName,
+        name: remote.name || session.name,
+        contact: remote.contact || session.contact,
+        status: normalizeStatus(remote.status),
+        role: normalizePortalRole(
+          (remote as { role?: string }).role,
+          normalized,
+        ),
+      };
+      map[normalized] = { ...next, passwordHash: digest };
+      await saveProfiles(map);
+      return next;
+    }
+  } catch {
+    /* keep local — still pending unless explicitly approved */
+  }
+  return { ...session, status: normalizeStatus(session.status) };
+}
+
+/** Re-read approval status from Supabase (or local). Never invents approved. */
+export async function refreshMentorApproval(
+  email: string,
+): Promise<MentorSession | null> {
+  const key = email.trim().toLowerCase();
+  const map = await loadProfiles();
+  const stored = map[key];
+  if (!stored && key !== DEMO_MENTOR_EMAIL) return null;
+
+  if (key === DEMO_MENTOR_EMAIL) {
+    return demoMentorSession();
+  }
+
+  try {
+    const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+    const remote = await fetchMentorProfile(key);
+    if (remote) {
+      const base = stored
+        ? (() => {
+            const { passwordHash: _h, ...rest } = stored;
+            return rest;
+          })()
+        : {
+            email: key,
+            mentorName: '',
+            name: '',
+            contact: '',
+            createdAt: remote.createdAt || new Date().toISOString(),
+            status: 'pending' as const,
+          };
+      const next: MentorSession = {
+        ...base,
+        email: key,
+        mentorName: remote.mentorName || base.mentorName,
+        name: remote.name || base.name,
+        contact: remote.contact || base.contact,
+        createdAt: remote.createdAt || base.createdAt,
+        status: normalizeStatus(remote.status),
+        role: normalizePortalRole(
+          (remote as { role?: string }).role,
+          key,
+        ),
+      };
+      if (stored) {
+        map[key] = { ...next, passwordHash: stored.passwordHash };
+        await saveProfiles(map);
+      }
+      return next;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  if (!stored) return null;
+  const { passwordHash: _h, ...session } = stored;
+  // Without a confirmed cloud approved/demo status, stay pending.
+  return { ...session, status: normalizeStatus(session.status) };
 }
 
 export async function registerMentor(fields: {
@@ -134,6 +255,7 @@ export async function registerMentor(fields: {
     contact: fields.contact.trim(),
     createdAt: new Date().toISOString(),
     status: 'pending',
+    role: 'mentor',
   };
   const map = await loadProfiles();
   map[email] = { ...session, passwordHash };
@@ -172,4 +294,37 @@ export function validateSignup(fields: {
   if (fields.password.length < 8) return 'password must be at least 8 characters';
   if (fields.password !== fields.confirm) return 'passwords do not match';
   return null;
+}
+
+
+/** Persist signed-in mentor so hard reloads still hit the pending gate. */
+export async function persistActiveMentorSession(
+  session: MentorSession | null,
+): Promise<void> {
+  try {
+    if (!session) {
+      await AsyncStorage.removeItem(ACTIVE_SESSION_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function loadActiveMentorSession(): Promise<MentorSession | null> {
+  try {
+    const raw = await AsyncStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MentorSession;
+    if (!parsed?.email) return null;
+    return {
+      ...parsed,
+      email: String(parsed.email).trim().toLowerCase(),
+      status: normalizeStatus(parsed.status),
+      role: normalizePortalRole(parsed.role, parsed.email),
+    };
+  } catch {
+    return null;
+  }
 }

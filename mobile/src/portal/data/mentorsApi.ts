@@ -12,7 +12,8 @@ export type MentorProfileRow = {
   mentorName: string;
   name: string;
   contact: string;
-  status: 'pending' | 'approved' | 'declined' | 'demo';
+  status: 'pending' | 'approved' | 'declined' | 'demo' | 'suspended';
+  role: 'super_admin' | 'mentor' | 'regular_admin';
   keyAllotment: number;
   createdAt: string;
   passwordHash?: string;
@@ -25,6 +26,7 @@ type LocalStored = {
   contact: string;
   createdAt: string;
   status: MentorProfileRow['status'];
+  role?: MentorProfileRow['role'];
   passwordHash?: string;
   keyAllotment?: number;
 };
@@ -34,15 +36,22 @@ function rowFromDb(r: Record<string, unknown>): MentorProfileRow {
   const status: MentorProfileRow['status'] =
     statusRaw === 'approved' ||
     statusRaw === 'declined' ||
-    statusRaw === 'demo'
+    statusRaw === 'demo' ||
+    statusRaw === 'suspended'
       ? statusRaw
       : 'pending';
+  const roleRaw = String(r.portal_role ?? r.role ?? 'mentor').toLowerCase();
+  const role: MentorProfileRow['role'] =
+    roleRaw === 'super_admin' || roleRaw === 'regular_admin'
+      ? roleRaw
+      : 'mentor';
   return {
     email: String(r.email || '').toLowerCase(),
     mentorName: String(r.mentor_name ?? r.mentorName ?? ''),
     name: String(r.name ?? ''),
     contact: String(r.contact ?? ''),
     status,
+    role,
     keyAllotment: Number(r.key_allotment ?? r.keyAllotment ?? 0) || 0,
     createdAt: String(r.created_at ?? r.createdAt ?? new Date().toISOString()),
     passwordHash: r.password_hash ? String(r.password_hash) : undefined,
@@ -60,6 +69,7 @@ async function loadLocalProfiles(): Promise<MentorProfileRow[]> {
       name: p.name || '',
       contact: p.contact || '',
       status: p.status || 'pending',
+      role: (p as LocalStored & { role?: MentorProfileRow['role'] }).role || 'mentor',
       keyAllotment: Number(p.keyAllotment || 0) || 0,
       createdAt: p.createdAt || new Date().toISOString(),
       passwordHash: p.passwordHash,
@@ -85,6 +95,30 @@ async function patchLocalProfile(
     await AsyncStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(map));
   } catch {
     /* ignore */
+  }
+}
+
+
+export async function fetchMentorProfile(
+  email: string,
+): Promise<MentorProfileRow | null> {
+  const key = email.trim().toLowerCase();
+  if (!key) return null;
+  const local =
+    (await loadLocalProfiles()).find((row) => row.email === key) || null;
+  const sb = getSupabase();
+  if (!sb) return local;
+  try {
+    const { data, error } = await sb
+      .from('mentor_profiles')
+      .select('*')
+      .eq('email', key)
+      .maybeSingle();
+    if (error || !data) return local;
+    const remote = rowFromDb(data as Record<string, unknown>);
+    return local ? { ...local, ...remote } : remote;
+  } catch {
+    return local;
   }
 }
 
@@ -132,6 +166,7 @@ export async function upsertMentorProfile(input: {
     name: input.name.trim(),
     contact: input.contact.trim(),
     status: input.status,
+    portal_role: input.status === 'demo' ? 'super_admin' : 'mentor',
     password_hash: input.passwordHash || null,
     key_allotment: Number(input.keyAllotment || 0) || 0,
     created_at: input.createdAt || new Date().toISOString(),
@@ -156,10 +191,21 @@ export async function upsertMentorProfile(input: {
 }
 
 export async function setMentorStatus(
+  actorEmail: string,
   email: string,
-  status: 'approved' | 'declined' | 'pending',
+  status: 'approved' | 'declined' | 'pending' | 'suspended',
   keyAllotment?: number,
 ): Promise<{ ok: boolean; error?: string }> {
+  const { isSuperAdminEmail, SUPER_ADMIN_EMAIL } = await import(
+    '../../auth/mentorAuth'
+  );
+  if (!isSuperAdminEmail(actorEmail)) {
+    return {
+      ok: false,
+      error: `Only the super admin (${SUPER_ADMIN_EMAIL}) can change mentor status.`,
+    };
+  }
+
   const key = email.trim().toLowerCase();
   await patchLocalProfile(key, {
     status,
@@ -177,6 +223,18 @@ export async function setMentorStatus(
     if (typeof keyAllotment === 'number') {
       patch.key_allotment = Math.max(0, Math.floor(keyAllotment));
     }
+    // Prefer RPC when migration applied
+    const { error: rpcErr } = await sb.rpc('admin_set_mentor_status', {
+      actor_email: SUPER_ADMIN_EMAIL,
+      target_email: key,
+      new_status: status,
+      new_allotment:
+        typeof keyAllotment === 'number'
+          ? Math.max(0, Math.floor(keyAllotment))
+          : null,
+    });
+    if (!rpcErr) return { ok: true };
+
     const { error } = await sb
       .from('mentor_profiles')
       .update(patch)
@@ -192,10 +250,12 @@ export async function setMentorStatus(
 }
 
 export async function setMentorAllotment(
+  actorEmail: string,
   email: string,
   keyAllotment: number,
 ): Promise<{ ok: boolean; error?: string }> {
   return setMentorStatus(
+    actorEmail,
     email,
     'approved',
     Math.max(0, Math.floor(keyAllotment)),
@@ -214,6 +274,11 @@ export function sessionFromProfile(p: MentorProfileRow): MentorSession {
         ? 'demo'
         : p.status === 'approved'
           ? 'approved'
-          : 'pending',
+          : p.status === 'declined'
+            ? 'declined'
+            : p.status === 'suspended'
+              ? 'suspended'
+              : 'pending',
+    role: p.role || 'mentor',
   };
 }

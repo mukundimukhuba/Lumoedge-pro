@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -8,6 +8,10 @@ import {
 } from 'react-native';
 import { useAppState } from '../AppState';
 import { fetchLicenseStatus } from '../licenses/remoteApi';
+import {
+  isSuperAdminEmail,
+  scopeCatalogForMentor,
+} from './mentorScope';
 
 const ACCENT = '#7C5CFF';
 
@@ -18,7 +22,13 @@ function isValidEmail(v: string) {
 export function LicenseKeysPanel() {
   const { eas, licenseKeys, generateLicenseKey, refreshLicenseCatalog, mentor } =
     useAppState();
-  const [eaId, setEaId] = useState<string>(eas[0]?.id ?? '');
+  const scoped = useMemo(
+    () => scopeCatalogForMentor(eas, licenseKeys, mentor?.email),
+    [eas, licenseKeys, mentor?.email],
+  );
+  const myEas = scoped.eas;
+  const myKeys = scoped.keys;
+  const [eaId, setEaId] = useState<string>(myEas[0]?.id ?? '');
   const [assigneeName, setAssigneeName] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
   const [flash, setFlash] = useState('');
@@ -28,6 +38,12 @@ export function LicenseKeysPanel() {
   useEffect(() => {
     void refreshLicenseCatalog();
   }, [refreshLicenseCatalog]);
+
+  useEffect(() => {
+    if (!myEas.some((e) => e.id === eaId)) {
+      setEaId(myEas[0]?.id ?? '');
+    }
+  }, [myEas, eaId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,20 +82,19 @@ export function LicenseKeysPanel() {
     };
   }, []);
 
-  const activeId = eas.some((e) => e.id === eaId) ? eaId : eas[0]?.id ?? '';
-
-  const myKeys = mentor?.email
-    ? licenseKeys.filter(
-        (k) =>
-          !k.issuedByEmail ||
-          k.issuedByEmail.toLowerCase() === mentor.email.toLowerCase(),
-      )
-    : licenseKeys;
+  const activeId = myEas.some((e) => e.id === eaId)
+    ? eaId
+    : myEas[0]?.id ?? '';
 
   const onGenerate = async () => {
     if (!activeId) {
       setFlashError(true);
       setFlash('Create a robot in Manage EAs first.');
+      return;
+    }
+    if (!mentor?.email) {
+      setFlashError(true);
+      setFlash('Sign in to the Mentors Portal before generating keys.');
       return;
     }
     if (!assigneeName.trim()) {
@@ -128,10 +143,16 @@ export function LicenseKeysPanel() {
       <View style={styles.card}>
         <Text style={styles.h2}>Generate license keys</Text>
         <Text style={styles.hint}>
-          Ask for the client name and email, then generate a key for a saved
-          Manage EAs robot. Reuses the existing Generate → Activate path.
+          Ask for the client name and email, then generate a key for one of
+          your Manage EAs robots only — other mentors’ EAs never appear here.
         </Text>
         <Text style={styles.env}>{envLine}</Text>
+        {mentor?.email && !isSuperAdminEmail(mentor.email) ? (
+          <Text style={styles.env}>
+            Scoped to {mentor.email} · {myEas.length} EA
+            {myEas.length === 1 ? '' : 's'}
+          </Text>
+        ) : null}
 
         <Text style={styles.label}>CLIENT NAME</Text>
         <TextInput
@@ -152,12 +173,12 @@ export function LicenseKeysPanel() {
           keyboardType="email-address"
         />
 
-        <Text style={styles.label}>EA</Text>
-        {eas.length === 0 ? (
+        <Text style={styles.label}>YOUR EA</Text>
+        {myEas.length === 0 ? (
           <Text style={styles.hint}>No robots yet — save one under Manage EAs.</Text>
         ) : (
           <View style={styles.eaList}>
-            {eas.map((ea) => {
+            {myEas.map((ea) => {
               const on = ea.id === activeId;
               return (
                 <Pressable
