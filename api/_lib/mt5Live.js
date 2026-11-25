@@ -84,6 +84,13 @@ function humanizeConnectError(raw, { server } = {}) {
   if (/password.*(required|empty|missing)|empty password/i.test(msg)) {
     return 'Trading password is required.';
   }
+  if (
+    /bridge (is )?(down|unreachable|unhealthy)|health check failed|fetch failed|econnrefused|etimedout|enotfound|network|socket hang up|other side closed/i.test(
+      lower,
+    )
+  ) {
+    return `MT5 bridge is down or unreachable right now. Connect cannot succeed until the broker API host answers /health — restart mt5rest on the droplet, then retry. (${tech})`;
+  }
   if (/license\s*\/?\s*session|lic\d*\.mtapi\.io|license service/i.test(msg)) {
     return `MT5 bridge license check failed while talking to ${srv}. The droplet mt5rest trial/license must reach lic*.mtapi.io — renew/activate the mtapi license on the broker API host, then retry. (${tech})`;
   }
@@ -110,6 +117,88 @@ function humanizeConnectError(raw, { server } = {}) {
 }
 
 /**
+ * Durable bridge probe — never invents a healthy status.
+ * Prefers /health, then /Health, then /ping.
+ */
+function bodyLooksHealthy(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return true;
+  if (/healthy|ok|true|up/i.test(raw)) return true;
+  try {
+    const j = JSON.parse(raw);
+    if (j === true || j?.ok === true) return true;
+    return /healthy|ok/i.test(String(j?.status || j?.health || ''));
+  } catch {
+    return raw.length < 40;
+  }
+}
+
+/**
+ * Durable bridge probe — never invents a healthy status.
+ * Prefers /health, then /Health, then /ping.
+ */
+async function probeBridgeHealth({ timeoutMs = 4000 } = {}) {
+  const configured = Boolean(
+    (process.env.LUMOEDGE_MT5_URL || process.env.BROKER_API_URL || '').trim(),
+  );
+  const root = mt5Root();
+  const started = Date.now();
+  // One budget for the whole probe — hung TCP must not multiply timeouts.
+  const deadline = started + timeoutMs;
+  const paths = ['/health', '/Health', '/ping', '/Ping'];
+  let lastError = 'no response';
+
+  for (const path of paths) {
+    const remaining = deadline - Date.now();
+    if (remaining < 250) break;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), remaining);
+    try {
+      const res = await fetch(`${root}${path}`, {
+        method: 'GET',
+        headers: { Accept: 'application/json, text/plain, */*' },
+        signal: ctrl.signal,
+      });
+      const text = (await res.text()).trim();
+      const latencyMs = Date.now() - started;
+      if (res.ok && bodyLooksHealthy(text)) {
+        return {
+          ok: true,
+          configured: true,
+          reachable: true,
+          latencyMs,
+          path,
+          detail: text.slice(0, 80) || 'Healthy',
+        };
+      }
+      lastError = `HTTP ${res.status}${text ? `: ${text.slice(0, 80)}` : ''}`;
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        lastError = `health timeout after ${timeoutMs}ms`;
+        // Hung accept-with-no-bytes: further paths will not help.
+        break;
+      } else if (err instanceof Error) {
+        lastError = err.message || 'fetch failed';
+      } else {
+        lastError = 'fetch failed';
+      }
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  return {
+    ok: false,
+    configured,
+    reachable: false,
+    latencyMs: Date.now() - started,
+    path: null,
+    detail: lastError,
+    error: `MT5 bridge health check failed (${lastError})`,
+  };
+}
+
+/**
  * Connect live MT5 → session token.
  * mt5rest: GET /ConnectEx?user&password&server
  * bridge:  POST /api/mt5/connect { user, password, server }
@@ -126,9 +215,31 @@ async function connectLiveMt5({ user, password, server }) {
     };
   }
 
+  // Fail fast when the droplet is hung — do not burn the whole serverless budget.
+  const health = await probeBridgeHealth({ timeoutMs: 3500 });
+  if (!health.ok) {
+    return {
+      ok: false,
+      status: 503,
+      error: humanizeConnectError(
+        health.error || 'MT5 bridge health check failed',
+        { server: serverStr },
+      ),
+      bridge: {
+        ok: false,
+        reachable: false,
+        latencyMs: health.latencyMs,
+        detail: health.detail,
+      },
+    };
+  }
+
   const ctrl = new AbortController();
-  // ConnectEx may run up to ~45s (cluster members + nearest ping).
-  const t = setTimeout(() => ctrl.abort(), 55000);
+  // Fit ConnectEx inside Vercel maxDuration (60s) with headroom after health.
+  // Real/Demo cluster walks can exceed short Hobby limits — prefer honest timeout.
+  const connectTimeoutSeconds = 40;
+  const abortMs = (connectTimeoutSeconds + 8) * 1000;
+  const t = setTimeout(() => ctrl.abort(), abortMs);
   try {
     let res;
     if (isMt5Rest()) {
@@ -136,8 +247,8 @@ async function connectLiveMt5({ user, password, server }) {
         user: userStr,
         password: passStr,
         server: serverStr,
-        connectTimeoutSeconds: '45',
-        connectTimeoutClusterMemberSeconds: '20',
+        connectTimeoutSeconds: String(connectTimeoutSeconds),
+        connectTimeoutClusterMemberSeconds: '15',
         connectToNearestByPing: 'true',
         errorReplyStatusCode: '400',
       });
@@ -184,15 +295,16 @@ async function connectLiveMt5({ user, password, server }) {
     }
     return { ok: true, token };
   } catch (err) {
+    const raw =
+      err instanceof Error && err.name === 'AbortError'
+        ? `MT5 connect timed out talking to ${serverStr || 'broker'} after ${connectTimeoutSeconds}s. Check trading password and bridge health.`
+        : err instanceof Error
+          ? err.message || 'fetch failed'
+          : 'fetch failed';
     return {
       ok: false,
       status: 502,
-      error:
-        err instanceof Error && err.name === 'AbortError'
-          ? `MT5 connect timed out talking to ${serverStr || 'broker'}. Check trading password and bridge health.`
-          : err instanceof Error
-            ? `MT5 bridge unreachable: ${err.message}`
-            : 'MT5 bridge unreachable',
+      error: humanizeConnectError(raw, { server: serverStr }),
     };
   } finally {
     clearTimeout(t);
@@ -591,7 +703,9 @@ module.exports = {
   connectLiveMt5,
   fetchLiveAccount,
   sendLiveOrder,
+  probeBridgeHealth,
   mt5Root,
   mapOrder,
   extractOrdersList,
+  humanizeConnectError,
 };

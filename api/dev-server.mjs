@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const listHandler = require(path.join(__dirname, 'brokers', 'index.js'));
 const connectHandler = require(path.join(__dirname, 'brokers', 'connect.js'));
+const healthHandler = require(path.join(__dirname, 'brokers', 'health.js'));
 const accountHandler = require(path.join(__dirname, 'brokers', 'account.js'));
 const orderHandler = require(path.join(__dirname, 'brokers', 'order.js'));
 
@@ -40,6 +41,14 @@ const server = http.createServer(async (req, res) => {
     ) {
       req.url = '/api/brokers/connect';
       await connectHandler(req, fakeRes);
+      return;
+    }
+    if (
+      url.pathname === '/api/brokers/health' ||
+      url.pathname === '/brokers/health'
+    ) {
+      req.url = '/api/brokers/health';
+      await healthHandler(req, fakeRes);
       return;
     }
     if (
