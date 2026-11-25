@@ -525,12 +525,12 @@ export function ManageEasPanel() {
 const styles = StyleSheet.create({
   wrap: { gap: 12, marginTop: 8 },
   card: {
-    backgroundColor: '#12151C',
-    borderRadius: 16,
+    backgroundColor: 'rgba(12, 16, 28, 0.78)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 14,
-    gap: 10,
+    borderColor: 'rgba(94, 200, 255, 0.28)',
+    padding: 12,
+    gap: 8,
   },
   h2: { color: '#fff', fontWeight: '800', fontSize: 16 },
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
@@ -549,7 +549,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     paddingHorizontal: 12,
     paddingVertical: 12,
-    fontSize: 15,
+    fontSize: 16, // iOS Safari zooms inputs under 16px
   },
   previewRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
   previewWrap: {

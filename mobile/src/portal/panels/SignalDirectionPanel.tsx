@@ -185,12 +185,12 @@ const styles = StyleSheet.create({
   wrap: { gap: 12, marginTop: 8 },
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
   card: {
-    backgroundColor: '#12151C',
-    borderRadius: 16,
+    backgroundColor: 'rgba(12, 16, 28, 0.78)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 14,
-    gap: 10,
+    borderColor: 'rgba(94, 200, 255, 0.28)',
+    padding: 12,
+    gap: 8,
   },
   h2: { color: '#fff', fontWeight: '800', fontSize: 16 },
   label: {
@@ -207,6 +207,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     color: '#fff',
     backgroundColor: '#0B0E14',
+    fontSize: 16, // iOS Safari zooms inputs under 16px
   },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {

@@ -6,8 +6,9 @@ import {
   statsFromLocal,
   type DashboardStats,
 } from '../data/portalStats';
+import { toSafeUserMessage } from '../safeErrors';
+import { CYAN, PURPLE, glassCard } from '../portalTheme';
 
-const ACCENT = '#7C5CFF';
 const REFRESH_TIMEOUT_MS = 4_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -96,9 +97,7 @@ export function DashboardPanel() {
             mentorEmailRef.current,
           ),
         );
-        setError(
-          err instanceof Error ? err.message : 'Refresh failed — showing local stats',
-        );
+        setError(toSafeUserMessage(err, 'portal'));
       }
     } finally {
       busyRef.current = false;
@@ -118,7 +117,6 @@ export function DashboardPanel() {
     <View style={styles.wrap}>
       <Text style={styles.hint}>
         Live portal stats for your license keys, managed EAs, and subscribers.
-        {s ? ` · source: ${s.source}` : ''}
       </Text>
       {error ? <Text style={styles.err}>{error}</Text> : null}
 
@@ -180,32 +178,27 @@ function Stat({
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 12, marginTop: 8 },
+  wrap: { gap: 10, marginTop: 6 },
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
   err: { color: '#FCA5A5', fontSize: 12 },
-  grid: { gap: 10 },
+  grid: { gap: 8 },
   stat: {
-    backgroundColor: '#12151C',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 14,
-    gap: 4,
+    ...glassCard,
   },
   statLabel: {
-    color: '#93C5FD',
+    color: CYAN,
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.6,
     textTransform: 'uppercase',
   },
-  statValue: { color: '#fff', fontSize: 28, fontWeight: '900' },
+  statValue: { color: '#fff', fontSize: 24, fontWeight: '900' },
   statSub: { color: '#9CA3AF', fontSize: 12 },
   refresh: {
     alignSelf: 'flex-start',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: ACCENT,
+    borderColor: PURPLE,
     backgroundColor: 'rgba(124,92,255,0.18)',
     paddingHorizontal: 14,
     paddingVertical: 10,
