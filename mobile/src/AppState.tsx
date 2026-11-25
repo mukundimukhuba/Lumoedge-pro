@@ -262,10 +262,13 @@ type AppStateValue = {
     | { ok: false; error: string }
   >;
   /**
-   * Access → Cape Pulse checkout. Persists a local pending row so browser/app
-   * Back lands on Approval pending (not the Access form again).
+   * Access → Cape Pulse checkout. Persists name/email + local pending so
+   * browser/app Back lands on Approval pending (not the Access form again).
    */
-  beginClientCheckout: () => Promise<
+  beginClientCheckout: (input: {
+    name: string;
+    email: string;
+  }) => Promise<
     | { ok: true; checkoutUrl: string; subscription: SubscriptionRow }
     | { ok: false; error: string }
   >;
@@ -662,79 +665,92 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       !canAccessLicenseSection,
   );
 
-  const beginClientCheckout: AppStateValue['beginClientCheckout'] =
-    async () => {
-      const localId = uid('sub');
-      const ref = `cape-pulse-${Date.now()}`;
-      const now = new Date().toISOString();
-      const localSub: SubscriptionRow = {
-        id: localId,
-        clientName: 'Cape Pulse checkout',
-        clientEmail: '',
-        amountUsd: 35,
-        paymentMethod: 'Cape Pulse',
-        paymentReference: ref,
-        paymentProof: ref,
-        paymentDate: now,
-        status: 'pending',
-        createdAt: now,
-      };
-      const access: EaAccess = {
-        email: '',
-        name: 'Cape Pulse checkout',
-        unlockedAt: now,
-        product: 'Lumo Edge Pro',
-        priceUsd: 35,
-      };
-      try {
-        await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(localSub));
-        await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(access));
-        await AsyncStorage.setItem(
-          CLIENT_CHECKOUT_KEY,
-          JSON.stringify({
-            id: localId,
-            startedAt: now,
-            checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
-          }),
-        );
-      } catch {
-        return { ok: false, error: 'Could not save checkout state' };
-      }
-      setClientSubscription(localSub);
-      setEaAccess(access);
-      setSubscriptionReady(true);
+  const beginClientCheckout: AppStateValue['beginClientCheckout'] = async ({
+    name,
+    email,
+  }) => {
+    const clientName = name.trim();
+    const clientEmail = email.trim().toLowerCase();
+    if (!clientName) return { ok: false, error: 'Enter your name' };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
+      return { ok: false, error: 'Enter a valid email' };
+    }
 
-      // Best-effort remote pending row — local pending already gates the wait UI.
-      void submitSubscription({
-        clientName: 'Cape Pulse checkout',
-        clientEmail: `cape.${localId.replace(/[^a-z0-9]/gi, '').slice(-10)}@checkout.pending`,
-        paymentMethod: 'Cape Pulse',
-        paymentReference: ref,
-        paymentProof: ref,
-        amountUsd: 35,
-      }).then(async (submitted) => {
-        if (!submitted.ok) return;
-        try {
-          const merged = {
-            ...submitted.subscription,
-            // Keep local empty email until user links a real one.
-            clientEmail: submitted.subscription.clientEmail || '',
-            paymentMethod: 'Cape Pulse',
-            paymentReference: ref,
-          };
-          await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(merged));
-          setClientSubscription(merged);
-        } catch {
-          /* ignore */
-        }
-      });
-
-      return {
-        ok: true,
-        checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
-        subscription: localSub,
-      };
+    const localId = uid('sub');
+    const ref = `cape-pulse-${Date.now()}`;
+    const now = new Date().toISOString();
+    const localSub: SubscriptionRow = {
+      id: localId,
+      clientName,
+      clientEmail,
+      amountUsd: 35,
+      paymentMethod: 'Cape Pulse',
+      paymentReference: ref,
+      paymentProof: ref,
+      paymentDate: now,
+      status: 'pending',
+      createdAt: now,
     };
+    const access: EaAccess = {
+      email: clientEmail,
+      name: clientName,
+      unlockedAt: now,
+      product: 'Lumo Edge Pro',
+      priceUsd: 35,
+    };
+    try {
+      await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(localSub));
+      await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(access));
+      await AsyncStorage.setItem(
+        CLIENT_CHECKOUT_KEY,
+        JSON.stringify({
+          id: localId,
+          startedAt: now,
+          checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
+          clientEmail,
+          clientName,
+        }),
+      );
+    } catch {
+      return { ok: false, error: 'Could not save checkout state' };
+    }
+    setClientSubscription(localSub);
+    setEaAccess(access);
+    setSubscriptionReady(true);
+
+    // Best-effort remote pending — local pending already gates the wait UI.
+    void submitSubscription({
+      clientName,
+      clientEmail,
+      paymentMethod: 'Cape Pulse',
+      paymentReference: ref,
+      paymentProof: ref,
+      amountUsd: 35,
+    }).then(async (submitted) => {
+      if (!submitted.ok) return;
+      try {
+        const merged = {
+          ...submitted.subscription,
+          clientName:
+            submitted.subscription.clientName || clientName,
+          clientEmail:
+            submitted.subscription.clientEmail || clientEmail,
+          paymentMethod: 'Cape Pulse',
+          paymentReference: ref,
+        };
+        await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(merged));
+        setClientSubscription(merged);
+      } catch {
+        /* ignore */
+      }
+    });
+
+    return {
+      ok: true,
+      checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
+      subscription: localSub,
+    };
+  };
 
   const unlockEaAccess: AppStateValue['unlockEaAccess'] = async ({
     email,
