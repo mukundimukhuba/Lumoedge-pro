@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -13,15 +13,20 @@ import {
   type Mt5Link,
 } from '../../brokers/mt5Token';
 import { publishMirrorSignal } from '../data/signalsApi';
+import { scopeCatalogForMentor } from '../mentorScope';
 
 const ACCENT = '#7C5CFF';
 const GREEN = '#22C55E';
 
 export function SelfHostingPanel() {
   const { eas, mentor, selected } = useAppState();
+  const myEas = useMemo(
+    () => scopeCatalogForMentor(eas, [], mentor?.email).eas,
+    [eas, mentor?.email],
+  );
   const [link, setLink] = useState<Mt5Link | null>(null);
   const [symbol, setSymbol] = useState(selected[0] || 'EURUSD');
-  const [eaId, setEaId] = useState(eas[0]?.id || '');
+  const [eaId, setEaId] = useState(myEas[0]?.id || '');
   const [direction, setDirection] = useState<'buy' | 'sell'>('buy');
   const [lot, setLot] = useState('0.01');
   const [note, setNote] = useState('');
@@ -38,10 +43,12 @@ export function SelfHostingPanel() {
   }, [refreshLink]);
 
   useEffect(() => {
-    if (!eaId && eas[0]?.id) setEaId(eas[0].id);
-  }, [eas, eaId]);
+    if (!myEas.some((e) => e.id === eaId)) {
+      setEaId(myEas[0]?.id || '');
+    }
+  }, [myEas, eaId]);
 
-  const activeEa = eas.find((e) => e.id === eaId) || eas[0];
+  const activeEa = myEas.find((e) => e.id === eaId) || myEas[0];
   const symbols =
     activeEa?.symbols?.length
       ? activeEa.symbols
@@ -160,11 +167,11 @@ export function SelfHostingPanel() {
 
       <View style={styles.card}>
         <Text style={styles.h2}>3. EA fan-out</Text>
-        {eas.length === 0 ? (
+        {myEas.length === 0 ? (
           <Text style={styles.warn}>Create a robot under Manage EAs first.</Text>
         ) : (
           <View style={styles.chips}>
-            {eas.map((ea) => {
+            {myEas.map((ea) => {
               const on = ea.id === (activeEa?.id || '');
               return (
                 <Pressable

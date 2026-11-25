@@ -23,6 +23,8 @@ export type StoredEa = {
   pictureUri: string | null;
   symbols: string[];
   createdAt: string;
+  /** Mentor who owns this EA in the portal (isolation). */
+  ownerEmail?: string | null;
 };
 
 export type StoredLicenseKey = {
@@ -216,11 +218,17 @@ function mergeKeysByKeyString(
 function mergeEaPreferPicture(primary: StoredEa[], secondary: StoredEa[]) {
   const merged = mergeById(primary, secondary);
   return merged.map((e) => {
-    if (e.pictureUri) return e;
     const other =
       secondary.find((x) => x.id === e.id) ||
       primary.find((x) => x.id === e.id);
-    return other?.pictureUri ? { ...e, pictureUri: other.pictureUri } : e;
+    let next = e;
+    if (!next.pictureUri && other?.pictureUri) {
+      next = { ...next, pictureUri: other.pictureUri };
+    }
+    if (!next.ownerEmail && other?.ownerEmail) {
+      next = { ...next, ownerEmail: other.ownerEmail };
+    }
+    return next;
   });
 }
 
@@ -240,6 +248,10 @@ function rowToEa(row: Record<string, unknown>): StoredEa {
     pictureUri: (row.picture_uri as string | null) ?? null,
     symbols: Array.isArray(row.symbols) ? (row.symbols as string[]) : [],
     createdAt: String(row.created_at ?? new Date().toISOString()),
+    ownerEmail:
+      (row.owner_email as string | null) ??
+      (row.ownerEmail as string | null) ??
+      null,
   };
 }
 
@@ -283,12 +295,65 @@ type RemoteFetch =
   | { ok: true; eas: StoredEa[]; keys: StoredLicenseKey[] }
   | { ok: false; eas: []; keys: []; error?: string };
 
-async function fetchRemoteCatalog(): Promise<RemoteFetch> {
+export type CatalogLoadOpts = {
+  /**
+   * When set (non–super-admin mentor portal session), only that mentor’s
+   * EAs/keys are fetched/merged so other mentors never appear in the portal.
+   */
+  scopeOwnerEmail?: string | null;
+  /** Super admin bypasses scope and loads the full catalog. */
+  isSuperAdmin?: boolean;
+};
+
+async function fetchRemoteCatalog(
+  opts?: CatalogLoadOpts,
+): Promise<RemoteFetch> {
   const sb = getSupabase();
   if (!sb) {
     return { ok: false, eas: [], keys: [], error: 'supabase not configured' };
   }
+  const scope =
+    opts?.scopeOwnerEmail && !opts?.isSuperAdmin
+      ? String(opts.scopeOwnerEmail).trim().toLowerCase()
+      : '';
   try {
+    if (scope) {
+      // Prefer isolation RPCs (migration 006); fall back to filtered selects.
+      const [easRpc, keysRpc] = await Promise.all([
+        sb.rpc('list_mentor_eas', { actor_email: scope }),
+        sb.rpc('list_mentor_license_keys', { actor_email: scope }),
+      ]);
+      if (!easRpc.error && !keysRpc.error) {
+        const eaRows = (easRpc.data || []) as Record<string, unknown>[];
+        const keyRows = (keysRpc.data || []) as Record<string, unknown>[];
+        return {
+          ok: true,
+          eas: eaRows.map((r) => rowToEa(r)),
+          keys: keyRows.map((r) => rowToKey(r)),
+        };
+      }
+
+      const [easRes, keysRes] = await Promise.all([
+        sb.from('managed_eas').select('*').eq('owner_email', scope),
+        sb.from('license_keys').select('*').eq('issued_by_email', scope),
+      ]);
+      if (easRes.error || keysRes.error) {
+        const msg =
+          easRes.error?.message || keysRes.error?.message || 'fetch failed';
+        console.warn('[edges] supabase scoped catalog fetch failed', msg);
+        return { ok: false, eas: [], keys: [], error: msg };
+      }
+      return {
+        ok: true,
+        eas: (easRes.data || []).map((r) =>
+          rowToEa(r as Record<string, unknown>),
+        ),
+        keys: (keysRes.data || []).map((r) =>
+          rowToKey(r as Record<string, unknown>),
+        ),
+      };
+    }
+
     const [easRes, keysRes] = await Promise.all([
       sb.from('managed_eas').select('*'),
       sb.from('license_keys').select('*'),
@@ -448,6 +513,7 @@ async function pushRemoteCatalog(
       symbols: e.symbols ?? [],
       created_at: e.createdAt,
       updated_at: new Date().toISOString(),
+      owner_email: e.ownerEmail ?? null,
     }));
     const keyRows = keysRemote.map((k) => ({
       id: k.id,
@@ -597,7 +663,9 @@ export async function syncIssuedLicenseRemote(
   }
 }
 
-export async function loadLicenseCatalog(): Promise<{
+export async function loadLicenseCatalog(
+  opts?: CatalogLoadOpts,
+): Promise<{
   eas: StoredEa[];
   keys: StoredLicenseKey[];
 }> {
@@ -607,7 +675,7 @@ export async function loadLicenseCatalog(): Promise<{
 
   // Remote (cross-device) merges in when Supabase secrets are configured.
   // Failed fetches must NOT be treated as an empty catalog.
-  const remote = await fetchRemoteCatalog();
+  const remote = await fetchRemoteCatalog(opts);
   const remoteEas = remote.ok ? remote.eas : [];
   const remoteKeys = remote.ok ? remote.keys : [];
 
@@ -617,12 +685,26 @@ export async function loadLicenseCatalog(): Promise<{
   let keys = mergeKeysByKeyString(memoryKeys, diskKeys);
   keys = mergeKeysByKeyString(keys, remoteKeys);
 
+  // Portal mentor session: drop other mentors’ rows so Manage EA / Generate
+  // never mixes catalogs (even if disk still has legacy shared data).
+  if (opts?.scopeOwnerEmail && !opts?.isSuperAdmin) {
+    const { scopeCatalogForMentor } = await import('./portal/mentorScope');
+    const scoped = scopeCatalogForMentor(
+      eas,
+      keys,
+      opts.scopeOwnerEmail,
+    );
+    eas = scoped.eas;
+    keys = scoped.keys;
+  }
+
   // Rehydrate any pictures stripped from localStorage by quota — IndexedDB vault.
   eas = await hydrateEasFromVault(eas);
   keys = await hydrateKeysFromVault(keys);
 
   // Last resort: rebuild stub EAs from vault after a localStorage wipe.
-  if (!eas.length) {
+  // Skip when scoped — vault stubs have no owner and would leak into portal.
+  if (!eas.length && !(opts?.scopeOwnerEmail && !opts?.isSuperAdmin)) {
     eas = await recoverEasFromVault(eas);
   }
 

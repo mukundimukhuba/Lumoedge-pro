@@ -1,5 +1,6 @@
 import { getSupabase } from '../../supabase/client';
 import type { LicenseKey, ManagedEa } from '../../AppState';
+import { isSuperAdminEmail } from '../mentorScope';
 
 export type DashboardStats = {
   keysTotal: number;
@@ -34,13 +35,26 @@ export function statsFromLocal(
   eas: ManagedEa[],
   mentorEmail?: string | null,
 ): DashboardStats {
-  const mine = mentorEmail
-    ? keys.filter(
-        (k) =>
-          !(k as LicenseKey & { issuedByEmail?: string }).issuedByEmail ||
-          (k as LicenseKey & { issuedByEmail?: string }).issuedByEmail ===
-            mentorEmail,
+  const actor = (mentorEmail || '').trim().toLowerCase();
+  const scope = actor && !isSuperAdminEmail(actor);
+  const myEas = scope
+    ? eas.filter(
+        (e) =>
+          ((e as ManagedEa & { ownerEmail?: string | null }).ownerEmail || '')
+            .trim()
+            .toLowerCase() === actor,
       )
+    : eas;
+  const myEaIds = new Set(myEas.map((e) => e.id));
+  const mine = scope
+    ? keys.filter((k) => {
+        const issued = (
+          (k as LicenseKey & { issuedByEmail?: string }).issuedByEmail || ''
+        )
+          .trim()
+          .toLowerCase();
+        return issued === actor || myEaIds.has(k.eaId);
+      })
     : keys;
 
   let active = 0;
@@ -66,7 +80,7 @@ export function statsFromLocal(
     keysActive: active,
     keysUnused: unused,
     keysRevoked: revoked,
-    easCount: eas.length,
+    easCount: scope ? myEas.length : eas.length,
     subscribers: assignees.size || active,
     source: 'local',
   };
@@ -82,16 +96,26 @@ export async function fetchDashboardStats(opts: {
   if (!sb) return local;
 
   try {
-    // Prefer enriched columns when migration 004 is applied; fall back to id-only.
+    const actor = (opts.mentorEmail || '').trim().toLowerCase();
+    const scope = Boolean(actor && !isSuperAdminEmail(actor));
+
+    // Prefer enriched columns when migration 004/006 is applied; fall back to id-only.
     let keysRes = await sb
       .from('license_keys')
       .select('id, status, activated_at, assignee_email, issued_by_email');
     if (keysRes.error) {
       keysRes = await sb.from('license_keys').select('id');
     }
-    const easRes = await sb
+    let easQuery = sb
       .from('managed_eas')
       .select('id', { count: 'exact', head: true });
+    if (scope) {
+      easQuery = sb
+        .from('managed_eas')
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_email', actor);
+    }
+    const easRes = await easQuery;
 
     if (keysRes.error) return local;
 
@@ -114,7 +138,7 @@ export async function fetchDashboardStats(opts: {
     if (!hasMeta) {
       return {
         ...local,
-        keysTotal: Math.max(local.keysTotal, rows.length),
+        keysTotal: Math.max(local.keysTotal, scope ? local.keysTotal : rows.length),
         easCount: easRes.count ?? local.easCount,
         source: 'supabase',
       };
@@ -129,12 +153,8 @@ export async function fetchDashboardStats(opts: {
       const issued = String(
         (r as { issued_by_email?: string }).issued_by_email || '',
       ).toLowerCase();
-      if (
-        opts.mentorEmail &&
-        issued &&
-        issued !== opts.mentorEmail.toLowerCase()
-      ) {
-        continue;
+      if (scope) {
+        if (issued !== actor) continue;
       }
       counted += 1;
       const st = normalizeStatus(

@@ -6,14 +6,20 @@ const {
   resolvePictureUri,
   stripDataUrl,
 } = require('../_lib/supabaseAdmin');
+const {
+  normalizeEmail,
+  assertCanWriteOwnedRow,
+} = require('../_lib/mentorScope');
 
 /**
  * POST /api/eas/put
- * Body: { ea: { id, name?, pictureUri?, symbols?, createdAt? }, cascade?: true }
+ * Body: { ea: { id, name?, pictureUri?, symbols?, createdAt?, ownerEmail? },
+ *         actorEmail?, cascade?: true }
  *
  * Managed EA is source of truth for branding. Upserts the EA, uploads data:
  * logos to public Storage URLs, then cascades name + picture to every
  * license_keys row with that ea_id (and Storage catalog mirrors).
+ * Portal writes must include actorEmail; cross-mentor updates are rejected.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -48,10 +54,47 @@ module.exports = async function handler(req, res) {
     return json(res, 400, { ok: false, error: 'ea id is required' });
   }
 
+  const actorEmail = normalizeEmail(
+    body.actorEmail || eaIn.ownerEmail || eaIn.owner_email || '',
+  );
+  const claimedOwner = normalizeEmail(
+    eaIn.ownerEmail || eaIn.owner_email || actorEmail || '',
+  );
+
+  let existingOwner = '';
+  let rowExists = false;
+  try {
+    const sel = await sbFetch(
+      `/rest/v1/managed_eas?id=eq.${encodeURIComponent(eaId)}&select=id,owner_email&limit=1`,
+    );
+    if (sel.ok && Array.isArray(sel.json) && sel.json.length) {
+      rowExists = true;
+      existingOwner = normalizeEmail(sel.json[0].owner_email);
+    }
+  } catch {
+    /* ownership check best-effort when table missing */
+  }
+
+  const gate = assertCanWriteOwnedRow({
+    actorEmail,
+    ownerEmail: existingOwner,
+    claimedOwnerEmail: claimedOwner,
+    rowExists,
+  });
+  if (!gate.ok) {
+    return json(res, gate.status, {
+      ok: false,
+      error: gate.error,
+      configured: true,
+    });
+  }
+
   const cascade = body.cascade !== false;
   const rawPic = eaIn.pictureUri || eaIn.picture_uri || null;
   const durablePic =
     (await resolvePictureUri(`eas/${eaId}`, rawPic)) || stripDataUrl(rawPic);
+
+  const ownerEmail = existingOwner || claimedOwner || actorEmail || null;
 
   const ea = {
     id: eaId,
@@ -60,6 +103,7 @@ module.exports = async function handler(req, res) {
     symbols: Array.isArray(eaIn.symbols) ? eaIn.symbols : [],
     created_at: eaIn.createdAt || eaIn.created_at || new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    owner_email: ownerEmail,
   };
 
   let tableError = null;
@@ -157,6 +201,7 @@ module.exports = async function handler(req, res) {
       pictureUri: durablePic,
       symbols: ea.symbols,
       createdAt: ea.created_at,
+      ownerEmail: ownerEmail,
     },
     picture_uri: durablePic,
   });
