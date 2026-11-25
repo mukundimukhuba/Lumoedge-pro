@@ -616,14 +616,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         setSubscriptionReady(true);
         return latest;
       }
-      // Keep Cape Pulse checkout-started local pending — Back must not reset
-      // to Access while payment/approval is still in flight.
-      const localCheckout = await readLocal();
-      if (localCheckout && isCapePulseCheckoutPending(localCheckout)) {
-        setClientSubscription(localCheckout);
-        setSubscriptionReady(true);
-        return localCheckout;
-      }
+      // Empty remote list → no admin-visible pending. Drop local-only fakes
+      // (do not keep Cape Pulse local rows that never reached the server).
       await dropStaleClientSession();
       if (!activeEaRef.current) {
         setClientSubscription(null);
@@ -676,21 +670,41 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: 'Enter a valid email' };
     }
 
-    const localId = uid('sub');
     const ref = `cape-pulse-${Date.now()}`;
-    const now = new Date().toISOString();
-    const localSub: SubscriptionRow = {
-      id: localId,
+
+    // Must create a real server pending row BEFORE opening Cape Pulse.
+    // Fire-and-forget + same-tab navigation was aborting the request, so
+    // clients saw local "Approval pending" while Super Admin saw none.
+    const submitted = await submitSubscription({
       clientName,
       clientEmail,
-      amountUsd: 35,
       paymentMethod: 'Cape Pulse',
       paymentReference: ref,
       paymentProof: ref,
-      paymentDate: now,
-      status: 'pending',
-      createdAt: now,
+      amountUsd: 35,
+    });
+    if (!submitted.ok) {
+      return { ok: false, error: submitted.error };
+    }
+    // Storage-only fallback is not visible/approvable in Super Admin list
+    // until migration 008 (subscriptions table + RPCs) is applied.
+    if (submitted.via === 'storage') {
+      return {
+        ok: false,
+        error:
+          'Payment registration is not fully set up yet. Please try again later or contact support.',
+      };
+    }
+
+    const serverSub: SubscriptionRow = {
+      ...submitted.subscription,
+      clientName: submitted.subscription.clientName || clientName,
+      clientEmail: submitted.subscription.clientEmail || clientEmail,
+      paymentMethod: submitted.subscription.paymentMethod || 'Cape Pulse',
+      paymentReference: submitted.subscription.paymentReference || ref,
+      status: (submitted.subscription.status || 'pending') as SubscriptionRow['status'],
     };
+    const now = new Date().toISOString();
     const access: EaAccess = {
       email: clientEmail,
       name: clientName,
@@ -699,12 +713,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       priceUsd: 35,
     };
     try {
-      await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(localSub));
+      await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(serverSub));
       await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(access));
       await AsyncStorage.setItem(
         CLIENT_CHECKOUT_KEY,
         JSON.stringify({
-          id: localId,
+          id: serverSub.id,
           startedAt: now,
           checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
           clientEmail,
@@ -714,41 +728,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     } catch {
       return { ok: false, error: 'Could not save checkout state' };
     }
-    setClientSubscription(localSub);
+    setClientSubscription(serverSub);
     setEaAccess(access);
     setSubscriptionReady(true);
-
-    // Best-effort remote pending — local pending already gates the wait UI.
-    void submitSubscription({
-      clientName,
-      clientEmail,
-      paymentMethod: 'Cape Pulse',
-      paymentReference: ref,
-      paymentProof: ref,
-      amountUsd: 35,
-    }).then(async (submitted) => {
-      if (!submitted.ok) return;
-      try {
-        const merged = {
-          ...submitted.subscription,
-          clientName:
-            submitted.subscription.clientName || clientName,
-          clientEmail:
-            submitted.subscription.clientEmail || clientEmail,
-          paymentMethod: 'Cape Pulse',
-          paymentReference: ref,
-        };
-        await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(merged));
-        setClientSubscription(merged);
-      } catch {
-        /* ignore */
-      }
-    });
 
     return {
       ok: true,
       checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
-      subscription: localSub,
+      subscription: serverSub,
     };
   };
 

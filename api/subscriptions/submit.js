@@ -136,23 +136,23 @@ module.exports = async function handler(req, res) {
       });
     }
   } catch {
-    /* storage fallback */
+    /* fall through */
   }
 
+  // Do not report Storage-only success to clients: Super Admin list/approve
+  // need the subscriptions table + RPCs from migration 008. Best-effort
+  // Storage write is for ops recovery only — still return a safe failure.
   try {
     await storagePutJson(`catalog/subscriptions/${id}.json`, row);
-    return json(res, 200, {
-      ok: true,
-      via: 'storage',
-      subscription: mapSub(row),
-      hint: 'Tables missing — wrote to Storage. Apply migration 008 for full DB.',
-    });
-  } catch (err) {
-    return json(res, 502, {
-      ok: false,
-      error: String(err?.message || err),
-    });
+  } catch {
+    /* ignore */
   }
+  return json(res, 503, {
+    ok: false,
+    error:
+      'Payment registration is temporarily unavailable. Please try again later or contact support.',
+    code: 'SUBSCRIPTIONS_SCHEMA_MISSING',
+  });
 };
 
 function mapSub(row) {
