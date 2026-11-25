@@ -28,7 +28,8 @@ const CYAN = '#38BDF8';
 
 /**
  * Client payment-approval wait only (NOT mentor /portal/pending).
- * Shown for genuine pending rows, including Cape Pulse checkout-started.
+ * Pending = registered in Supabase; payment is verified manually by Super Admin.
+ * No payment-site callbacks or auto-linking.
  */
 export function PaymentPendingScreen() {
   const insets = useSafeAreaInsets();
@@ -59,9 +60,7 @@ export function PaymentPendingScreen() {
     ? 'Your payment was declined. Contact support or start again from Access.'
     : expired
       ? 'Your subscription has expired. Contact support to renew, or start again with a different email.'
-      : checkoutPending && !email
-        ? 'Your account is awaiting approval. Complete payment on Cape Pulse if you have not already — coming Back keeps you on this waiting page.'
-        : 'Your account is awaiting approval. You can continue once a Super Admin approves your payment.';
+      : 'Pay externally if you have not already (Cape Pulse or elsewhere). A Super Admin verifies payment manually — this app does not sync with the payment site. You can continue once approved.';
 
   const checkStatus = async () => {
     setBusy(true);
@@ -85,7 +84,9 @@ export function PaymentPendingScreen() {
         setMsg('Your subscription has expired. Contact support to renew.');
         return;
       }
-      setMsg('Still pending — a Super Admin has not approved your payment yet.');
+      setMsg(
+        'Still pending — a Super Admin has not verified your payment yet.',
+      );
     } catch (err) {
       setMsg(toSafeUserMessage(err, 'generic'));
     } finally {
@@ -93,15 +94,15 @@ export function PaymentPendingScreen() {
     }
   };
 
-  const reopenCheckout = async () => {
+  const openPaymentLink = async () => {
     setBusy(true);
     setMsg('');
     try {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.location.assign(LUMO_EDGE_PRO_CHECKOUT_URL);
-        return;
+        window.open(LUMO_EDGE_PRO_CHECKOUT_URL, '_blank', 'noopener,noreferrer');
+      } else {
+        await Linking.openURL(LUMO_EDGE_PRO_CHECKOUT_URL);
       }
-      await Linking.openURL(LUMO_EDGE_PRO_CHECKOUT_URL);
     } catch (err) {
       setMsg(toSafeUserMessage(err, 'generic'));
     } finally {
@@ -201,15 +202,17 @@ export function PaymentPendingScreen() {
               </Pressable>
             ) : null}
 
-            {checkoutPending ? (
+            {!declined && !expired ? (
               <Pressable
                 style={[styles.secondary, busy && styles.disabled]}
-                onPress={() => void reopenCheckout()}
+                onPress={() => void openPaymentLink()}
                 disabled={busy}
                 accessibilityRole="button"
-                accessibilityLabel="Open payment page again"
+                accessibilityLabel="Open optional payment page"
               >
-                <Text style={styles.secondaryText}>Open payment page again</Text>
+                <Text style={styles.secondaryText}>
+                  Open payment page (optional)
+                </Text>
               </Pressable>
             ) : null}
 

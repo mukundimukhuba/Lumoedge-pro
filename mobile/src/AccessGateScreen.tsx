@@ -31,8 +31,9 @@ function isValidEmail(v: string) {
 
 /**
  * Front door before EA control UI.
- * Collects Name + Email, then opens Cape Pulse checkout (no payment proof form).
- * Pending state is persisted so Back lands on Approval pending with that email.
+ * Name + email → create pending subscription in Supabase.
+ * Payment is external (Cape Pulse or elsewhere) — no payment-site callback.
+ * Super Admin verifies manually in portal Subscriptions.
  */
 export function AccessGateScreen() {
   const { beginClientCheckout } = useAppState();
@@ -41,7 +42,7 @@ export function AccessGateScreen() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const openCheckout = async () => {
+  const registerPending = async () => {
     setError('');
     if (!name.trim()) {
       setError('Enter your name');
@@ -62,18 +63,18 @@ export function AccessGateScreen() {
         setBusy(false);
         return;
       }
-      // Persist first, then leave so browser Back restores waiting UI + email.
-      if (Platform.OS === 'web' && typeof window !== 'undefined') {
-        window.location.assign(result.checkoutUrl);
-        return;
-      }
+      // Optional external pay link — never wait on Cape Pulse callbacks.
+      // Stay in-app on Approval pending (do not same-tab navigate away).
       try {
-        await Linking.openURL(result.checkoutUrl);
+        if (Platform.OS === 'web' && typeof window !== 'undefined') {
+          window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer');
+        } else {
+          await Linking.openURL(result.checkoutUrl);
+        }
       } catch {
-        setError(toSafeUserMessage('Could not open payment page', 'register'));
-        setBusy(false);
-        return;
+        /* payment link optional — pending row already created */
       }
+      // Routing flips to PaymentPendingScreen via AppState; no further nav.
       setBusy(false);
     } catch (err) {
       setError(toSafeUserMessage(err, 'register'));
@@ -102,9 +103,9 @@ export function AccessGateScreen() {
           <Text style={styles.product}>Lumo Edge Pro</Text>
           <Text style={styles.price}>$35</Text>
           <Text style={styles.tagline}>
-            Enter your name and email, then continue to payment. After you pay,
-            return here — Approval pending shows this email until a Super Admin
-            approves.
+            Enter your name and email to register. Pay externally (Cape Pulse or
+            elsewhere) — a Super Admin verifies payment manually before your
+            license unlocks. This site does not read the payment page.
           </Text>
 
           <View style={styles.form}>
@@ -141,20 +142,21 @@ export function AccessGateScreen() {
                 pressed && { opacity: 0.85 },
                 busy && { opacity: 0.6 },
               ]}
-              onPress={() => void openCheckout()}
+              onPress={() => void registerPending()}
               disabled={busy}
               accessibilityRole="button"
-              accessibilityLabel="Continue to Cape Pulse payment"
+              accessibilityLabel="Register for Lumo Edge Pro access"
             >
               {busy ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.ctaText}>Continue to payment · $35</Text>
+                <Text style={styles.ctaText}>Register · $35</Text>
               )}
             </Pressable>
             <Text style={styles.fine}>
-              Opens Cape Pulse checkout. Going Back brings you to Approval
-              pending with your email — not this screen again.
+              Creates a pending subscription, then opens an optional payment
+              link. You stay on Approval pending here until a Super Admin
+              approves.
             </Text>
           </View>
         </ScrollView>
