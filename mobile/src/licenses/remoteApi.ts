@@ -80,12 +80,16 @@ export async function fetchLicenseStatus(): Promise<{
 export async function putLicenseRemote(
   key: StoredLicenseKey,
   ea?: StoredEa | null,
+  opts?: { actorEmail?: string | null },
 ): Promise<RemoteSyncResult> {
+  const actorEmail =
+    opts?.actorEmail || key.issuedByEmail || ea?.ownerEmail || null;
   try {
     const res = await fetch(`${apiBase()}/api/licenses/put`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
+        actorEmail,
         key: {
           id: key.id,
           eaId: key.eaId,
@@ -107,6 +111,7 @@ export async function putLicenseRemote(
               pictureUri: ea.pictureUri,
               symbols: ea.symbols,
               createdAt: ea.createdAt,
+              ownerEmail: ea.ownerEmail ?? key.issuedByEmail ?? null,
             }
           : undefined,
       }),
@@ -246,19 +251,23 @@ export async function fetchEaRemote(eaId: string): Promise<EaRemoteResult> {
  */
 export async function putEaBrandingRemote(
   ea: StoredEa,
+  opts?: { actorEmail?: string | null },
 ): Promise<EaRemoteResult> {
+  const actorEmail = opts?.actorEmail || ea.ownerEmail || null;
   try {
     const res = await fetch(`${apiBase()}/api/eas/put`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
         cascade: true,
+        actorEmail,
         ea: {
           id: ea.id,
           name: ea.name,
           pictureUri: ea.pictureUri,
           symbols: ea.symbols,
           createdAt: ea.createdAt,
+          ownerEmail: ea.ownerEmail ?? actorEmail,
         },
       }),
     });

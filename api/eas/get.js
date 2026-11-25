@@ -97,6 +97,9 @@ function mapEa(row) {
     name: String(row.name || ''),
     pictureUri: row.picture_uri || row.pictureUri || null,
     symbols: Array.isArray(row.symbols) ? row.symbols : [],
-    createdAt: String(row.created_at || row.createdAt || new Date().toISOString()),
+    createdAt: String(
+      row.created_at || row.createdAt || new Date().toISOString(),
+    ),
+    ownerEmail: row.owner_email || row.ownerEmail || null,
   };
 }

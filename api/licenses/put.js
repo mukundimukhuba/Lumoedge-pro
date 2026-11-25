@@ -7,14 +7,20 @@ const {
   resolvePictureUri,
   stripDataUrl,
 } = require('../_lib/supabaseAdmin');
+const {
+  normalizeEmail,
+  assertCanWriteOwnedRow,
+} = require('../_lib/mentorScope');
 
 /**
  * POST /api/licenses/put
- * Body: { ea?: {...}, key: {...} }
+ * Body: { ea?: {...}, key: {...}, actorEmail? }
  * Writes EA + license key to Supabase tables when present; otherwise
  * durable Storage fallback under ea-pictures/catalog/.
  * Data-URL logos are uploaded to Storage and stored as public http URLs
  * (never stripped to null without attempting upload).
+ * Portal writes must stamp issued_by_email / owner_email; cross-mentor
+ * overwrites of another mentor’s EA are rejected.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -64,6 +70,52 @@ module.exports = async function handler(req, res) {
     return json(res, 400, { ok: false, error: 'ea id is required' });
   }
 
+  const actorEmail = normalizeEmail(
+    body.actorEmail ||
+      keyIn.issuedByEmail ||
+      keyIn.issued_by_email ||
+      (eaIn && (eaIn.ownerEmail || eaIn.owner_email)) ||
+      '',
+  );
+  const claimedOwner = normalizeEmail(
+    (eaIn && (eaIn.ownerEmail || eaIn.owner_email)) ||
+      keyIn.issuedByEmail ||
+      keyIn.issued_by_email ||
+      actorEmail ||
+      '',
+  );
+
+  let existingOwner = '';
+  let rowExists = false;
+  try {
+    const sel = await sbFetch(
+      `/rest/v1/managed_eas?id=eq.${encodeURIComponent(eaId)}&select=id,owner_email&limit=1`,
+    );
+    if (sel.ok && Array.isArray(sel.json) && sel.json.length) {
+      rowExists = true;
+      existingOwner = normalizeEmail(sel.json[0].owner_email);
+    }
+  } catch {
+    /* table may be missing */
+  }
+
+  // Only enforce when a portal actor / issuer is present (generate path).
+  if (actorEmail || claimedOwner) {
+    const gate = assertCanWriteOwnedRow({
+      actorEmail: actorEmail || claimedOwner,
+      ownerEmail: existingOwner,
+      claimedOwnerEmail: claimedOwner || actorEmail,
+      rowExists,
+    });
+    if (!gate.ok) {
+      return json(res, gate.status, {
+        ok: false,
+        error: gate.error,
+        configured: true,
+      });
+    }
+  }
+
   const rawEaPic =
     (eaIn && (eaIn.pictureUri || eaIn.picture_uri)) ||
     keyIn.eaPictureUri ||
@@ -81,6 +133,9 @@ module.exports = async function handler(req, res) {
     eaPictureResolved || keyPictureResolved || stripDataUrl(rawEaPic);
   const durableKeyPic =
     keyPictureResolved || eaPictureResolved || stripDataUrl(rawKeyPic);
+
+  const ownerEmail =
+    existingOwner || claimedOwner || actorEmail || null;
 
   const ea = {
     id: eaId,
@@ -100,6 +155,7 @@ module.exports = async function handler(req, res) {
       (eaIn && (eaIn.createdAt || eaIn.created_at)) ||
       new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    owner_email: ownerEmail,
   };
 
   const keyRow = {
@@ -115,7 +171,10 @@ module.exports = async function handler(req, res) {
       : ea.symbols,
     assignee_name: keyIn.assigneeName || keyIn.assignee_name || null,
     assignee_email: keyIn.assigneeEmail || keyIn.assignee_email || null,
-    issued_by_email: keyIn.issuedByEmail || keyIn.issued_by_email || null,
+    issued_by_email:
+      normalizeEmail(
+        keyIn.issuedByEmail || keyIn.issued_by_email || actorEmail || '',
+      ) || null,
     status: keyIn.status || 'unused',
     activated_at: keyIn.activatedAt || keyIn.activated_at || null,
   };

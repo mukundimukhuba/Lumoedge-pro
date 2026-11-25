@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Image,
   Platform,
@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { SYMBOLS as PRESET_SYMBOLS, useAppState } from '../AppState';
 import { compressEaPicture } from '../eaPicture';
+import { scopeCatalogForMentor } from './mentorScope';
 
 const ACCENT = '#7C5CFF';
 const fallbackMascot = require('../../assets/mascot.jpg');
@@ -64,7 +65,11 @@ function pickWebFile(accept: string, capture?: string): Promise<string | null> {
 }
 
 export function ManageEasPanel() {
-  const { eas, addEa, updateEaBranding } = useAppState();
+  const { eas, addEa, updateEaBranding, mentor } = useAppState();
+  const myEas = useMemo(
+    () => scopeCatalogForMentor(eas, [], mentor?.email).eas,
+    [eas, mentor?.email],
+  );
   const [name, setName] = useState('');
   const [pictureDataUrl, setPictureDataUrl] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -230,7 +235,8 @@ export function ManageEasPanel() {
         <Text style={styles.h2}>Create a robot</Text>
         <Text style={styles.hint}>
           Upload your own EA picture from camera, gallery, or a file — then name
-          it, pick symbols, and save.
+          it, pick symbols, and save. Robots you create stay private to your
+          mentor account (other mentors will not see them).
         </Text>
 
         <Text style={styles.label}>EA NAME</Text>
@@ -363,14 +369,15 @@ export function ManageEasPanel() {
         {savedMsg ? <Text style={styles.msg}>{savedMsg}</Text> : null}
       </View>
 
-      {eas.length > 0 ? (
+      {myEas.length > 0 ? (
         <View style={styles.card}>
           <Text style={styles.h2}>Your robots</Text>
           <Text style={styles.hint}>
             Managed EA is the source of truth — change name or picture here and
             every license key + Home updates for all clients (no re-activate).
+            Only your EAs are listed here.
           </Text>
-          {eas.map((ea) => {
+          {myEas.map((ea) => {
             const missingPic =
               !ea.pictureUri ||
               !(
