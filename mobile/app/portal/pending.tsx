@@ -15,11 +15,11 @@ export default function PortalPendingRoute() {
     return <View style={{ flex: 1, backgroundColor: '#05070D' }} />;
   }
 
-  if (isPortalUnlocked(mentor.status, mentor.email)) {
+  if (isPortalUnlocked(mentor.status, mentor.email, mentor.role)) {
     return <View style={{ flex: 1, backgroundColor: '#05070D' }} />;
   }
 
-  if (!isAwaitingApproval(mentor.status, mentor.email)) {
+  if (!isAwaitingApproval(mentor.status, mentor.email, mentor.role)) {
     return <View style={{ flex: 1, backgroundColor: '#05070D' }} />;
   }
 

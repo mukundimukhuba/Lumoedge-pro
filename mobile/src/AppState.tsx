@@ -1,4 +1,8 @@
 import {
+  loadActiveMentorSession,
+  persistActiveMentorSession,
+} from './auth/mentorAuth';
+import {
   createContext,
   useCallback,
   useContext,
@@ -229,7 +233,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const quoteSetupsRef = useRef(quoteSetups);
   quoteSetupsRef.current = quoteSetups;
   const [accent, setAccent] = useState('#FF0000');
-  const [mentor, setMentor] = useState<MentorSession | null>(null);
+  const [mentor, setMentorState] = useState<MentorSession | null>(null);
+  const setMentor = useCallback((m: MentorSession | null) => {
+    setMentorState(m);
+    void persistActiveMentorSession(m);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const restored = await loadActiveMentorSession();
+      if (cancelled || !restored) return;
+      setMentorState(restored);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const [eas, setEas] = useState<ManagedEa[]>([]);
   const [licenseKeys, setLicenseKeys] = useState<LicenseKey[]>([]);
   const [eaAccess, setEaAccess] = useState<EaAccess | null>(null);

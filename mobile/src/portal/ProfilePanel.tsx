@@ -16,7 +16,18 @@ export function ProfilePanel({ mentor }: { mentor: MentorSession }) {
             ? 'Approved'
             : mentor.status === 'declined'
               ? 'Declined'
-              : 'Pending Super Admin approval',
+              : mentor.status === 'suspended'
+                ? 'Suspended'
+                : 'Pending Super Admin approval',
+    },
+    {
+      label: 'PORTAL ROLE',
+      value:
+        mentor.role === 'super_admin' || mentor.status === 'demo'
+          ? 'Super Admin'
+          : mentor.role === 'regular_admin'
+            ? 'Regular Admin'
+            : 'Mentor',
     },
     {
       label: 'REGISTERED',

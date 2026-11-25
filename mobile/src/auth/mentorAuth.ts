@@ -7,6 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DEMO_SALT = 'edges-ea-demo-v1';
 const PROFILES_KEY = 'edges-mentor-profiles-v1';
+const ACTIVE_SESSION_KEY = 'edges-mentor-active-session-v1';
 
 /** Seed mentor email (identifier only). */
 export const DEMO_MENTOR_EMAIL = 'mukundimukhuba8@gmail.com';
@@ -33,8 +34,10 @@ export type MentorSession = {
   name: string;
   contact: string;
   createdAt: string;
-  /** demo | pending | approved | declined */
-  status: 'demo' | 'pending' | 'approved' | 'declined';
+  /** demo | pending | approved | declined | suspended */
+  status: 'demo' | 'pending' | 'approved' | 'declined' | 'suspended';
+  /** Portal role — register always creates mentor */
+  role?: 'super_admin' | 'mentor' | 'regular_admin';
 };
 
 export const SUPER_ADMIN_EMAIL = DEMO_MENTOR_EMAIL;
@@ -47,8 +50,28 @@ function normalizeStatus(
   raw: string | null | undefined,
 ): MentorSession['status'] {
   const s = String(raw || '').trim().toLowerCase();
-  if (s === 'approved' || s === 'demo' || s === 'declined') return s;
+  if (
+    s === 'approved' ||
+    s === 'demo' ||
+    s === 'declined' ||
+    s === 'suspended'
+  ) {
+    return s;
+  }
   return 'pending';
+}
+
+export function normalizePortalRole(
+  raw: string | null | undefined,
+  email?: string | null,
+): NonNullable<MentorSession['role']> {
+  if ((email || '').trim().toLowerCase() === DEMO_MENTOR_EMAIL) {
+    return 'super_admin';
+  }
+  const r = String(raw || '').trim().toLowerCase();
+  if (r === 'regular_admin' || r === 'admin') return 'regular_admin';
+  if (r === 'super_admin') return 'super_admin';
+  return 'mentor';
 }
 
 type StoredProfile = MentorSession & {
@@ -70,6 +93,7 @@ export function demoMentorSession(): MentorSession {
     contact: '+27 82 000 0001',
     createdAt: '2026-01-15T10:00:00.000Z',
     status: 'demo',
+    role: 'super_admin',
   };
 }
 
@@ -141,6 +165,10 @@ export async function verifyDemoMentor(
         name: remote.name || session.name,
         contact: remote.contact || session.contact,
         status: normalizeStatus(remote.status),
+        role: normalizePortalRole(
+          (remote as { role?: string }).role,
+          normalized,
+        ),
       };
       map[normalized] = { ...next, passwordHash: digest };
       await saveProfiles(map);
@@ -190,6 +218,10 @@ export async function refreshMentorApproval(
         contact: remote.contact || base.contact,
         createdAt: remote.createdAt || base.createdAt,
         status: normalizeStatus(remote.status),
+        role: normalizePortalRole(
+          (remote as { role?: string }).role,
+          key,
+        ),
       };
       if (stored) {
         map[key] = { ...next, passwordHash: stored.passwordHash };
@@ -223,6 +255,7 @@ export async function registerMentor(fields: {
     contact: fields.contact.trim(),
     createdAt: new Date().toISOString(),
     status: 'pending',
+    role: 'mentor',
   };
   const map = await loadProfiles();
   map[email] = { ...session, passwordHash };
@@ -261,4 +294,37 @@ export function validateSignup(fields: {
   if (fields.password.length < 8) return 'password must be at least 8 characters';
   if (fields.password !== fields.confirm) return 'passwords do not match';
   return null;
+}
+
+
+/** Persist signed-in mentor so hard reloads still hit the pending gate. */
+export async function persistActiveMentorSession(
+  session: MentorSession | null,
+): Promise<void> {
+  try {
+    if (!session) {
+      await AsyncStorage.removeItem(ACTIVE_SESSION_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(session));
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function loadActiveMentorSession(): Promise<MentorSession | null> {
+  try {
+    const raw = await AsyncStorage.getItem(ACTIVE_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MentorSession;
+    if (!parsed?.email) return null;
+    return {
+      ...parsed,
+      email: String(parsed.email).trim().toLowerCase(),
+      status: normalizeStatus(parsed.status),
+      role: normalizePortalRole(parsed.role, parsed.email),
+    };
+  } catch {
+    return null;
+  }
 }

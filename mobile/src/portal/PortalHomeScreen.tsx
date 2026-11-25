@@ -23,10 +23,11 @@ import { SettingsBrokersPanel } from './panels/SettingsBrokersPanel';
 import { SignalDirectionPanel } from './panels/SignalDirectionPanel';
 import { TopMentorsPanel } from './panels/TopMentorsPanel';
 import {
-  defaultSectionForEmail,
+  defaultSectionForSession,
   isPortalUnlocked,
   isSuperAdminEmail,
-  navForEmail,
+  navForSession,
+  resolvePortalRole,
   type NavId,
 } from './portalAccess';
 
@@ -41,12 +42,13 @@ export function PortalHomeScreen() {
   const [section, setSection] = useState<NavId>('dashboard');
 
   const navItems = useMemo(
-    () => navForEmail(mentor?.email),
-    [mentor?.email],
+    () => navForSession({ email: mentor?.email, role: mentor?.role }),
+    [mentor?.email, mentor?.role],
   );
   const isAdmin = isSuperAdminEmail(mentor?.email);
+  const portalRole = resolvePortalRole(mentor?.email, mentor?.role);
   const unlocked = Boolean(
-    mentor && isPortalUnlocked(mentor.status, mentor.email),
+    mentor && isPortalUnlocked(mentor.status, mentor.email, mentor.role),
   );
 
   useEffect(() => {
@@ -54,15 +56,15 @@ export function PortalHomeScreen() {
       router.replace('/portal');
       return;
     }
-    if (!isPortalUnlocked(mentor.status, mentor.email)) {
+    if (!isPortalUnlocked(mentor.status, mentor.email, mentor.role)) {
       router.replace('/portal/pending');
     }
   }, [mentor, router]);
 
   useEffect(() => {
     if (!mentor || !unlocked) return;
-    const next = defaultSectionForEmail(
-      mentor.email,
+    const next = defaultSectionForSession(
+      { email: mentor.email, role: mentor.role },
       String(params.section || ''),
     );
     setSection(next);
@@ -133,7 +135,11 @@ export function PortalHomeScreen() {
         </Text>
         <Text style={styles.meta}>
           Signed in as {mentor.name || mentor.mentorName} · {mentor.email}
-          {isAdmin ? ' · Super admin' : ''}
+          {isAdmin
+            ? ' · Super admin'
+            : portalRole === 'regular_admin'
+              ? ' · Regular admin'
+              : ' · Mentor'}
         </Text>
         <Text style={styles.brandLine}>Edges · Lumo Edge Pro</Text>
 

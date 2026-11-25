@@ -6,14 +6,20 @@ import {
   type MentorSession,
 } from '../auth/mentorAuth';
 import { useAppState } from '../AppState';
-import { SUPER_ADMIN_EMAIL, isPortalUnlocked } from './portalAccess';
+import {
+  REGISTRATION_PENDING_MESSAGE,
+  SUPER_ADMIN_EMAIL,
+  denialReason,
+  isPortalUnlocked,
+} from './portalAccess';
 
 const BG = '#05070D';
 const BLUE = '#3B82F6';
 const CARD = '#12151C';
 
 /**
- * Standalone wait / declined state — no Menu, no portal chrome, no sections.
+ * Standalone wait / denied state — no Menu, no portal chrome, no sections.
+ * Pending mentors see the exact registration success copy from the spec.
  */
 export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
   const router = useRouter();
@@ -21,7 +27,21 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
 
-  const declined = String(mentor.status || '').toLowerCase() === 'declined';
+  const reason = denialReason(mentor.status);
+  const declined = reason === 'declined';
+  const suspended = reason === 'suspended';
+
+  const title = declined
+    ? 'Signup declined'
+    : suspended
+      ? 'Account suspended'
+      : 'Waiting for approval';
+
+  const body = declined
+    ? 'The super admin declined this mentor account. You do not have portal access. Contact them if you believe this is a mistake.'
+    : suspended
+      ? 'Your mentor account has been suspended. Portal tools, EAs, and license keys are locked until a Super Admin reactivates you.'
+      : REGISTRATION_PENDING_MESSAGE;
 
   const logout = () => {
     setMentor(null);
@@ -40,17 +60,20 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
         return;
       }
       setMentor(next);
-      if (isPortalUnlocked(next.status, next.email)) {
+      if (isPortalUnlocked(next.status, next.email, next.role)) {
         router.replace('/portal/dashboard');
         return;
       }
-      if (String(next.status).toLowerCase() === 'declined') {
+      const nextReason = denialReason(next.status);
+      if (nextReason === 'declined') {
         setMsg('Your signup was declined by the super admin.');
         return;
       }
-      setMsg(
-        'Still waiting for super admin approval. You cannot open the portal until approved.',
-      );
+      if (nextReason === 'suspended') {
+        setMsg('Your account is suspended. Portal access remains locked.');
+        return;
+      }
+      setMsg(REGISTRATION_PENDING_MESSAGE);
     } catch {
       setMsg(
         'Could not reach the server. You remain pending — the portal stays locked.',
@@ -64,14 +87,8 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
     <View style={styles.root} accessibilityLabel="Waiting for mentor approval">
       <View style={styles.card}>
         <Text style={styles.eyebrow}>Edges Mentors Portal</Text>
-        <Text style={styles.title}>
-          {declined ? 'Signup declined' : 'Waiting for approval'}
-        </Text>
-        <Text style={styles.body}>
-          {declined
-            ? 'The super admin declined this mentor account. Contact them if you believe this is a mistake.'
-            : 'Your mentor signup was received. Do not open the portal yet — a super admin must approve your account first. There is no Menu, Dashboard, or License Keys until you are approved.'}
-        </Text>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.body}>{body}</Text>
         <Text style={styles.meta}>Signed up as</Text>
         <Text style={styles.email} selectable>
           {mentor.email}
@@ -82,7 +99,7 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
         <Text style={styles.adminHint}>Super admin: {SUPER_ADMIN_EMAIL}</Text>
         {msg ? <Text style={styles.msg}>{msg}</Text> : null}
 
-        {!declined ? (
+        {!declined && !suspended ? (
           <Pressable
             style={styles.primary}
             onPress={() => void checkStatus()}
@@ -93,6 +110,17 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
               {busy ? 'Checking…' : 'Check approval status'}
             </Text>
           </Pressable>
+        ) : suspended ? (
+          <Pressable
+            style={styles.primary}
+            onPress={() => void checkStatus()}
+            disabled={busy}
+            accessibilityRole="button"
+          >
+            <Text style={styles.primaryText}>
+              {busy ? 'Checking…' : 'Check if reactivated'}
+            </Text>
+          </Pressable>
         ) : null}
 
         <Pressable
@@ -100,7 +128,7 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
           onPress={logout}
           accessibilityRole="button"
         >
-          <Text style={styles.secondaryText}>Back to login</Text>
+          <Text style={styles.secondaryText}>Log out</Text>
         </Pressable>
       </View>
     </View>

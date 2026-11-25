@@ -26,14 +26,17 @@ export function usePortalAuthGate() {
       return;
     }
 
-    if (isAwaitingApproval(mentor.status, mentor.email)) {
+    if (isAwaitingApproval(mentor.status, mentor.email, mentor.role)) {
       if (!onPending) {
         router.replace('/portal/pending');
       }
       return;
     }
 
-    if (isPortalUnlocked(mentor.status, mentor.email) && onPending) {
+    if (
+      isPortalUnlocked(mentor.status, mentor.email, mentor.role) &&
+      onPending
+    ) {
       router.replace('/portal/dashboard');
     }
   }, [mentor, pathname, router]);
