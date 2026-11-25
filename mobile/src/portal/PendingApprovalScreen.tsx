@@ -8,10 +8,10 @@ import {
 import { useAppState } from '../AppState';
 import {
   REGISTRATION_PENDING_MESSAGE,
-  SUPER_ADMIN_EMAIL,
   denialReason,
   isPortalUnlocked,
 } from './portalAccess';
+import { toSafeUserMessage } from './safeErrors';
 
 const BG = '#05070D';
 const BLUE = '#3B82F6';
@@ -74,10 +74,8 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
         return;
       }
       setMsg(REGISTRATION_PENDING_MESSAGE);
-    } catch {
-      setMsg(
-        'Could not reach the server. You remain pending — the portal stays locked.',
-      );
+    } catch (err) {
+      setMsg(toSafeUserMessage(err, 'portal'));
     } finally {
       setBusy(false);
     }
@@ -96,7 +94,9 @@ export function PendingApprovalScreen({ mentor }: { mentor: MentorSession }) {
         {mentor.mentorName ? (
           <Text style={styles.metaName}>{mentor.mentorName}</Text>
         ) : null}
-        <Text style={styles.adminHint}>Super admin: {SUPER_ADMIN_EMAIL}</Text>
+        <Text style={styles.adminHint}>
+          A Super Admin must approve your account before portal access.
+        </Text>
         {msg ? <Text style={styles.msg}>{msg}</Text> : null}
 
         {!declined && !suspended ? (

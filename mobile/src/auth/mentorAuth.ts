@@ -287,12 +287,16 @@ export function validateSignup(fields: {
   password: string;
   confirm: string;
 }): string | null {
-  if (!fields.email.trim() || !fields.email.includes('@')) return 'enter a valid email';
-  if (!fields.mentorName.trim()) return 'mentor name required';
-  if (!fields.name.trim()) return 'name required';
-  if (!fields.contact.trim()) return 'contact number required';
-  if (fields.password.length < 8) return 'password must be at least 8 characters';
-  if (fields.password !== fields.confirm) return 'passwords do not match';
+  if (!fields.email.trim() || !fields.email.includes('@')) {
+    return 'Please enter a valid email.';
+  }
+  if (!fields.mentorName.trim()) return 'Mentor display name is required.';
+  if (!fields.name.trim()) return 'Full name is required.';
+  if (!fields.contact.trim()) return 'Contact number is required.';
+  if (fields.password.length < 8) {
+    return 'Password must be at least 8 characters.';
+  }
+  if (fields.password !== fields.confirm) return 'Passwords do not match.';
   return null;
 }
 

@@ -340,7 +340,7 @@ async function fetchRemoteCatalog(
       if (easRes.error || keysRes.error) {
         const msg =
           easRes.error?.message || keysRes.error?.message || 'fetch failed';
-        console.warn('[edges] supabase scoped catalog fetch failed', msg);
+        console.warn('[edges] supabase scoped catalog fetch failed');
         return { ok: false, eas: [], keys: [], error: msg };
       }
       return {
@@ -360,7 +360,7 @@ async function fetchRemoteCatalog(
     ]);
     if (easRes.error || keysRes.error) {
       const msg = easRes.error?.message || keysRes.error?.message || 'fetch failed';
-      console.warn('[edges] supabase catalog fetch failed', msg);
+      console.warn('[edges] supabase catalog fetch failed');
       return { ok: false, eas: [], keys: [], error: msg };
     }
     return {
@@ -371,7 +371,7 @@ async function fetchRemoteCatalog(
       ),
     };
   } catch (err) {
-    console.warn('[edges] supabase catalog fetch error', err);
+    console.warn('[edges] supabase catalog fetch error');
     return {
       ok: false,
       eas: [],
@@ -536,7 +536,7 @@ async function pushRemoteCatalog(
         onConflict: 'id',
       });
       if (error) {
-        console.warn('[edges] supabase eas upsert failed', error.message);
+        console.warn('[edges] supabase eas upsert failed');
         return { ok: false, error: error.message };
       }
     }
@@ -545,14 +545,14 @@ async function pushRemoteCatalog(
         onConflict: 'id',
       });
       if (error) {
-        console.warn('[edges] supabase keys upsert failed', error.message);
+        console.warn('[edges] supabase keys upsert failed');
         return { ok: false, error: error.message };
       }
     }
     return { ok: true, via: 'anon-table' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn('[edges] supabase catalog push error', err);
+    console.warn('[edges] supabase catalog push error');
     return { ok: false, error: msg };
   }
 }

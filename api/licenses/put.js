@@ -1,4 +1,5 @@
 const { applyCors, json, readJsonBody } = require('../_lib/cors');
+const { safeFailPayload } = require('../_lib/safeErrors');
 const {
   getSupabaseAdmin,
   normalizeLicenseKey,
@@ -34,12 +35,11 @@ module.exports = async function handler(req, res) {
 
   const admin = getSupabaseAdmin();
   if (!admin.configured) {
-    return json(res, 503, {
-      ok: false,
-      error:
-        'Supabase service role not configured on server (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).',
-      configured: false,
-    });
+    return json(
+      res,
+      503,
+      { ...safeFailPayload(503, 'supabase admin not configured', { code: 'config' }), configured: false },
+    );
   }
 
   let body;
@@ -254,15 +254,6 @@ module.exports = async function handler(req, res) {
   } catch (err) {
     const rls = err?.code === 'STORAGE_RLS';
     const kind = err?.keyKind || admin.serviceKeyKind;
-    return json(res, 502, {
-      ok: false,
-      error: String(err?.message || err),
-      tableError: tableError || undefined,
-      configured: true,
-      serviceKeyKind: kind,
-      hint: rls
-        ? 'Storage RLS blocked the write. serviceKeyKind should be sb_secret or jwt:service_role. Apply supabase/migrations/*.sql (public INSERT on ea-pictures) or replace SERVICE_ROLE value with the project Secret key — no need to re-link Shared env.'
-        : undefined,
-    });
+    return json(res, 502, safeFailPayload(502, err, { code: 'handler' }));
   }
 };

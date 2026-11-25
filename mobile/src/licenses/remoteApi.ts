@@ -1,3 +1,4 @@
+import { safeMessageFromApiBody, toSafeUserMessage } from '../portal/safeErrors';
 import type { StoredEa, StoredLicenseKey } from '../licenseStorage';
 
 function normalizeLicenseKey(raw: string) {
@@ -63,15 +64,17 @@ export async function fetchLicenseStatus(): Promise<{
       missingEnvNames: Array.isArray(data.missingEnvNames)
         ? (data.missingEnvNames as string[])
         : undefined,
-      hint: data.hint ? String(data.hint) : undefined,
+      hint: undefined,
       tables: (data.tables as Record<string, string>) || undefined,
       storageFallback: Boolean(data.storageFallback),
-      error: data.error ? String(data.error) : undefined,
+      error: data.error
+        ? safeMessageFromApiBody(data, 'portal')
+        : undefined,
     };
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'status unreachable',
+      error: toSafeUserMessage(err, 'portal'),
     };
   }
 }
@@ -120,9 +123,7 @@ export async function putLicenseRemote(
     if (!res.ok || data.ok === false) {
       return {
         ok: false,
-        error: String(data.error || `HTTP ${res.status}`),
-        tableError: data.tableError ? String(data.tableError) : undefined,
-        hint: data.hint ? String(data.hint) : undefined,
+        error: safeMessageFromApiBody(data, 'portal'),
         configured: data.configured !== false,
       };
     }
@@ -133,8 +134,8 @@ export async function putLicenseRemote(
     return {
       ok: true,
       via: data.via ? String(data.via) : undefined,
-      hint: data.hint ? String(data.hint) : undefined,
-      tableError: data.tableError ? String(data.tableError) : undefined,
+      hint: undefined,
+      tableError: undefined,
       configured: true,
       key_normalized: data.key_normalized
         ? String(data.key_normalized)
@@ -145,7 +146,7 @@ export async function putLicenseRemote(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'put unreachable',
+      error: toSafeUserMessage(err, 'portal'),
     };
   }
 }
@@ -163,14 +164,17 @@ export async function lookupLicenseRemote(
     if (res.status === 404 || data.ok === false) {
       return {
         ok: false,
-        error: String(data.error || 'License key not found'),
+        error: safeMessageFromApiBody(
+          { ...data, error: data.error || 'License key not found' },
+          'portal',
+        ),
         configured: data.configured !== false,
       };
     }
     if (!res.ok) {
       return {
         ok: false,
-        error: String(data.error || `HTTP ${res.status}`),
+        error: safeMessageFromApiBody(data, 'portal'),
         configured: data.configured !== false,
       };
     }
@@ -189,7 +193,7 @@ export async function lookupLicenseRemote(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'lookup unreachable',
+      error: toSafeUserMessage(err, 'portal'),
     };
   }
 }
@@ -218,14 +222,17 @@ export async function fetchEaRemote(eaId: string): Promise<EaRemoteResult> {
     if (res.status === 404 || data.ok === false) {
       return {
         ok: false,
-        error: String(data.error || 'EA not found'),
+        error: safeMessageFromApiBody(
+          { ...data, error: data.error || 'EA not found' },
+          'portal',
+        ),
         configured: data.configured !== false,
       };
     }
     if (!res.ok) {
       return {
         ok: false,
-        error: String(data.error || `HTTP ${res.status}`),
+        error: safeMessageFromApiBody(data, 'portal'),
         configured: data.configured !== false,
       };
     }
@@ -240,7 +247,7 @@ export async function fetchEaRemote(eaId: string): Promise<EaRemoteResult> {
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'eas/get unreachable',
+      error: toSafeUserMessage(err, 'portal'),
     };
   }
 }
@@ -275,7 +282,7 @@ export async function putEaBrandingRemote(
     if (!res.ok || data.ok === false) {
       return {
         ok: false,
-        error: String(data.error || `HTTP ${res.status}`),
+        error: safeMessageFromApiBody(data, 'portal'),
         configured: data.configured !== false,
       };
     }
@@ -297,7 +304,7 @@ export async function putEaBrandingRemote(
   } catch (err) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : 'eas/put unreachable',
+      error: toSafeUserMessage(err, 'portal'),
     };
   }
 }

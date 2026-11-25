@@ -1,4 +1,5 @@
 const { applyCors, json } = require('../_lib/cors');
+const { logTechError, newErrorRef, SAFE_CONFIG } = require('../_lib/safeErrors');
 const {
   getSupabaseAdmin,
   sbFetch,
@@ -45,16 +46,19 @@ module.exports = async function handler(req, res) {
     anonKeyKind: admin.anonKeyKind,
     missingEnvNames: missing,
     envPresence,
-    hint:
-      missing.length > 0
-        ? 'Set exact names SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_ROLE_KEY on the Vercel project that owns Production (GitHub Vercel check URL), for Production, then Redeploy. Cursor secrets do not bind to Vercel.'
-        : undefined,
+    hint: undefined,
     tables: { managed_eas: 'unknown', license_keys: 'unknown' },
   };
 
   if (!admin.configured) {
+    const errorRef = newErrorRef();
+    logTechError(errorRef, `missing env: ${missing.join(',')}`, { code: 'config' });
     out.ok = false;
-    out.error = `Server missing: ${missing.filter((n) => n !== 'SUPABASE_ANON_KEY').join(' + ') || 'SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY'}`;
+    out.error = SAFE_CONFIG;
+    out.userMessage = SAFE_CONFIG;
+    out.errorRef = errorRef;
+    // Booleans only for UI health — never env names in error strings
+    out.configured = false;
     return json(res, 200, out);
   }
 
@@ -92,8 +96,10 @@ module.exports = async function handler(req, res) {
       !out.storageWrite.ok &&
       /publishable|jwt:anon/i.test(String(out.storageWrite.keyKind || ''))
     ) {
-      out.hint =
-        'SUPABASE_SERVICE_ROLE_KEY is present but not a privileged Secret/service_role key (see serviceKeyKind). Use the project Secret key, or apply supabase/migrations/*.sql so Storage public INSERT policies allow catalog writes.';
+      const errorRef = newErrorRef();
+      logTechError(errorRef, out.storageWrite, { code: 'storage_key_kind' });
+      out.userMessage = SAFE_CONFIG;
+      out.errorRef = errorRef;
     }
   }
 

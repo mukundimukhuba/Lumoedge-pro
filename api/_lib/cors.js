@@ -11,7 +11,20 @@ function json(res, status, body) {
   applyCors(res);
   res.statusCode = status;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.end(JSON.stringify(body));
+  let out = body;
+  try {
+    const { sanitizePublicBody } = require('./safeErrors');
+    // Always scrub tech/secret fields from client JSON (2xx diagnostics too).
+    if (status >= 400 || (body && body.ok === false)) {
+      out = sanitizePublicBody(body);
+    } else if (body && typeof body === 'object') {
+      // Soft scrub: drop tableError / raw hints / serviceKeyKind on success too
+      out = sanitizePublicBody(body);
+    }
+  } catch {
+    out = body;
+  }
+  res.end(JSON.stringify(out));
 }
 
 function readJsonBody(req) {
