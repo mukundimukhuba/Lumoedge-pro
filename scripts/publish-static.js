@@ -59,7 +59,7 @@ function ensureDarkEdgeHtml(file) {
 
 ensureDarkEdgeHtml(path.join(dest, 'index.html'));
 
-for (const p of ['portal', 'portal/dashboard']) {
+for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
   fs.mkdirSync(path.join(dest, p), { recursive: true });
   fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, p, 'index.html'));
 }
@@ -84,7 +84,7 @@ fs.copyFileSync(path.join(dest, 'index.html'), path.join(root, 'index.html'));
 if (fs.existsSync(path.join(dest, 'favicon.ico'))) {
   fs.copyFileSync(path.join(dest, 'favicon.ico'), path.join(root, 'favicon.ico'));
 }
-for (const p of ['portal', 'portal/dashboard']) {
+for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
   fs.mkdirSync(path.join(root, p), { recursive: true });
   fs.copyFileSync(path.join(dest, 'index.html'), path.join(root, p, 'index.html'));
 }

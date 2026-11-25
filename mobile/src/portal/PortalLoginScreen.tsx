@@ -17,6 +17,7 @@ import {
   verifyDemoMentor,
 } from '../auth/mentorAuth';
 import { useAppState } from '../AppState';
+import { postAuthPortalPath } from './portalAccess';
 
 const BLUE = '#3B82F6';
 const BG = '#05070D';
@@ -53,7 +54,8 @@ export function PortalLoginScreen() {
       }
       setMentor(ok);
       setPassword('');
-      router.replace('/portal/dashboard');
+      // Pending / declined / unknown → wait screen only (never dashboard).
+      router.replace(postAuthPortalPath(ok));
     } finally {
       setBusy(false);
     }
@@ -82,11 +84,11 @@ export function PortalLoginScreen() {
         contact: suContact,
         password: suPassword,
       });
-      // Persist + sign in so Profile shows registration details immediately.
+      // Keep identity for the wait screen — NEVER open portal chrome.
       setMentor(session);
       setSuPassword('');
       setSuConfirm('');
-      router.replace('/portal/dashboard?section=profile');
+      router.replace('/portal/pending');
     } catch {
       setError('Could not save signup — try again.');
     } finally {
