@@ -783,8 +783,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
   };
 
+  // Must be stable — LicenseActivateScreen effect depends on this; a new
+  // identity each render re-triggers "Preparing license…" forever.
   const refreshScopedLicenseKeys: AppStateValue['refreshScopedLicenseKeys'] =
-    async ({ role, email }) => {
+    useCallback(async ({ role, email }) => {
       const normalized = email.trim().toLowerCase();
       if (!normalized) return [];
       const res = await listScopedLicenseKeys({
@@ -854,7 +856,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         });
       }
       return mapped;
-    };
+    }, []);
 
   const persistActiveSession = useCallback(async (session: ActiveEaSession) => {
     const diskSession =
@@ -1454,7 +1456,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       canAccessLicenseSection,
       refreshClientSubscription,
       clearClientAccessSession,
+      refreshScopedLicenseKeys,
       activeEa,
+      refreshLicenseCatalog,
       refreshActiveEaBranding,
     ],
   );
