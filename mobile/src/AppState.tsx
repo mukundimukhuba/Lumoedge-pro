@@ -54,6 +54,15 @@ import {
   type SubscriptionRow,
 } from './subscriptions/types';
 
+/** True only for a real submitted/listed subscription — never invent pending. */
+export function isGenuineClientSubscription(
+  row: SubscriptionRow | null | undefined,
+): boolean {
+  if (!row?.id || !String(row.clientEmail || '').trim()) return false;
+  const st = String(row.status || '').toLowerCase();
+  return ['pending', 'approved', 'declined', 'active', 'expired'].includes(st);
+}
+
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
 const QUOTE_SETUPS_KEY = 'edges-quote-setups-v1';
@@ -211,7 +220,11 @@ type AppStateValue = {
   } | null>;
   eaAccess: EaAccess | null;
   accessReady: boolean;
+  /** True after we resolved whether this client has a real subscription. */
+  subscriptionReady: boolean;
   clientSubscription: SubscriptionRow | null;
+  /** Genuine pending/declined/expired payment wait (not mentor portal pending). */
+  isClientPaymentPending: boolean;
   canAccessLicenseSection: boolean;
   /** Submit payment → pending subscription; stores client identity. */
   unlockEaAccess: (input: {
@@ -225,6 +238,13 @@ type AppStateValue = {
     | { ok: false; error: string }
   >;
   refreshClientSubscription: () => Promise<SubscriptionRow | null>;
+  /**
+   * Leave client session to re-register. Does not delete server subscription
+   * rows; optionally keeps local subscription cache for the old email.
+   */
+  clearClientAccessSession: (opts?: {
+    keepSubscriptionRecord?: boolean;
+  }) => Promise<void>;
   refreshScopedLicenseKeys: (opts: {
     role: 'mentor' | 'client';
     email: string;
@@ -293,6 +313,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [eaAccess, setEaAccess] = useState<EaAccess | null>(null);
   const [clientSubscription, setClientSubscription] =
     useState<SubscriptionRow | null>(null);
+  const [subscriptionReady, setSubscriptionReady] = useState(false);
   const [activeEa, setActiveEa] = useState<ActiveEaSession | null>(null);
   const [accessReady, setAccessReady] = useState(false);
 
@@ -352,8 +373,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (subRaw) {
           try {
             const parsed = JSON.parse(subRaw) as SubscriptionRow;
-            if (parsed?.id && parsed?.clientEmail) {
+            if (isGenuineClientSubscription(parsed)) {
               setClientSubscription(parsed);
+            } else {
+              await AsyncStorage.removeItem(CLIENT_SUB_KEY);
             }
           } catch {
             /* ignore */
@@ -464,50 +487,124 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     void refreshLicenseCatalog();
   }, [mentor?.email, refreshLicenseCatalog]);
 
+  const clearClientAccessSession = useCallback(
+    async (opts?: { keepSubscriptionRecord?: boolean }) => {
+      try {
+        await AsyncStorage.removeItem(EA_ACCESS_KEY);
+        if (!opts?.keepSubscriptionRecord) {
+          await AsyncStorage.removeItem(CLIENT_SUB_KEY);
+        }
+      } catch {
+        /* ignore */
+      }
+      setEaAccess(null);
+      if (!opts?.keepSubscriptionRecord) {
+        setClientSubscription(null);
+      }
+      setSubscriptionReady(true);
+    },
+    [],
+  );
+
   const refreshClientSubscription = useCallback(async () => {
     const email = eaAccess?.email?.trim().toLowerCase();
     if (!email) {
       setClientSubscription(null);
+      setSubscriptionReady(true);
       return null;
     }
+
+    const readLocal = async (): Promise<SubscriptionRow | null> => {
+      try {
+        const raw = await AsyncStorage.getItem(CLIENT_SUB_KEY);
+        if (!raw) return null;
+        const local = JSON.parse(raw) as SubscriptionRow;
+        if (
+          isGenuineClientSubscription(local) &&
+          local.clientEmail.toLowerCase() === email
+        ) {
+          return local;
+        }
+      } catch {
+        /* ignore */
+      }
+      return null;
+    };
+
+    const dropStaleClientSession = async () => {
+      // Keep an active EA session — don't kick a trading user to onboarding
+      // just because subscription lookup returned empty.
+      if (activeEaRef.current) return;
+      try {
+        await AsyncStorage.removeItem(CLIENT_SUB_KEY);
+        await AsyncStorage.removeItem(EA_ACCESS_KEY);
+      } catch {
+        /* ignore */
+      }
+      setClientSubscription(null);
+      setEaAccess(null);
+    };
+
     const res = await listSubscriptions({
       role: 'client',
       actorEmail: email,
       clientEmail: email,
     });
-    if (!res.ok || !res.subscriptions.length) {
-      try {
-        const raw = await AsyncStorage.getItem(CLIENT_SUB_KEY);
-        if (raw) {
-          const local = JSON.parse(raw) as SubscriptionRow;
-          if (local?.clientEmail?.toLowerCase() === email) {
-            setClientSubscription(local);
-            return local;
-          }
+
+    if (res.ok) {
+      const latest =
+        res.subscriptions.find((s) => isGenuineClientSubscription(s)) || null;
+      if (latest) {
+        setClientSubscription(latest);
+        try {
+          await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(latest));
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
+        setSubscriptionReady(true);
+        return latest;
       }
-      setClientSubscription(null);
+      // Successful empty list → no genuine payment pending. Drop stale session
+      // so the user returns to registration/onboarding (not a false pending gate).
+      await dropStaleClientSession();
+      if (!activeEaRef.current) {
+        setClientSubscription(null);
+      }
+      setSubscriptionReady(true);
       return null;
     }
-    const latest = res.subscriptions[0]!;
-    setClientSubscription(latest);
-    try {
-      await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(latest));
-    } catch {
-      /* ignore */
+
+    // Network / API failure — keep a genuine local row only; never invent pending.
+    const local = await readLocal();
+    if (local) {
+      setClientSubscription(local);
+      setSubscriptionReady(true);
+      return local;
     }
-    return latest;
+    await dropStaleClientSession();
+    if (!activeEaRef.current) {
+      setClientSubscription(null);
+    }
+    setSubscriptionReady(true);
+    return null;
   }, [eaAccess?.email]);
 
   useEffect(() => {
-    if (!eaAccess?.email) return;
+    if (!eaAccess?.email) {
+      setSubscriptionReady(true);
+      return;
+    }
+    setSubscriptionReady(false);
     void refreshClientSubscription();
   }, [eaAccess?.email, refreshClientSubscription]);
 
   const canAccessLicenseSection = isSubscriptionUsable(
     clientSubscription?.status,
+  );
+
+  const isClientPaymentPending = Boolean(
+    isGenuineClientSubscription(clientSubscription) &&
+      !canAccessLicenseSection,
   );
 
   const unlockEaAccess: AppStateValue['unlockEaAccess'] = async ({
@@ -1185,10 +1282,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       generateLicenseKey,
       eaAccess,
       accessReady,
+      subscriptionReady,
       clientSubscription,
+      isClientPaymentPending,
       canAccessLicenseSection,
       unlockEaAccess,
       refreshClientSubscription,
+      clearClientAccessSession,
       refreshScopedLicenseKeys,
       activeEa,
       activateLicenseKey,
@@ -1210,9 +1310,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       licenseKeys,
       eaAccess,
       accessReady,
+      subscriptionReady,
       clientSubscription,
+      isClientPaymentPending,
       canAccessLicenseSection,
       refreshClientSubscription,
+      clearClientAccessSession,
       activeEa,
       refreshActiveEaBranding,
     ],
