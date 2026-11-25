@@ -14,6 +14,7 @@ import {
   type MentorProfileRow,
 } from '../data/mentorsApi';
 import { isSuperAdminEmail } from '../portalAccess';
+import { toSafeUserMessage } from '../safeErrors';
 
 const GREEN = '#22C55E';
 const RED = '#EF4444';
@@ -71,7 +72,7 @@ export function MentorsPanel() {
     const res = await setMentorStatus(actorEmail, row.email, status, allot);
     setBusyEmail(null);
     if (!res.ok) {
-      setMsg(res.error || `${status} failed`);
+      setMsg(toSafeUserMessage(res.error || `${status} failed`, 'portal'));
       return;
     }
     const label =
@@ -109,7 +110,7 @@ export function MentorsPanel() {
     const res = await setMentorAllotment(actorEmail, row.email, allot);
     setBusyEmail(null);
     if (!res.ok) {
-      setMsg(res.error || 'Could not save allotment');
+      setMsg(toSafeUserMessage(res.error || 'Could not save allotment', 'portal'));
       return;
     }
     setMsg(`Allotment set to ${allot} for ${row.mentorName || row.email}`);
@@ -284,12 +285,12 @@ const styles = StyleSheet.create({
   filterOn: { borderColor: BLUE, backgroundColor: 'rgba(59,130,246,0.18)' },
   filterText: { color: '#E5E7EB', fontWeight: '700', fontSize: 12 },
   card: {
-    backgroundColor: '#12151C',
-    borderRadius: 16,
+    backgroundColor: 'rgba(12, 16, 28, 0.78)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 14,
-    gap: 6,
+    borderColor: 'rgba(94, 200, 255, 0.28)',
+    padding: 12,
+    gap: 5,
   },
   empty: { color: '#9CA3AF', fontSize: 13 },
   name: { color: '#fff', fontWeight: '800', fontSize: 16 },
@@ -310,6 +311,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     color: '#fff',
     backgroundColor: '#0B0E14',
+    fontSize: 16, // iOS Safari zooms inputs under 16px
   },
   row: { flexDirection: 'row', gap: 8, marginTop: 8 },
   btn: {

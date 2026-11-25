@@ -156,7 +156,7 @@ export function PortalLoginScreen() {
     (tab === 'login' ? !loginReady : !registerReady || confirmMismatch);
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} nativeID="portal-root">
       <LinearGradient
         colors={['#04101F', '#03050A', '#050814']}
         start={{ x: 0.1, y: 0 }}
@@ -436,7 +436,7 @@ function Field({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BG },
+  root: { flex: 1, backgroundColor: BG, maxWidth: '100%', overflow: 'hidden' },
   glowA: {
     position: 'absolute',
     top: -80,
@@ -557,7 +557,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: '#fff',
     paddingVertical: 9,
-    fontSize: 14,
+    fontSize: 16, // iOS Safari zooms inputs under 16px
     minWidth: 0,
   },
   fieldError: { color: '#FCA5A5', fontSize: 11 },

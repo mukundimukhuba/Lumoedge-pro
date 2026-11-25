@@ -56,12 +56,12 @@ export function ProfilePanel({ mentor }: { mentor: MentorSession }) {
 const styles = StyleSheet.create({
   card: {
     marginTop: 8,
-    backgroundColor: '#12151C',
-    borderRadius: 16,
+    backgroundColor: 'rgba(12, 16, 28, 0.78)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#1F2937',
-    padding: 14,
-    gap: 12,
+    borderColor: 'rgba(94, 200, 255, 0.28)',
+    padding: 12,
+    gap: 10,
   },
   h2: { color: '#fff', fontWeight: '800', fontSize: 16 },
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },

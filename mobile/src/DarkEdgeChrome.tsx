@@ -38,21 +38,41 @@ export function DarkEdgeChrome({
     ensureMeta('mobile-web-app-capable', 'yes');
     ensureMeta('apple-mobile-web-app-status-bar-style', 'black-translucent');
 
+    // Always lock scale — iOS Safari zooms focused inputs <16px and can
+    // stretch layout when overflow-x is allowed. Do not use CSS zoom/scale.
+    const viewportContent =
+      'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
     const viewport = document.querySelector('meta[name="viewport"]');
     if (viewport) {
-      const cur = viewport.getAttribute('content') || '';
-      if (!/viewport-fit\s*=\s*cover/i.test(cur)) {
-        viewport.setAttribute(
-          'content',
-          cur
-            ? `${cur.replace(/,?\s*viewport-fit\s*=\s*[^,]+/i, '')}, viewport-fit=cover`
-            : 'width=device-width, initial-scale=1, viewport-fit=cover',
-        );
-      }
+      viewport.setAttribute('content', viewportContent);
+    } else {
+      ensureMeta('viewport', viewportContent);
     }
 
     document.documentElement.style.backgroundColor = BLACK;
     document.body.style.backgroundColor = BLACK;
+    document.documentElement.style.overflowX = 'hidden';
+    document.body.style.overflowX = 'hidden';
+    document.documentElement.style.setProperty('zoom', 'normal');
+    (document.documentElement.style as CSSStyleDeclaration & {
+      webkitTextSizeAdjust?: string;
+    }).webkitTextSizeAdjust = '100%';
+    // Belt-and-suspenders: keep focused fields ≥16px so Safari never auto-zooms.
+    if (!document.getElementById('portal-zoom-guard')) {
+      const style = document.createElement('style');
+      style.id = 'portal-zoom-guard';
+      style.textContent = `
+        html, body, #root { max-width: 100%; overflow-x: hidden !important; }
+        input, textarea, select { font-size: 16px !important; }
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after {
+            animation-duration: 0.01ms !important;
+            transition-duration: 0.01ms !important;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    }
 
     const paint = () => {
       document.documentElement.style.backgroundColor = BLACK;

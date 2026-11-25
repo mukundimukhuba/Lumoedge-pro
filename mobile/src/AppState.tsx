@@ -218,6 +218,8 @@ type AppStateValue = {
   accent: string;
   setAccent: (c: string) => void;
   mentor: MentorSession | null;
+  /** False until local mentor session restore finishes (portal gate must wait). */
+  mentorReady: boolean;
   setMentor: (m: MentorSession | null) => void;
   eas: ManagedEa[];
   addEa: (
@@ -327,6 +329,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   quoteSetupsRef.current = quoteSetups;
   const [accent, setAccent] = useState('#FF0000');
   const [mentor, setMentorState] = useState<MentorSession | null>(null);
+  const [mentorReady, setMentorReady] = useState(false);
   const setMentor = useCallback((m: MentorSession | null) => {
     setMentorState(m);
     void persistActiveMentorSession(m);
@@ -335,9 +338,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const restored = await loadActiveMentorSession();
-      if (cancelled || !restored) return;
-      setMentorState(restored);
+      try {
+        const restored = await loadActiveMentorSession();
+        if (!cancelled && restored) setMentorState(restored);
+      } finally {
+        if (!cancelled) setMentorReady(true);
+      }
     })();
     return () => {
       cancelled = true;
@@ -1413,6 +1419,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       accent,
       setAccent,
       mentor,
+      mentorReady,
       setMentor,
       eas,
       addEa,
@@ -1446,6 +1453,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       getQuoteSetup,
       accent,
       mentor,
+      mentorReady,
       eas,
       licenseKeys,
       eaAccess,
