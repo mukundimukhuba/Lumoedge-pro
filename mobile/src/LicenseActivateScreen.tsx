@@ -14,17 +14,18 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { normalizeLicenseKey } from './licenseStorage';
 import { TripleTapLogo } from './TripleTapLogo';
+import { toSafeUserMessage } from './portal/safeErrors';
 import {
   displaySubscriptionStatus,
   isSubscriptionUsable,
 } from './subscriptions/types';
 
-const RED = '#FF0000';
-const BG = '#000000';
+const CYAN = '#38BDF8';
+const BG = '#070B14';
 
 /**
- * After payment approval — require a mentor-issued license key for this client
- * email. Never auto-lists cached / other mentors' / other clients' keys.
+ * License activation only — shown after a genuine approved/active subscription.
+ * Payment-pending UI lives in PaymentPendingScreen (never invent pending here).
  */
 export function LicenseActivateScreen() {
   const insets = useSafeAreaInsets();
@@ -32,7 +33,6 @@ export function LicenseActivateScreen() {
     activateLicenseKey,
     eaAccess,
     clientSubscription,
-    canAccessLicenseSection,
     refreshClientSubscription,
     refreshScopedLicenseKeys,
     licenseKeys,
@@ -60,7 +60,7 @@ export function LicenseActivateScreen() {
     };
   }, [eaAccess?.email, refreshClientSubscription, refreshScopedLicenseKeys]);
 
-  const status = clientSubscription?.status || 'pending';
+  const status = clientSubscription?.status || 'active';
   const myKey =
     licenseKeys.find(
       (k) =>
@@ -73,76 +73,19 @@ export function LicenseActivateScreen() {
     setBusy(true);
     try {
       const result = await activateLicenseKey(raw);
-      if (!result.ok) setError(result.error);
+      if (!result.ok) setError(toSafeUserMessage(result.error, 'generic'));
+    } catch (err) {
+      setError(toSafeUserMessage(err, 'generic'));
     } finally {
       setBusy(false);
     }
   };
 
-  const onActivate = () => {
-    void runActivate(key);
-  };
-
   if (checking) {
     return (
       <View style={[styles.root, styles.center]}>
-        <ActivityIndicator color={RED} />
-        <Text style={styles.fine}>Checking subscription…</Text>
-      </View>
-    );
-  }
-
-  if (!canAccessLicenseSection) {
-    const declined = status === 'declined';
-    const expired = status === 'expired';
-    return (
-      <View style={styles.root}>
-        <ScrollView
-          contentContainerStyle={[
-            styles.scroll,
-            {
-              paddingTop: Math.max(insets.top, 24) + 24,
-              paddingBottom: Math.max(insets.bottom, 24) + 16,
-            },
-          ]}
-        >
-          <TripleTapLogo size={96} borderColor={RED} />
-          <Text style={styles.heading}>
-            {displaySubscriptionStatus(status)}
-          </Text>
-          <Text style={styles.statusBody}>
-            {declined
-              ? 'Your payment was declined. Contact support or resubmit payment proof from the access screen.'
-              : expired
-                ? 'Your subscription has expired. Contact support to renew.'
-                : 'Pending Payment Approval. You cannot generate or activate a license key until the super admin approves your payment.'}
-          </Text>
-          {clientSubscription ? (
-            <View style={styles.statusBox}>
-              <Text style={styles.meta}>
-                {clientSubscription.clientName} · {clientSubscription.clientEmail}
-              </Text>
-              <Text style={styles.meta}>
-                ${clientSubscription.amountUsd} ·{' '}
-                {clientSubscription.paymentMethod}
-              </Text>
-              <Text style={styles.meta}>
-                Ref: {clientSubscription.paymentReference}
-              </Text>
-              <Text style={styles.meta}>
-                Status: {displaySubscriptionStatus(clientSubscription.status)}
-              </Text>
-            </View>
-          ) : null}
-          <Pressable
-            style={styles.cta}
-            onPress={() => void refreshClientSubscription()}
-            accessibilityRole="button"
-            accessibilityLabel="Refresh subscription status"
-          >
-            <Text style={styles.ctaText}>Refresh status</Text>
-          </Pressable>
-        </ScrollView>
+        <ActivityIndicator color={CYAN} />
+        <Text style={styles.fine}>Preparing license…</Text>
       </View>
     );
   }
@@ -166,19 +109,16 @@ export function LicenseActivateScreen() {
           bounces={false}
           overScrollMode="never"
         >
-          <TripleTapLogo size={96} borderColor={RED} />
+          <TripleTapLogo size={72} borderColor={CYAN} />
           <Text style={styles.heading}>
-            Enter your license key to activate your Expert Advisor and unlock
-            your trading experience.
+            Enter your license key to activate your Expert Advisor.
           </Text>
 
           <View style={styles.statusBox}>
             <Text style={styles.meta}>
               Subscription: {displaySubscriptionStatus(status)}
             </Text>
-            <Text style={styles.meta}>
-              Signed in as {eaAccess?.email}
-            </Text>
+            <Text style={styles.meta}>Signed in as {eaAccess?.email}</Text>
           </View>
 
           {myKey ? (
@@ -210,7 +150,7 @@ export function LicenseActivateScreen() {
                 accessibilityLabel="Activate your license key"
               >
                 {busy ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color="#041018" />
                 ) : (
                   <Text style={styles.ctaText}>Activate this key</Text>
                 )}
@@ -245,21 +185,21 @@ export function LicenseActivateScreen() {
                 pressed && { opacity: 0.85 },
                 busy && { opacity: 0.6 },
               ]}
-              onPress={onActivate}
+              onPress={() => void runActivate(key)}
               disabled={busy}
               accessibilityRole="button"
               accessibilityLabel="Activate EA"
             >
               {busy ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color="#041018" />
               ) : (
                 <Text style={styles.ctaText}>Activate EA</Text>
               )}
             </Pressable>
 
             <Text style={styles.fine}>
-              Only the key your mentor generated for {eaAccess?.email || 'your email'}{' '}
-              will activate. Keys for other clients are never shown.
+              Only the key your mentor generated for{' '}
+              {eaAccess?.email || 'your email'} will activate.
             </Text>
           </View>
         </ScrollView>
@@ -291,30 +231,22 @@ const styles = StyleSheet.create({
   },
   heading: {
     color: '#FFFFFF',
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
-    lineHeight: 30,
+    lineHeight: 28,
     textAlign: 'center',
-    marginBottom: 24,
-  },
-  statusBody: {
-    color: '#D1D5DB',
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: 'center',
-    maxWidth: 360,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   statusBox: {
     width: '100%',
     maxWidth: 400,
     borderWidth: 1,
-    borderColor: '#2A2F3A',
+    borderColor: 'rgba(56,189,248,0.28)',
     borderRadius: 12,
     padding: 12,
     gap: 4,
     marginBottom: 14,
-    backgroundColor: '#0B0D12',
+    backgroundColor: 'rgba(12,18,32,0.85)',
   },
   meta: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
   form: {
@@ -344,28 +276,28 @@ const styles = StyleSheet.create({
   error: { color: '#FF6B6B', fontSize: 13, marginTop: 4, lineHeight: 18 },
   cta: {
     marginTop: 14,
-    backgroundColor: RED,
-    borderRadius: 14,
-    paddingVertical: 16,
+    backgroundColor: CYAN,
+    borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
-    minHeight: 52,
+    minHeight: 48,
     justifyContent: 'center',
   },
   ctaText: {
-    color: '#fff',
+    color: '#041018',
     fontWeight: '800',
-    fontSize: 16,
+    fontSize: 15,
   },
   issuedBox: {
     width: '100%',
     maxWidth: 400,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#2A2F3A',
+    borderColor: 'rgba(56,189,248,0.28)',
     borderRadius: 12,
     padding: 12,
     gap: 8,
-    backgroundColor: '#0B0D12',
+    backgroundColor: 'rgba(12,18,32,0.85)',
   },
   issuedLabel: {
     color: '#9CA3AF',

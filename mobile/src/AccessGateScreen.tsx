@@ -14,6 +14,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppState } from './AppState';
 import { TripleTapLogo } from './TripleTapLogo';
+import { toSafeUserMessage } from './portal/safeErrors';
 import { displaySubscriptionStatus } from './subscriptions/types';
 
 const RED = '#FF0000';
@@ -75,10 +76,10 @@ export function AccessGateScreen() {
         paymentReference: paymentReference.trim(),
       });
       if (!result.ok) {
-        setError(result.error);
+        setError(toSafeUserMessage(result.error, 'register'));
       }
-    } catch {
-      setError('Could not submit payment — try again.');
+    } catch (err) {
+      setError(toSafeUserMessage(err, 'register'));
     } finally {
       setBusy(false);
     }

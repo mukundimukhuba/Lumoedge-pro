@@ -27,6 +27,7 @@ import { BotTradeFloat } from './BotTradeFloat';
 import { loadMt5Token } from './brokers/mt5Token';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
+import { PaymentPendingScreen } from './PaymentPendingScreen';
 import { GlobalEventsChip } from './portal/GlobalEventsChip';
 import { MirrorSignalListener } from './portal/MirrorSignalListener';
 import {
@@ -76,20 +77,33 @@ function hexToRgba(hex: string, alpha: number) {
 
 export function EaControlRoot() {
   const { width, height } = useWindowDimensions();
-  const { eaAccess, activeEa, accessReady } = useAppState();
+  const {
+    eaAccess,
+    activeEa,
+    accessReady,
+    subscriptionReady,
+    isClientPaymentPending,
+    canAccessLicenseSection,
+  } = useAppState();
   const isWebDesktop = Platform.OS === 'web' && width > 500;
 
-  // 1) $35 access → 2) license key → 3) control UI (no demo skip)
-  const phone = !accessReady ? (
+  // Client path (not mentor /portal/pending):
+  // onboarding → genuine payment pending → license activate → control
+  // Never invent a pending gate for users without a real subscription.
+  const phone = !accessReady || (eaAccess && !subscriptionReady) ? (
     <View style={[styles.root, { justifyContent: 'center', alignItems: 'center' }]}>
       <Text style={{ color: '#9A9A9A' }}>Loading…</Text>
     </View>
   ) : !eaAccess ? (
     <AccessGateScreen />
-  ) : !activeEa ? (
+  ) : isClientPaymentPending ? (
+    <PaymentPendingScreen />
+  ) : canAccessLicenseSection && !activeEa ? (
     <LicenseActivateScreen />
-  ) : (
+  ) : activeEa ? (
     <EaControlScreen />
+  ) : (
+    <AccessGateScreen />
   );
 
   if (!isWebDesktop) return phone;
