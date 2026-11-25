@@ -262,8 +262,9 @@ type AppStateValue = {
     | { ok: false; error: string }
   >;
   /**
-   * Access → Cape Pulse checkout. Persists name/email + local pending so
-   * browser/app Back lands on Approval pending (not the Access form again).
+   * Access register: create a real pending subscription (Supabase 008), then
+   * optionally open an external pay link. No payment-site callbacks — Super
+   * Admin verifies manually. Persists session so waiting UI shows this email.
    */
   beginClientCheckout: (input: {
     name: string;
@@ -672,9 +673,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     const ref = `cape-pulse-${Date.now()}`;
 
-    // Must create a real server pending row BEFORE opening Cape Pulse.
-    // Fire-and-forget + same-tab navigation was aborting the request, so
-    // clients saw local "Approval pending" while Super Admin saw none.
+    // Register pending in Supabase first. External pay is optional and never
+    // auto-linked — Super Admin Approves/Declines manually in the portal.
     const submitted = await submitSubscription({
       clientName,
       clientEmail,
