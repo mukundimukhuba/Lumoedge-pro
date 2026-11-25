@@ -7,13 +7,16 @@ import { isAwaitingApproval, isPortalUnlocked } from './portalAccess';
  * Hard route gate for every /portal/* screen.
  * Pending / declined / unknown → only /portal/pending (or login).
  * Never unlocks from local catalog sync.
+ * Waits for mentorReady so hard reloads don't bounce unlocked sessions to login.
  */
 export function usePortalAuthGate() {
-  const { mentor } = useAppState();
+  const { mentor, mentorReady } = useAppState();
   const router = useRouter();
   const pathname = usePathname() || '';
 
   useEffect(() => {
+    if (!mentorReady) return;
+
     const path = pathname.replace(/\/+$/, '') || '/portal';
     const onLogin = path === '/portal' || path.endsWith('/portal');
     const onPending =
@@ -33,11 +36,10 @@ export function usePortalAuthGate() {
       return;
     }
 
-    if (
-      isPortalUnlocked(mentor.status, mentor.email, mentor.role) &&
-      onPending
-    ) {
-      router.replace('/portal/dashboard');
+    if (isPortalUnlocked(mentor.status, mentor.email, mentor.role)) {
+      if (onPending || onLogin) {
+        router.replace('/portal/dashboard');
+      }
     }
-  }, [mentor, pathname, router]);
+  }, [mentor, mentorReady, pathname, router]);
 }
