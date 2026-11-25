@@ -8,6 +8,13 @@ import {
 } from 'react-native';
 import { useAppState } from '../AppState';
 import { fetchLicenseStatus } from '../licenses/remoteApi';
+import { listSubscriptions } from '../subscriptions/remoteApi';
+import {
+  LICENSE_DURATIONS,
+  displaySubscriptionStatus,
+  type LicenseDurationId,
+  type SubscriptionRow,
+} from '../subscriptions/types';
 import { toSafeUserMessage } from './safeErrors';
 import {
   isSuperAdminEmail,
@@ -21,8 +28,13 @@ function isValidEmail(v: string) {
 }
 
 export function LicenseKeysPanel() {
-  const { eas, licenseKeys, generateLicenseKey, refreshLicenseCatalog, mentor } =
-    useAppState();
+  const {
+    eas,
+    licenseKeys,
+    generateLicenseKey,
+    refreshScopedLicenseKeys,
+    mentor,
+  } = useAppState();
   const scoped = useMemo(
     () => scopeCatalogForMentor(eas, licenseKeys, mentor?.email),
     [eas, licenseKeys, mentor?.email],
@@ -32,13 +44,27 @@ export function LicenseKeysPanel() {
   const [eaId, setEaId] = useState<string>(myEas[0]?.id ?? '');
   const [assigneeName, setAssigneeName] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
+  const [duration, setDuration] = useState<LicenseDurationId>('30d');
+  const [subscriptionId, setSubscriptionId] = useState<string>('');
+  const [approvedSubs, setApprovedSubs] = useState<SubscriptionRow[]>([]);
+  const [lastGenerated, setLastGenerated] = useState<{
+    clientEmail: string;
+    eaName: string;
+    key: string;
+    duration: string;
+    status: string;
+  } | null>(null);
   const [flash, setFlash] = useState('');
   const [flashError, setFlashError] = useState(false);
   const [envLine, setEnvLine] = useState('Checking Supabase…');
+  const [regenerate, setRegenerate] = useState(false);
+
+  const mentorEmail = mentor?.email?.trim().toLowerCase() || '';
 
   useEffect(() => {
-    void refreshLicenseCatalog();
-  }, [refreshLicenseCatalog]);
+    if (!mentorEmail) return;
+    void refreshScopedLicenseKeys({ role: 'mentor', email: mentorEmail });
+  }, [mentorEmail, refreshScopedLicenseKeys]);
 
   useEffect(() => {
     if (!myEas.some((e) => e.id === eaId)) {
@@ -52,34 +78,48 @@ export function LicenseKeysPanel() {
       const st = await fetchLicenseStatus();
       if (cancelled) return;
       if (!st.urlConfigured || !st.serviceRoleConfigured) {
-        const names =
-          st.missingEnvNames?.length
-            ? st.missingEnvNames.join(', ')
-            : [
-                !st.urlConfigured ? 'SUPABASE_URL' : null,
-                !st.serviceRoleConfigured
-                  ? 'SUPABASE_SERVICE_ROLE_KEY'
-                  : null,
-              ]
-                .filter(Boolean)
-                .join(', ');
-        setEnvLine(
-          toSafeUserMessage('service unavailable', 'portal'),
-        );
+        setEnvLine(toSafeUserMessage('service unavailable', 'portal'));
         return;
       }
       const easT = st.tables?.managed_eas || '?';
       const keysT = st.tables?.license_keys || '?';
+      const subT = st.tables?.subscriptions || '?';
       if (easT === 'missing' || keysT === 'missing') {
         setEnvLine('Catalog sync is running in fallback mode.');
       } else {
-        setEnvLine(`Supabase OK · managed_eas=${easT} · license_keys=${keysT}`);
+        setEnvLine(
+          `Supabase OK · eas=${easT} · keys=${keysT} · subscriptions=${subT}`,
+        );
       }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!mentorEmail) return;
+    let cancelled = false;
+    (async () => {
+      const res = await listSubscriptions({
+        role: 'mentor',
+        actorEmail: mentorEmail,
+        clientEmail: isValidEmail(assigneeEmail)
+          ? assigneeEmail.trim().toLowerCase()
+          : undefined,
+      });
+      if (cancelled) return;
+      if (res.ok) {
+        setApprovedSubs(res.subscriptions);
+        if (res.subscriptions.length === 1 && !subscriptionId) {
+          setSubscriptionId(res.subscriptions[0]!.id);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mentorEmail, assigneeEmail]);
 
   const activeId = myEas.some((e) => e.id === eaId)
     ? eaId
@@ -88,7 +128,7 @@ export function LicenseKeysPanel() {
   const onGenerate = async () => {
     if (!activeId) {
       setFlashError(true);
-      setFlash('Create a robot in Manage EAs first.');
+      setFlash('Select your EA first.');
       return;
     }
     if (!mentor?.email) {
@@ -96,21 +136,38 @@ export function LicenseKeysPanel() {
       setFlash('Sign in to the Mentors Portal before generating keys.');
       return;
     }
-    if (!assigneeName.trim()) {
-      setFlashError(true);
-      setFlash('Enter the client name before generating a key.');
-      return;
-    }
     if (!isValidEmail(assigneeEmail)) {
       setFlashError(true);
-      setFlash('Enter a valid client email before generating a key.');
+      setFlash('Enter the client’s registered email.');
       return;
     }
+    if (!duration) {
+      setFlashError(true);
+      setFlash('Select a license duration.');
+      return;
+    }
+    const email = assigneeEmail.trim().toLowerCase();
+    const matching = approvedSubs.filter((s) => s.clientEmail === email);
+    if (!matching.length) {
+      setFlashError(true);
+      setFlash(
+        'No approved subscription for this client email. Super admin must approve payment first.',
+      );
+      return;
+    }
+    const subId =
+      subscriptionId && matching.some((s) => s.id === subscriptionId)
+        ? subscriptionId
+        : matching[0]!.id;
+    const ea = myEas.find((e) => e.id === activeId);
     setFlashError(false);
-    setFlash('Saving key to device + Supabase…');
+    setFlash('Generating license key…');
     const result = await generateLicenseKey(activeId, {
-      name: assigneeName.trim(),
-      email: assigneeEmail.trim(),
+      name: assigneeName.trim() || matching[0]!.clientName || email,
+      email,
+      duration,
+      subscriptionId: subId,
+      regenerate,
     });
     if (!result) {
       setFlashError(true);
@@ -118,13 +175,23 @@ export function LicenseKeysPanel() {
       return;
     }
     const { key: row, remote } = result;
+    setLastGenerated({
+      clientEmail: row.assigneeEmail || email,
+      eaName: row.eaName || ea?.name || '',
+      key: row.key,
+      duration: row.licenseDuration || duration,
+      status: row.licenseStatus || row.status || 'unused',
+    });
     if (remote.ok) {
       setFlashError(false);
       setFlash(
-        `Generated key for ${row.assigneeName} · ${row.eaName}. Cloud sync OK.`,
+        `License key generated · cloud sync OK (${remote.via || 'remote'}).`,
       );
       setAssigneeName('');
       setAssigneeEmail('');
+      setSubscriptionId('');
+      setRegenerate(false);
+      await refreshScopedLicenseKeys({ role: 'mentor', email: mentorEmail });
     } else {
       setFlashError(true);
       setFlash(
@@ -141,8 +208,9 @@ export function LicenseKeysPanel() {
       <View style={styles.card}>
         <Text style={styles.h2}>Generate license keys</Text>
         <Text style={styles.hint}>
-          Ask for the client name and email, then generate a key for one of
-          your Manage EAs robots only — other mentors’ EAs never appear here.
+          Select your EA, enter the client’s registered email, choose duration,
+          then generate. Keys are linked to you + EA + client email +
+          subscription. Other mentors’ EAs never appear here.
         </Text>
         <Text style={styles.env}>{envLine}</Text>
         {mentor?.email && !isSuperAdminEmail(mentor.email) ? (
@@ -152,26 +220,7 @@ export function LicenseKeysPanel() {
           </Text>
         ) : null}
 
-        <Text style={styles.label}>CLIENT NAME</Text>
-        <TextInput
-          style={styles.input}
-          value={assigneeName}
-          onChangeText={setAssigneeName}
-          placeholder="Full name"
-          placeholderTextColor="#6B7280"
-        />
-        <Text style={styles.label}>CLIENT EMAIL</Text>
-        <TextInput
-          style={styles.input}
-          value={assigneeEmail}
-          onChangeText={setAssigneeEmail}
-          placeholder="client@email.com"
-          placeholderTextColor="#6B7280"
-          autoCapitalize="none"
-          keyboardType="email-address"
-        />
-
-        <Text style={styles.label}>YOUR EA</Text>
+        <Text style={styles.label}>1 · SELECT YOUR EA</Text>
         {myEas.length === 0 ? (
           <Text style={styles.hint}>No robots yet — save one under Manage EAs.</Text>
         ) : (
@@ -193,21 +242,112 @@ export function LicenseKeysPanel() {
           </View>
         )}
 
+        <Text style={styles.label}>2 · CLIENT REGISTERED EMAIL</Text>
+        <TextInput
+          style={styles.input}
+          value={assigneeEmail}
+          onChangeText={setAssigneeEmail}
+          placeholder="client@email.com"
+          placeholderTextColor="#6B7280"
+          autoCapitalize="none"
+          keyboardType="email-address"
+        />
+        <Text style={styles.label}>CLIENT NAME (optional)</Text>
+        <TextInput
+          style={styles.input}
+          value={assigneeName}
+          onChangeText={setAssigneeName}
+          placeholder="Full name"
+          placeholderTextColor="#6B7280"
+        />
+
+        <Text style={styles.label}>3 · LICENSE DURATION</Text>
+        <View style={styles.eaList}>
+          {LICENSE_DURATIONS.map((d) => {
+            const on = d.id === duration;
+            return (
+              <Pressable
+                key={d.id}
+                onPress={() => setDuration(d.id)}
+                style={[styles.eaChip, on && styles.eaChipOn]}
+              >
+                <Text style={[styles.eaChipText, on && styles.eaChipTextOn]}>
+                  {d.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {approvedSubs.length > 0 ? (
+          <>
+            <Text style={styles.label}>APPROVED SUBSCRIPTION</Text>
+            {approvedSubs.map((s) => {
+              const on = s.id === subscriptionId;
+              return (
+                <Pressable
+                  key={s.id}
+                  onPress={() => setSubscriptionId(s.id)}
+                  style={[styles.subRow, on && styles.subRowOn]}
+                >
+                  <Text style={styles.subText}>
+                    {s.clientEmail} · {displaySubscriptionStatus(s.status)} · $
+                    {s.amountUsd}
+                  </Text>
+                  <Text style={styles.hint}>{s.id}</Text>
+                </Pressable>
+              );
+            })}
+          </>
+        ) : (
+          <Text style={styles.hint}>
+            Enter an approved client email to link a subscription. Pending
+            payments cannot receive keys.
+          </Text>
+        )}
+
+        <Pressable
+          onPress={() => setRegenerate((v) => !v)}
+          style={styles.regenRow}
+        >
+          <Text style={styles.hint}>
+            {regenerate ? '☑' : '☐'} Allow regenerate (revoke existing key for
+            this subscription)
+          </Text>
+        </Pressable>
+
         <Pressable
           style={[styles.gen, !activeId && styles.genDisabled]}
           onPress={onGenerate}
           accessibilityRole="button"
           accessibilityLabel="Generate license key"
         >
-          <Text style={styles.genText}>GENERATE KEY</Text>
+          <Text style={styles.genText}>GENERATE LICENSE KEY</Text>
         </Pressable>
         {flash ? (
           <Text style={flashError ? styles.msgErr : styles.msg}>{flash}</Text>
         ) : null}
       </View>
 
+      {lastGenerated ? (
+        <View style={styles.card}>
+          <Text style={styles.h2}>Generated key</Text>
+          <Text style={styles.meta}>Client Email: {lastGenerated.clientEmail}</Text>
+          <Text style={styles.meta}>EA Name: {lastGenerated.eaName}</Text>
+          <Text style={styles.keyVal} selectable>
+            {lastGenerated.key}
+          </Text>
+          <Text style={styles.meta}>
+            License Duration: {lastGenerated.duration}
+          </Text>
+          <Text style={styles.meta}>
+            License Status: {lastGenerated.status}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={styles.card}>
-        <Text style={styles.h2}>Issued keys</Text>
+        <Text style={styles.h2}>Your issued keys</Text>
         {myKeys.length === 0 ? (
           <Text style={styles.hint}>No keys yet.</Text>
         ) : (
@@ -217,15 +357,18 @@ export function LicenseKeysPanel() {
               <Text style={styles.keyVal} selectable>
                 {k.key}
               </Text>
-              {k.assigneeName || k.assigneeEmail ? (
-                <Text style={styles.hint}>
-                  For {k.assigneeName || '—'}
-                  {k.assigneeEmail ? ` · ${k.assigneeEmail}` : ''}
-                </Text>
-              ) : null}
               <Text style={styles.hint}>
-                {k.status || 'unused'} · {new Date(k.createdAt).toLocaleString()}
+                For {k.assigneeName || '—'}
+                {k.assigneeEmail ? ` · ${k.assigneeEmail}` : ''}
               </Text>
+              <Text style={styles.hint}>
+                {k.licenseDuration || '—'} ·{' '}
+                {k.licenseStatus || k.status || 'unused'} ·{' '}
+                {new Date(k.createdAt).toLocaleString()}
+              </Text>
+              {k.subscriptionId ? (
+                <Text style={styles.hint}>Sub: {k.subscriptionId}</Text>
+              ) : null}
             </View>
           ))
         )}
@@ -246,6 +389,7 @@ const styles = StyleSheet.create({
   },
   h2: { color: '#fff', fontWeight: '800', fontSize: 16 },
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
+  meta: { color: '#E5E7EB', fontSize: 13, lineHeight: 18 },
   env: { color: '#93C5FD', fontSize: 11, lineHeight: 16 },
   label: {
     color: '#9CA3AF',
@@ -277,6 +421,19 @@ const styles = StyleSheet.create({
   },
   eaChipText: { color: '#E5E7EB', fontWeight: '600', fontSize: 13 },
   eaChipTextOn: { color: '#fff' },
+  subRow: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    padding: 10,
+    gap: 2,
+  },
+  subRowOn: {
+    borderColor: ACCENT,
+    backgroundColor: 'rgba(124,92,255,0.15)',
+  },
+  subText: { color: '#E5E7EB', fontWeight: '600', fontSize: 13 },
+  regenRow: { paddingVertical: 4 },
   gen: {
     marginTop: 6,
     borderRadius: 12,

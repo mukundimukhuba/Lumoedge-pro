@@ -47,7 +47,11 @@ module.exports = async function handler(req, res) {
     missingEnvNames: missing,
     envPresence,
     hint: undefined,
-    tables: { managed_eas: 'unknown', license_keys: 'unknown' },
+    tables: {
+      managed_eas: 'unknown',
+      license_keys: 'unknown',
+      subscriptions: 'unknown',
+    },
   };
 
   if (!admin.configured) {
@@ -62,7 +66,7 @@ module.exports = async function handler(req, res) {
     return json(res, 200, out);
   }
 
-  for (const t of ['managed_eas', 'license_keys']) {
+  for (const t of ['managed_eas', 'license_keys', 'subscriptions']) {
     try {
       const r = await sbFetch(`/rest/v1/${t}?select=id&limit=1`);
       if (r.ok) out.tables[t] = 'ok';

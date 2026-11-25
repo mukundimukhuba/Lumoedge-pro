@@ -21,6 +21,7 @@ import { MentorsPanel } from './panels/MentorsPanel';
 import { SelfHostingPanel } from './panels/SelfHostingPanel';
 import { SettingsBrokersPanel } from './panels/SettingsBrokersPanel';
 import { SignalDirectionPanel } from './panels/SignalDirectionPanel';
+import { SubscriptionsPanel } from './panels/SubscriptionsPanel';
 import { TopMentorsPanel } from './panels/TopMentorsPanel';
 import {
   defaultSectionForSession,
@@ -147,6 +148,8 @@ export function PortalHomeScreen() {
           <DashboardPanel />
         ) : section === 'mentors' && isAdmin ? (
           <MentorsPanel />
+        ) : section === 'subscriptions' && isAdmin ? (
+          <SubscriptionsPanel />
         ) : section === 'top-mentors' && isAdmin ? (
           <TopMentorsPanel />
         ) : section === 'manage-eas' ? (

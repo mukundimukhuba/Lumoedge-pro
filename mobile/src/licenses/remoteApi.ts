@@ -81,7 +81,7 @@ export async function fetchLicenseStatus(): Promise<{
 
 /** Push one EA + key to server (tables or Storage). */
 export async function putLicenseRemote(
-  key: StoredLicenseKey,
+  key: StoredLicenseKey & { regenerate?: boolean },
   ea?: StoredEa | null,
   opts?: { actorEmail?: string | null },
 ): Promise<RemoteSyncResult> {
@@ -104,6 +104,12 @@ export async function putLicenseRemote(
           assigneeName: key.assigneeName ?? null,
           assigneeEmail: key.assigneeEmail ?? null,
           issuedByEmail: key.issuedByEmail ?? null,
+          mentorId: key.mentorId ?? key.issuedByEmail ?? null,
+          subscriptionId: key.subscriptionId ?? null,
+          licenseDuration: key.licenseDuration ?? null,
+          licenseStatus: key.licenseStatus ?? key.status ?? 'unused',
+          expiresAt: key.expiresAt ?? null,
+          regenerate: Boolean(key.regenerate),
           status: key.status || 'unused',
           activatedAt: key.activatedAt ?? null,
         },
