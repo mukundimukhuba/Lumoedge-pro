@@ -65,14 +65,31 @@ export async function submitSubscription(input: {
     });
     const data = (await res.json()) as Record<string, unknown>;
     if (!res.ok || data.ok === false) {
+      const code = data.code ? String(data.code) : '';
+      if (code === 'SUBSCRIPTIONS_SCHEMA_MISSING' || res.status === 503) {
+        return {
+          ok: false,
+          error:
+            'Payment registration is temporarily unavailable. Please try again later or contact support.',
+        };
+      }
       return { ok: false, error: String(data.error || `HTTP ${res.status}`) };
     }
     const sub = data.subscription as Record<string, unknown> | undefined;
     if (!sub) return { ok: false, error: 'Empty subscription response' };
+    const via = data.via ? String(data.via) : undefined;
+    // Storage-only is not admin-listable/approvable without migration 008.
+    if (via === 'storage') {
+      return {
+        ok: false,
+        error:
+          'Payment registration is temporarily unavailable. Please try again later or contact support.',
+      };
+    }
     return {
       ok: true,
       subscription: mapSub(sub),
-      via: data.via ? String(data.via) : undefined,
+      via,
       hint: data.hint ? String(data.hint) : undefined,
     };
   } catch (err) {
