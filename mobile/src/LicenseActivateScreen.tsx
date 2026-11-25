@@ -40,24 +40,48 @@ export function LicenseActivateScreen() {
   const [key, setKey] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(true);
+  // Already approved/active → show ask-for-key immediately; never hang on spinner.
+  const [checking, setChecking] = useState(
+    () => !isSubscriptionUsable(clientSubscription?.status),
+  );
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setChecking(true);
-      const sub = await refreshClientSubscription();
-      if (eaAccess?.email && isSubscriptionUsable(sub?.status)) {
-        await refreshScopedLicenseKeys({
-          role: 'client',
-          email: eaAccess.email,
-        });
+      // If subscription is already usable, keep the activate form visible while
+      // keys refresh in the background — never flip back to "Preparing…".
+      const alreadyUsable = isSubscriptionUsable(clientSubscription?.status);
+      if (!alreadyUsable) setChecking(true);
+      try {
+        const sub = await refreshClientSubscription();
+        if (cancelled) return;
+        const usable = isSubscriptionUsable(
+          sub?.status ?? clientSubscription?.status,
+        );
+        if (eaAccess?.email && usable) {
+          try {
+            await refreshScopedLicenseKeys({
+              role: 'client',
+              email: eaAccess.email,
+            });
+          } catch {
+            // Keys are optional — still show the ask-for-key screen.
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(toSafeUserMessage(err, 'generic'));
+        }
+      } finally {
+        if (!cancelled) setChecking(false);
       }
-      if (!cancelled) setChecking(false);
     })();
     return () => {
       cancelled = true;
     };
+    // Intentionally email-only: refreshers are stable via useCallback; including
+    // clientSubscription would re-spin after every poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above
   }, [eaAccess?.email, refreshClientSubscription, refreshScopedLicenseKeys]);
 
   const status = clientSubscription?.status || 'active';

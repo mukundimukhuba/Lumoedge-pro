@@ -111,6 +111,9 @@ export function SubscriptionsPanel() {
       ) : (
         rows.map((row) => {
           const busy = busyId === row.id;
+          const status = String(row.status || '').toLowerCase();
+          // Approve maps to Active in SQL — hide both once already Active/Approved.
+          const alreadyActive = status === 'active' || status === 'approved';
           return (
             <View key={row.id} style={styles.card}>
               <Text style={styles.name}>{row.clientName || '—'}</Text>
@@ -136,26 +139,28 @@ export function SubscriptionsPanel() {
               </Text>
               <Text style={styles.id}>{row.id}</Text>
 
-              <View style={styles.actions}>
-                <Pressable
-                  style={[styles.btn, styles.approve, busy && styles.disabled]}
-                  onPress={() => void approve(row)}
-                  disabled={busy || row.status === 'active'}
-                  accessibilityRole="button"
-                  accessibilityLabel="Approve payment"
-                >
-                  <Text style={styles.btnText}>Approve Payment</Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.btn, styles.decline, busy && styles.disabled]}
-                  onPress={() => void decline(row)}
-                  disabled={busy || row.status === 'declined'}
-                  accessibilityRole="button"
-                  accessibilityLabel="Decline payment"
-                >
-                  <Text style={styles.btnText}>Decline Payment</Text>
-                </Pressable>
-              </View>
+              {!alreadyActive ? (
+                <View style={styles.actions}>
+                  <Pressable
+                    style={[styles.btn, styles.approve, busy && styles.disabled]}
+                    onPress={() => void approve(row)}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Approve payment"
+                  >
+                    <Text style={styles.btnText}>Approve Payment</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.btn, styles.decline, busy && styles.disabled]}
+                    onPress={() => void decline(row)}
+                    disabled={busy || status === 'declined'}
+                    accessibilityRole="button"
+                    accessibilityLabel="Decline payment"
+                  >
+                    <Text style={styles.btnText}>Decline Payment</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
           );
         })
