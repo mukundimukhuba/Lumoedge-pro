@@ -39,8 +39,8 @@ export const glassCard: ViewStyle = {
   backgroundColor: PORTAL_SURFACE,
   borderRadius: 14,
   borderWidth: 1,
-  borderColor: GLOW_BORDER,
-  padding: 12,
-  gap: 4,
+  borderColor: GLOW_BORDER_STRONG,
+  padding: 10,
+  gap: 2,
   ...webGlassExtras,
 };
