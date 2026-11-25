@@ -8,8 +8,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const DEMO_SALT = 'edges-ea-demo-v1';
 const PROFILES_KEY = 'edges-mentor-profiles-v1';
 
-/** Seed mentor email (identifier only). */
+/** Seed / super-admin mentor email (identifier only). */
 export const DEMO_MENTOR_EMAIL = 'mukundimukhuba8@gmail.com';
+
+/** Alias — same mailbox approves mentor signups. */
+export const SUPER_ADMIN_EMAIL = DEMO_MENTOR_EMAIL;
 
 /**
  * Salted SHA-256 of the local mock password (generated offline).
@@ -33,9 +36,13 @@ export type MentorSession = {
   name: string;
   contact: string;
   createdAt: string;
-  /** demo | pending | approved */
-  status: 'demo' | 'pending' | 'approved';
+  /** demo | pending | approved | declined */
+  status: 'demo' | 'pending' | 'approved' | 'declined';
 };
+
+export function isSuperAdminEmail(email: string | null | undefined): boolean {
+  return (email || '').trim().toLowerCase() === SUPER_ADMIN_EMAIL;
+}
 
 type StoredProfile = MentorSession & {
   passwordHash: string;
@@ -115,6 +122,85 @@ export async function verifyDemoMentor(
   const stored = map[normalized];
   if (!stored || stored.passwordHash !== digest) return null;
   const { passwordHash: _h, ...session } = stored;
+
+  // Prefer cloud approval status so a pending mentor unlocks after admin approves.
+  try {
+    const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+    const remote = await fetchMentorProfile(normalized);
+    if (remote) {
+      const next: MentorSession = {
+        ...session,
+        mentorName: remote.mentorName || session.mentorName,
+        name: remote.name || session.name,
+        contact: remote.contact || session.contact,
+        status:
+          remote.status === 'approved'
+            ? 'approved'
+            : remote.status === 'declined'
+              ? 'declined'
+              : remote.status === 'demo'
+                ? 'demo'
+                : 'pending',
+      };
+      map[normalized] = { ...next, passwordHash: digest };
+      await saveProfiles(map);
+      return next;
+    }
+  } catch {
+    /* local session still valid */
+  }
+  return session;
+}
+
+/** Re-read approval status from Supabase (or local). */
+export async function refreshMentorApproval(
+  email: string,
+): Promise<MentorSession | null> {
+  const key = email.trim().toLowerCase();
+  const map = await loadProfiles();
+  const stored = map[key];
+  if (!stored && key !== DEMO_MENTOR_EMAIL) return null;
+
+  try {
+    const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+    const remote = await fetchMentorProfile(key);
+    if (remote) {
+      const base = stored
+        ? (() => {
+            const { passwordHash: _h, ...rest } = stored;
+            return rest;
+          })()
+        : demoMentorSession();
+      const next: MentorSession = {
+        ...base,
+        email: key,
+        mentorName: remote.mentorName || base.mentorName,
+        name: remote.name || base.name,
+        contact: remote.contact || base.contact,
+        createdAt: remote.createdAt || base.createdAt,
+        status:
+          key === DEMO_MENTOR_EMAIL
+            ? 'demo'
+            : remote.status === 'approved'
+              ? 'approved'
+              : remote.status === 'declined'
+                ? 'declined'
+                : remote.status === 'demo'
+                  ? 'demo'
+                  : 'pending',
+      };
+      if (stored) {
+        map[key] = { ...next, passwordHash: stored.passwordHash };
+        await saveProfiles(map);
+      }
+      return next;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  if (!stored) return key === DEMO_MENTOR_EMAIL ? demoMentorSession() : null;
+  const { passwordHash: _h, ...session } = stored;
   return session;
 }
 
@@ -139,17 +225,16 @@ export async function registerMentor(fields: {
   map[email] = { ...session, passwordHash };
   await saveProfiles(map);
   // Best-effort cloud sync so Mentors approve/decline works across devices.
+  // Always pending — never auto-approve on signup.
   try {
-    const { upsertMentorProfile } = await import('../portal/data/mentorsApi');
-    await upsertMentorProfile({
+    const { registerMentorPending } = await import('../portal/data/mentorsApi');
+    await registerMentorPending({
       email: session.email,
       mentorName: session.mentorName,
       name: session.name,
       contact: session.contact,
-      status: 'pending',
       passwordHash,
       createdAt: session.createdAt,
-      keyAllotment: 0,
     });
   } catch {
     /* local signup still valid */

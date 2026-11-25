@@ -53,6 +53,11 @@ export function PortalLoginScreen() {
       }
       setMentor(ok);
       setPassword('');
+      // Pending / declined mentors never enter the portal shell.
+      if (ok.status === 'pending' || ok.status === 'declined') {
+        router.replace('/portal/pending');
+        return;
+      }
       router.replace('/portal/dashboard');
     } finally {
       setBusy(false);
@@ -82,11 +87,11 @@ export function PortalLoginScreen() {
         contact: suContact,
         password: suPassword,
       });
-      // Persist + sign in so Profile shows registration details immediately.
+      // Keep session for the pending screen identity — do NOT open portal nav.
       setMentor(session);
       setSuPassword('');
       setSuConfirm('');
-      router.replace('/portal/dashboard?section=profile');
+      router.replace('/portal/pending');
     } catch {
       setError('Could not save signup — try again.');
     } finally {

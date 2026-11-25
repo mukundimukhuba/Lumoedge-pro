@@ -44,7 +44,7 @@ export function TopMentorsPanel() {
       localCounts.set(key, (localCounts.get(key) || 0) + 1);
     }
     const profiles = await withTimeout(
-      listMentorProfiles(),
+      listMentorProfiles(mentorEmailRef.current),
       LOAD_TIMEOUT_MS,
     ).catch(() => []);
     const nameBy = new Map(

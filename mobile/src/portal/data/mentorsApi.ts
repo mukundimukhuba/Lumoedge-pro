@@ -1,9 +1,14 @@
 /**
  * Mentors Portal data helpers — prefer Supabase, fall back to local AsyncStorage.
+ * Admin mutations require the acting session email to be the super admin.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  SUPER_ADMIN_EMAIL,
+  isSuperAdminEmail,
+  type MentorSession,
+} from '../../auth/mentorAuth';
 import { getSupabase } from '../../supabase/client';
-import type { MentorSession } from '../../auth/mentorAuth';
 
 const LOCAL_PROFILES_KEY = 'edges-mentor-profiles-v1';
 
@@ -88,33 +93,126 @@ async function patchLocalProfile(
   }
 }
 
-export async function listMentorProfiles(): Promise<MentorProfileRow[]> {
-  const local = await loadLocalProfiles();
+export async function fetchMentorProfile(
+  email: string,
+): Promise<MentorProfileRow | null> {
+  const key = email.trim().toLowerCase();
+  if (!key) return null;
+
+  const local = (await loadLocalProfiles()).find((p) => p.email === key) || null;
   const sb = getSupabase();
-  if (!sb) return local.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (!sb) return local;
 
   try {
     const { data, error } = await sb
       .from('mentor_profiles')
       .select('*')
-      .order('created_at', { ascending: false });
+      .eq('email', key)
+      .maybeSingle();
     if (error || !data) return local;
-
-    const remote = data.map((r) => rowFromDb(r as Record<string, unknown>));
-    const byEmail = new Map<string, MentorProfileRow>();
-    for (const row of local) byEmail.set(row.email, row);
-    for (const row of remote) {
-      const prev = byEmail.get(row.email);
-      byEmail.set(row.email, prev ? { ...prev, ...row } : row);
-    }
-    return [...byEmail.values()].sort((a, b) =>
-      b.createdAt.localeCompare(a.createdAt),
-    );
+    const remote = rowFromDb(data as Record<string, unknown>);
+    return local ? { ...local, ...remote } : remote;
   } catch {
     return local;
   }
 }
 
+/**
+ * List mentor profiles. Non–super-admins only receive their own row
+ * (blocks using this helper as an admin directory scrape).
+ */
+export async function listMentorProfiles(
+  actorEmail?: string | null,
+): Promise<MentorProfileRow[]> {
+  const actor = (actorEmail || '').trim().toLowerCase();
+  const local = await loadLocalProfiles();
+  const sb = getSupabase();
+
+  let merged: MentorProfileRow[] = local;
+
+  if (sb) {
+    try {
+      const { data, error } = await sb
+        .from('mentor_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        const remote = data.map((r) => rowFromDb(r as Record<string, unknown>));
+        const byEmail = new Map<string, MentorProfileRow>();
+        for (const row of local) byEmail.set(row.email, row);
+        for (const row of remote) {
+          const prev = byEmail.get(row.email);
+          byEmail.set(row.email, prev ? { ...prev, ...row } : row);
+        }
+        merged = [...byEmail.values()];
+      }
+    } catch {
+      /* use local */
+    }
+  }
+
+  merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  if (!actor) return [];
+  if (!isSuperAdminEmail(actor)) {
+    return merged.filter((r) => r.email === actor);
+  }
+  return merged;
+}
+
+/** Signup / self-register — forces pending (never approved). */
+export async function registerMentorPending(input: {
+  email: string;
+  mentorName: string;
+  name: string;
+  contact: string;
+  passwordHash?: string;
+  createdAt?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const email = input.email.trim().toLowerCase();
+  if (isSuperAdminEmail(email)) {
+    return { ok: false, error: 'Use the super admin login instead of register.' };
+  }
+
+  const sb = getSupabase();
+  if (!sb) return { ok: true };
+
+  try {
+    const { error: rpcErr } = await sb.rpc('register_mentor_pending', {
+      p_email: email,
+      p_mentor_name: input.mentorName.trim(),
+      p_name: input.name.trim(),
+      p_contact: input.contact.trim(),
+      p_password_hash: input.passwordHash || null,
+    });
+    if (!rpcErr) return { ok: true };
+
+    // Fallback when migration 005 is not applied yet — upsert as pending only.
+    const payload = {
+      email,
+      mentor_name: input.mentorName.trim(),
+      name: input.name.trim(),
+      contact: input.contact.trim(),
+      status: 'pending',
+      password_hash: input.passwordHash || null,
+      key_allotment: 0,
+      created_at: input.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { error } = await sb.from('mentor_profiles').upsert(payload, {
+      onConflict: 'email',
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/** Demo / super-admin seed upsert only. */
 export async function upsertMentorProfile(input: {
   email: string;
   mentorName: string;
@@ -126,6 +224,18 @@ export async function upsertMentorProfile(input: {
   createdAt?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const email = input.email.trim().toLowerCase();
+
+  // Non-admin rows may only be written as pending via this helper.
+  if (
+    input.status !== 'pending' &&
+    !(input.status === 'demo' && isSuperAdminEmail(email))
+  ) {
+    return {
+      ok: false,
+      error: 'Approval status can only be changed by the super admin.',
+    };
+  }
+
   const payload = {
     email,
     mentor_name: input.mentorName.trim(),
@@ -156,10 +266,18 @@ export async function upsertMentorProfile(input: {
 }
 
 export async function setMentorStatus(
+  actorEmail: string,
   email: string,
   status: 'approved' | 'declined' | 'pending',
   keyAllotment?: number,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (!isSuperAdminEmail(actorEmail)) {
+    return {
+      ok: false,
+      error: `Only the super admin (${SUPER_ADMIN_EMAIL}) can approve or decline mentors.`,
+    };
+  }
+
   const key = email.trim().toLowerCase();
   await patchLocalProfile(key, {
     status,
@@ -170,6 +288,18 @@ export async function setMentorStatus(
   if (!sb) return { ok: true };
 
   try {
+    const { error: rpcErr } = await sb.rpc('admin_set_mentor_status', {
+      actor_email: SUPER_ADMIN_EMAIL,
+      target_email: key,
+      new_status: status,
+      new_allotment:
+        typeof keyAllotment === 'number'
+          ? Math.max(0, Math.floor(keyAllotment))
+          : null,
+    });
+    if (!rpcErr) return { ok: true };
+
+    // Fallback when migration 005 RPC is missing
     const patch: Record<string, unknown> = {
       status,
       updated_at: new Date().toISOString(),
@@ -192,10 +322,12 @@ export async function setMentorStatus(
 }
 
 export async function setMentorAllotment(
+  actorEmail: string,
   email: string,
   keyAllotment: number,
 ): Promise<{ ok: boolean; error?: string }> {
   return setMentorStatus(
+    actorEmail,
     email,
     'approved',
     Math.max(0, Math.floor(keyAllotment)),
@@ -214,6 +346,8 @@ export function sessionFromProfile(p: MentorProfileRow): MentorSession {
         ? 'demo'
         : p.status === 'approved'
           ? 'approved'
-          : 'pending',
+          : p.status === 'declined'
+            ? 'declined'
+            : 'pending',
   };
 }

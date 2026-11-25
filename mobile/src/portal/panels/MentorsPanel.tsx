@@ -6,31 +6,41 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useAppState } from '../../AppState';
 import {
   listMentorProfiles,
   setMentorAllotment,
   setMentorStatus,
   type MentorProfileRow,
 } from '../data/mentorsApi';
+import { SUPER_ADMIN_EMAIL, isSuperAdminEmail } from '../portalAccess';
 
 const GREEN = '#22C55E';
 const RED = '#EF4444';
 
 export function MentorsPanel() {
+  const { mentor } = useAppState();
   const [rows, setRows] = useState<MentorProfileRow[]>([]);
   const [msg, setMsg] = useState('');
   const [allotDraft, setAllotDraft] = useState<Record<string, string>>({});
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
 
+  const actorEmail = mentor?.email || '';
+  const canAdmin = isSuperAdminEmail(actorEmail);
+
   const load = useCallback(async () => {
-    const list = await listMentorProfiles();
+    if (!canAdmin) {
+      setRows([]);
+      return;
+    }
+    const list = await listMentorProfiles(actorEmail);
     setRows(list);
     const drafts: Record<string, string> = {};
     for (const r of list) {
       drafts[r.email] = String(r.keyAllotment || 0);
     }
     setAllotDraft(drafts);
-  }, []);
+  }, [actorEmail, canAdmin]);
 
   useEffect(() => {
     void load();
@@ -43,7 +53,7 @@ export function MentorsPanel() {
       0,
       Math.floor(Number(allotDraft[row.email] || row.keyAllotment || 0)),
     );
-    const res = await setMentorStatus(row.email, 'approved', allot);
+    const res = await setMentorStatus(actorEmail, row.email, 'approved', allot);
     setBusyEmail(null);
     if (!res.ok) {
       setMsg(res.error || 'Approve failed');
@@ -56,7 +66,7 @@ export function MentorsPanel() {
   const decline = async (row: MentorProfileRow) => {
     setBusyEmail(row.email);
     setMsg('');
-    const res = await setMentorStatus(row.email, 'declined');
+    const res = await setMentorStatus(actorEmail, row.email, 'declined');
     setBusyEmail(null);
     if (!res.ok) {
       setMsg(res.error || 'Decline failed');
@@ -70,7 +80,7 @@ export function MentorsPanel() {
     setBusyEmail(row.email);
     setMsg('');
     const allot = Math.max(0, Math.floor(Number(allotDraft[row.email] || 0)));
-    const res = await setMentorAllotment(row.email, allot);
+    const res = await setMentorAllotment(actorEmail, row.email, allot);
     setBusyEmail(null);
     if (!res.ok) {
       setMsg(res.error || 'Could not save allotment');
@@ -80,11 +90,23 @@ export function MentorsPanel() {
     await load();
   };
 
+  if (!canAdmin) {
+    return (
+      <View style={styles.wrap}>
+        <Text style={styles.hint}>
+          Only the super admin ({SUPER_ADMIN_EMAIL}) can approve mentor
+          signups.
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.wrap}>
       <Text style={styles.hint}>
         Mentors who signed up via the portal register flow. Approve or decline,
-        then set how many license keys they may generate.
+        then set how many license keys they may generate. Super admin:{' '}
+        {SUPER_ADMIN_EMAIL}
       </Text>
       {msg ? <Text style={styles.msg}>{msg}</Text> : null}
 
