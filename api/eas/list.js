@@ -1,7 +1,7 @@
 const { applyCors, json, readJsonBody } = require('../_lib/cors');
+const { safeFailPayload, sanitizePublicBody } = require('../_lib/safeErrors');
 const { getSupabaseAdmin, sbFetch } = require('../_lib/supabaseAdmin');
 const {
-  SUPER_ADMIN_EMAIL,
   normalizeEmail,
   isSuperAdmin,
 } = require('../_lib/mentorScope');
@@ -23,12 +23,15 @@ module.exports = async function handler(req, res) {
 
   const admin = getSupabaseAdmin();
   if (!admin.configured) {
-    return json(res, 503, {
-      ok: false,
-      error:
-        'Supabase service role not configured on server (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).',
-      configured: false,
-    });
+    return json(
+      res,
+      503,
+      safeFailPayload(503, 'supabase admin not configured', {
+        userMessage:
+          'The service is temporarily unavailable. Please try again later.',
+        code: 'config',
+      }),
+    );
   }
 
   let actorEmail = '';
@@ -79,17 +82,14 @@ module.exports = async function handler(req, res) {
     }
     const sel = await sbFetch(path);
     if (!sel.ok) {
-      return json(res, 502, {
-        ok: false,
-        error:
-          sel.json?.message ||
-          sel.json?.code ||
-          sel.text?.slice(0, 180) ||
-          'list failed',
-        configured: true,
-        hint:
-          'Apply supabase/migrations/006_mentor_catalog_isolation.sql for owner_email + list_mentor_eas.',
-      });
+      return json(
+        res,
+        502,
+        safeFailPayload(502, sel.json || sel.text || 'list failed', {
+          code: 'eas_list',
+          meta: { via: 'table' },
+        }),
+      );
     }
     return json(res, 200, {
       ok: true,
@@ -97,12 +97,10 @@ module.exports = async function handler(req, res) {
       configured: true,
       superAdmin: isSuperAdmin(actorEmail),
       eas: (sel.json || []).map(mapEa),
-      adminEmail: SUPER_ADMIN_EMAIL,
     });
   } catch (err) {
     return json(res, 502, {
-      ok: false,
-      error: String(err?.message || err),
+      ...safeFailPayload(502, err, { code: 'eas_list' }),
       configured: true,
     });
   }

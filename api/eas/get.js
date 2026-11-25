@@ -1,4 +1,5 @@
 const { applyCors, json, readJsonBody } = require('../_lib/cors');
+const { safeFailPayload } = require('../_lib/safeErrors');
 const {
   getSupabaseAdmin,
   sbFetch,
@@ -22,12 +23,11 @@ module.exports = async function handler(req, res) {
 
   const admin = getSupabaseAdmin();
   if (!admin.configured) {
-    return json(res, 503, {
-      ok: false,
-      error:
-        'Supabase service role not configured on server (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY).',
-      configured: false,
-    });
+    return json(
+      res,
+      503,
+      { ...safeFailPayload(503, 'supabase admin not configured', { code: 'config' }), configured: false },
+    );
   }
 
   let eaId = '';

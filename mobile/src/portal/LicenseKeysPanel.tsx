@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { useAppState } from '../AppState';
 import { fetchLicenseStatus } from '../licenses/remoteApi';
+import { toSafeUserMessage } from './safeErrors';
 import {
   isSuperAdminEmail,
   scopeCatalogForMentor,
@@ -63,16 +64,14 @@ export function LicenseKeysPanel() {
                 .filter(Boolean)
                 .join(', ');
         setEnvLine(
-          `Supabase env incomplete on Vercel — missing: ${names || 'SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY'}. Set in Vercel → Settings → Environment Variables, then redeploy. Cursor secrets do not bind to Vercel.`,
+          toSafeUserMessage('service unavailable', 'portal'),
         );
         return;
       }
       const easT = st.tables?.managed_eas || '?';
       const keysT = st.tables?.license_keys || '?';
       if (easT === 'missing' || keysT === 'missing') {
-        setEnvLine(
-          `Supabase OK · tables missing (eas=${easT}, keys=${keysT}) · Storage fallback active. Apply migrations for full DB.`,
-        );
+        setEnvLine('Catalog sync is running in fallback mode.');
       } else {
         setEnvLine(`Supabase OK · managed_eas=${easT} · license_keys=${keysT}`);
       }
@@ -122,18 +121,17 @@ export function LicenseKeysPanel() {
     if (remote.ok) {
       setFlashError(false);
       setFlash(
-        `Generated ${row.key} for ${row.assigneeName} <${row.assigneeEmail}> · ${row.eaName}. Cloud sync OK (${remote.via || 'remote'}).${
-          remote.hint ? ` Note: ${remote.hint}` : ''
-        }`,
+        `Generated key for ${row.assigneeName} · ${row.eaName}. Cloud sync OK.`,
       );
       setAssigneeName('');
       setAssigneeEmail('');
     } else {
       setFlashError(true);
       setFlash(
-        `Generated ${row.key} locally, but remote write FAILED: ${remote.error || 'unknown'}${
-          remote.hint ? ` (${remote.hint})` : ''
-        }. Activate on this device may still work; other devices will not see it until sync succeeds.`,
+        `Key saved on this device, but cloud sync failed. ${toSafeUserMessage(
+          remote.error,
+          'portal',
+        )}`,
       );
     }
   };
