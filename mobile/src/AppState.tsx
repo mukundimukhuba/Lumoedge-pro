@@ -44,10 +44,20 @@ import {
   isSuperAdminEmail,
   normalizeMentorEmail,
 } from './portal/mentorScope';
+import {
+  listScopedLicenseKeys,
+  listSubscriptions,
+  submitSubscription,
+} from './subscriptions/remoteApi';
+import {
+  isSubscriptionUsable,
+  type SubscriptionRow,
+} from './subscriptions/types';
 
 const EA_ACCESS_KEY = 'edges-ea-access-v1';
 const ACTIVE_EA_KEY = 'edges-active-ea-v1';
 const QUOTE_SETUPS_KEY = 'edges-quote-setups-v1';
+const CLIENT_SUB_KEY = 'edges-client-subscription-v1';
 
 /** Per Quotes symbol — used by Auto Trade Start */
 export type QuoteSetup = {
@@ -111,6 +121,11 @@ export type LicenseKey = {
   assigneeEmail?: string | null;
   /** Mentor who generated the key */
   issuedByEmail?: string | null;
+  mentorId?: string | null;
+  subscriptionId?: string | null;
+  licenseDuration?: string | null;
+  licenseStatus?: string | null;
+  expiresAt?: string | null;
   /** unused | active | revoked */
   status?: string | null;
   activatedAt?: string | null;
@@ -183,15 +198,37 @@ type AppStateValue = {
   licenseKeys: LicenseKey[];
   generateLicenseKey: (
     eaId: string,
-    assignee?: { name: string; email: string },
+    assignee: {
+      name: string;
+      email: string;
+      duration: string;
+      subscriptionId?: string | null;
+      regenerate?: boolean;
+    },
   ) => Promise<{
     key: LicenseKey;
     remote: { ok: boolean; via?: string; error?: string; hint?: string };
   } | null>;
   eaAccess: EaAccess | null;
   accessReady: boolean;
-  /** Paid access only — does NOT open control UI without a license. */
-  unlockEaAccess: (input: { email: string; name: string }) => Promise<EaAccess>;
+  clientSubscription: SubscriptionRow | null;
+  canAccessLicenseSection: boolean;
+  /** Submit payment → pending subscription; stores client identity. */
+  unlockEaAccess: (input: {
+    email: string;
+    name: string;
+    paymentMethod: string;
+    paymentReference: string;
+    paymentProof?: string;
+  }) => Promise<
+    | { ok: true; access: EaAccess; subscription: SubscriptionRow }
+    | { ok: false; error: string }
+  >;
+  refreshClientSubscription: () => Promise<SubscriptionRow | null>;
+  refreshScopedLicenseKeys: (opts: {
+    role: 'mentor' | 'client';
+    email: string;
+  }) => Promise<LicenseKey[]>;
   activeEa: ActiveEaSession | null;
   activateLicenseKey: (rawKey: string) => Promise<
     | { ok: true; session: ActiveEaSession }
@@ -254,6 +291,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [eas, setEas] = useState<ManagedEa[]>([]);
   const [licenseKeys, setLicenseKeys] = useState<LicenseKey[]>([]);
   const [eaAccess, setEaAccess] = useState<EaAccess | null>(null);
+  const [clientSubscription, setClientSubscription] =
+    useState<SubscriptionRow | null>(null);
   const [activeEa, setActiveEa] = useState<ActiveEaSession | null>(null);
   const [accessReady, setAccessReady] = useState(false);
 
@@ -298,16 +337,27 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        const [accessRaw, activeRaw, setupsRaw] = await Promise.all([
+        const [accessRaw, activeRaw, setupsRaw, subRaw] = await Promise.all([
           AsyncStorage.getItem(EA_ACCESS_KEY),
           AsyncStorage.getItem(ACTIVE_EA_KEY),
           AsyncStorage.getItem(QUOTE_SETUPS_KEY),
+          AsyncStorage.getItem(CLIENT_SUB_KEY),
         ]);
         const catalog = await loadLicenseCatalog();
         if (cancelled) return;
         if (accessRaw) {
           const parsed = JSON.parse(accessRaw) as EaAccess;
           if (parsed?.email && parsed?.name) setEaAccess(parsed);
+        }
+        if (subRaw) {
+          try {
+            const parsed = JSON.parse(subRaw) as SubscriptionRow;
+            if (parsed?.id && parsed?.clientEmail) {
+              setClientSubscription(parsed);
+            }
+          } catch {
+            /* ignore */
+          }
         }
         applyCatalog(catalog.eas, catalog.keys);
         // Persist merged remote+local only when non-empty (no silent wipe).
@@ -414,10 +464,70 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     void refreshLicenseCatalog();
   }, [mentor?.email, refreshLicenseCatalog]);
 
+  const refreshClientSubscription = useCallback(async () => {
+    const email = eaAccess?.email?.trim().toLowerCase();
+    if (!email) {
+      setClientSubscription(null);
+      return null;
+    }
+    const res = await listSubscriptions({
+      role: 'client',
+      actorEmail: email,
+      clientEmail: email,
+    });
+    if (!res.ok || !res.subscriptions.length) {
+      try {
+        const raw = await AsyncStorage.getItem(CLIENT_SUB_KEY);
+        if (raw) {
+          const local = JSON.parse(raw) as SubscriptionRow;
+          if (local?.clientEmail?.toLowerCase() === email) {
+            setClientSubscription(local);
+            return local;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      setClientSubscription(null);
+      return null;
+    }
+    const latest = res.subscriptions[0]!;
+    setClientSubscription(latest);
+    try {
+      await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(latest));
+    } catch {
+      /* ignore */
+    }
+    return latest;
+  }, [eaAccess?.email]);
+
+  useEffect(() => {
+    if (!eaAccess?.email) return;
+    void refreshClientSubscription();
+  }, [eaAccess?.email, refreshClientSubscription]);
+
+  const canAccessLicenseSection = isSubscriptionUsable(
+    clientSubscription?.status,
+  );
+
   const unlockEaAccess: AppStateValue['unlockEaAccess'] = async ({
     email,
     name,
+    paymentMethod,
+    paymentReference,
+    paymentProof,
   }) => {
+    const submitted = await submitSubscription({
+      clientName: name.trim(),
+      clientEmail: email.trim().toLowerCase(),
+      paymentMethod: paymentMethod.trim(),
+      paymentReference: paymentReference.trim(),
+      paymentProof: paymentProof?.trim() || paymentReference.trim(),
+      amountUsd: 35,
+    });
+    if (!submitted.ok) {
+      return { ok: false, error: submitted.error };
+    }
     const record: EaAccess = {
       email: email.trim().toLowerCase(),
       name: name.trim(),
@@ -426,9 +536,91 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       priceUsd: 35,
     };
     await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(record));
+    await AsyncStorage.setItem(
+      CLIENT_SUB_KEY,
+      JSON.stringify(submitted.subscription),
+    );
     setEaAccess(record);
-    return record;
+    setClientSubscription(submitted.subscription);
+    return {
+      ok: true,
+      access: record,
+      subscription: submitted.subscription,
+    };
   };
+
+  const refreshScopedLicenseKeys: AppStateValue['refreshScopedLicenseKeys'] =
+    async ({ role, email }) => {
+      const normalized = email.trim().toLowerCase();
+      if (!normalized) return [];
+      const res = await listScopedLicenseKeys({
+        role,
+        actorEmail: normalized,
+        clientEmail: role === 'client' ? normalized : undefined,
+      });
+      if (!res.ok) return keysRef.current;
+      const mapped: LicenseKey[] = res.keys.map((raw) => ({
+        id: String(raw.id || ''),
+        eaId: String(raw.eaId || raw.ea_id || ''),
+        eaName: String(raw.eaName || raw.ea_name || ''),
+        key: String(raw.key || ''),
+        createdAt: String(raw.createdAt || raw.created_at || ''),
+        eaPictureUri: (raw.eaPictureUri || raw.ea_picture_uri || null) as
+          | string
+          | null,
+        eaSymbols: Array.isArray(raw.eaSymbols)
+          ? (raw.eaSymbols as string[])
+          : Array.isArray(raw.ea_symbols)
+            ? (raw.ea_symbols as string[])
+            : [],
+        assigneeName: (raw.assigneeName || raw.assignee_name || null) as
+          | string
+          | null,
+        assigneeEmail: (raw.assigneeEmail || raw.assignee_email || null) as
+          | string
+          | null,
+        issuedByEmail: (raw.issuedByEmail || raw.issued_by_email || null) as
+          | string
+          | null,
+        mentorId: (raw.mentorId || raw.mentor_id || null) as string | null,
+        subscriptionId: (raw.subscriptionId ||
+          raw.subscription_id ||
+          null) as string | null,
+        licenseDuration: (raw.licenseDuration ||
+          raw.license_duration ||
+          null) as string | null,
+        licenseStatus: (raw.licenseStatus ||
+          raw.license_status ||
+          raw.status ||
+          null) as string | null,
+        expiresAt: (raw.expiresAt || raw.expires_at || null) as string | null,
+        status: (raw.status || null) as string | null,
+        activatedAt: (raw.activatedAt || raw.activated_at || null) as
+          | string
+          | null,
+      }));
+      // Mentor view: replace in-memory keys with scoped set (keep local EAs).
+      // Client view: only merge keys for this email — never other mentors' keys.
+      if (role === 'mentor') {
+        applyCatalog(easRef.current, mapped);
+        await saveLicenseCatalog(easRef.current, mapped, {
+          skipRemote: true,
+          broadcast: false,
+        });
+      } else {
+        const mine = mapped.filter(
+          (k) =>
+            (k.assigneeEmail || '').toLowerCase() === normalized,
+        );
+        applyCatalog(easRef.current, mine);
+        await saveLicenseCatalog(easRef.current, mine, {
+          skipRemote: true,
+          broadcast: false,
+          allowEmpty: true,
+        });
+      }
+      return mapped;
+    };
 
   const persistActiveSession = useCallback(async (session: ActiveEaSession) => {
     const diskSession =
@@ -663,6 +855,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!canManageEa(ea, mentor?.email)) {
       return null;
     }
+    if (!assignee?.email?.trim() || !assignee?.duration?.trim()) {
+      return null;
+    }
     // Snapshot the mentor-uploaded picture onto the key (compressed).
     const eaPictureUri =
       (await compressEaPicture(ea.pictureUri)) || ea.pictureUri;
@@ -678,11 +873,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       createdAt: new Date().toISOString(),
       eaPictureUri,
       eaSymbols: [...ea.symbols],
-      assigneeName: assignee?.name?.trim() || null,
-      assigneeEmail: assignee?.email?.trim().toLowerCase() || null,
+      assigneeName: assignee.name?.trim() || null,
+      assigneeEmail: assignee.email.trim().toLowerCase(),
       issuedByEmail: issuer,
+      mentorId: issuer,
+      subscriptionId: assignee.subscriptionId || null,
+      licenseDuration: assignee.duration.trim(),
+      licenseStatus: 'unused',
+      expiresAt: null,
       status: 'unused',
       activatedAt: null,
+    };
+    const rowForRemote: LicenseKey & { regenerate?: boolean } = {
+      ...row,
+      regenerate: Boolean(assignee.regenerate),
     };
     // Also keep compressed picture on the live EA so Manage EAs + Activate match.
     let nextEas = easRef.current.map((e) =>
@@ -703,7 +907,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!liveEa.ownerEmail && issuer) {
       liveEa.ownerEmail = issuer;
     }
-    const remote = await syncIssuedLicenseRemote(row, liveEa);
+    const remote = await syncIssuedLicenseRemote(rowForRemote, liveEa);
     // Prefer durable http URLs returned from sync so Activate/Home never lose the logo.
     if (remote.keyPictureUri || remote.eaPictureUri) {
       const durable =
@@ -808,8 +1012,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: 'Enter a valid EDGES-XXXX-XXXX-XXXX-XXXX key' };
     }
 
+    const clientEmail = eaAccess?.email?.trim().toLowerCase() || '';
+
     const fromLocal = (pool: LicenseKey[]) => {
-      const hit = findLocalIssuedKey(pool, key);
+      // When client identity is known, ignore cached keys for other emails
+      // (and legacy rows with no assignee — those were the device-dump leak).
+      const scoped = clientEmail
+        ? pool.filter((k) => {
+            const a = (k.assigneeEmail || '').trim().toLowerCase();
+            return a === clientEmail;
+          })
+        : pool;
+      const hit = findLocalIssuedKey(scoped, key);
       if (!hit) return null;
       return {
         key: hit,
@@ -818,32 +1032,45 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       };
     };
 
-    // 1) Same-device React memory first (fingerprint / OCR-safe)
+    // 1) Same-device React memory first (fingerprint / OCR-safe, email-scoped)
     let found = fromLocal(keysRef.current);
 
-    // 2) Disk + cloud catalog (any browser worldwide via /api/licenses/lookup)
+    // 2) Server lookup by typed key (cross-device) — then enforce email ownership
     if (!found) {
       found = await findIssuedLicense(key);
     }
 
-    // 3) Refresh local+remote then retry (race after Generate on another tab)
+    // 3) Refresh local then retry (race after Generate on another tab)
     if (!found) {
       await refreshLicenseCatalog();
       found = fromLocal(keysRef.current) || (await findIssuedLicense(key));
     }
 
     if (!found) {
-      const n = keysRef.current.length;
-      const localHint =
-        n === 1
-          ? ` 1 key on this device (${keysRef.current[0]!.key}) — tap it below or re-type carefully (O vs 0).`
-          : n > 1
-            ? ` ${n} keys on this device — pick one from the list below.`
-            : ' If your mentor just generated it, wait a moment and try again (cloud sync).';
       return {
         ok: false,
-        error: `License key not found.${localHint}`,
+        error:
+          'License key not found. Enter the key your mentor generated for your email (check O vs 0). If it was just created, wait a moment and try again.',
       };
+    }
+
+    // Strict ownership: key must belong to this client's registered email when known.
+    const assignee = (found.key.assigneeEmail || '').trim().toLowerCase();
+    if (clientEmail) {
+      if (!assignee) {
+        return {
+          ok: false,
+          error:
+            'This license key is not linked to a client email. Ask your mentor to regenerate it for your registered email.',
+        };
+      }
+      if (assignee !== clientEmail) {
+        return {
+          ok: false,
+          error:
+            'This license key belongs to a different client email. Sign in with the email your mentor used.',
+        };
+      }
     }
 
     const activatedAt = new Date().toISOString();
@@ -958,7 +1185,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       generateLicenseKey,
       eaAccess,
       accessReady,
+      clientSubscription,
+      canAccessLicenseSection,
       unlockEaAccess,
+      refreshClientSubscription,
+      refreshScopedLicenseKeys,
       activeEa,
       activateLicenseKey,
       clearActiveEa,
@@ -979,6 +1210,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       licenseKeys,
       eaAccess,
       accessReady,
+      clientSubscription,
+      canAccessLicenseSection,
+      refreshClientSubscription,
       activeEa,
       refreshActiveEaBranding,
     ],

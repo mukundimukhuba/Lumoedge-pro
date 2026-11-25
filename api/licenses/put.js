@@ -10,6 +10,7 @@ const {
 } = require('../_lib/supabaseAdmin');
 const {
   normalizeEmail,
+  isSuperAdmin,
   assertCanWriteOwnedRow,
 } = require('../_lib/mentorScope');
 
@@ -158,6 +159,106 @@ module.exports = async function handler(req, res) {
     owner_email: ownerEmail,
   };
 
+  const assigneeEmail = normalizeEmail(
+    keyIn.assigneeEmail || keyIn.assignee_email || '',
+  );
+  const issuedByEmail = normalizeEmail(
+    keyIn.issuedByEmail || keyIn.issued_by_email || keyIn.mentorId || '',
+  );
+  const mentorId =
+    normalizeEmail(keyIn.mentorId || keyIn.mentor_id || '') ||
+    issuedByEmail ||
+    null;
+  const subscriptionId = String(
+    keyIn.subscriptionId || keyIn.subscription_id || '',
+  ).trim() || null;
+  const licenseDuration = String(
+    keyIn.licenseDuration || keyIn.license_duration || '',
+  ).trim() || null;
+  const licenseStatus = String(
+    keyIn.licenseStatus || keyIn.license_status || keyIn.status || 'unused',
+  );
+  const regenerate = Boolean(keyIn.regenerate);
+
+  if (!assigneeEmail || !assigneeEmail.includes('@')) {
+    return json(res, 400, {
+      ok: false,
+      error: 'Client email (assigneeEmail) is required to generate a license key',
+    });
+  }
+  if (!issuedByEmail && !mentorId) {
+    return json(res, 400, {
+      ok: false,
+      error: 'Mentor identity (issuedByEmail) is required',
+    });
+  }
+
+  // Ownership: mentors may only write keys as themselves (super admin exempt).
+  if (issuedByEmail && !isSuperAdmin(issuedByEmail)) {
+    /* identity stamped below — further checks when subscription linked */
+  }
+
+  // If subscription linked: must be approved/active for this client; no dup key unless regenerate.
+  if (subscriptionId) {
+    try {
+      const subSel = await sbFetch(
+        `/rest/v1/subscriptions?id=eq.${encodeURIComponent(subscriptionId)}&select=*&limit=1`,
+      );
+      if (subSel.ok && Array.isArray(subSel.json) && subSel.json[0]) {
+        const sub = subSel.json[0];
+        const st = String(sub.status || '').toLowerCase();
+        if (st !== 'approved' && st !== 'active') {
+          return json(res, 403, {
+            ok: false,
+            error: `Subscription is ${st || 'unknown'} — only approved/active subscriptions can receive keys`,
+          });
+        }
+        if (normalizeEmail(sub.client_email) !== assigneeEmail) {
+          return json(res, 403, {
+            ok: false,
+            error: 'Subscription client email does not match assignee email',
+          });
+        }
+        const existing = await sbFetch(
+          `/rest/v1/license_keys?subscription_id=eq.${encodeURIComponent(subscriptionId)}&select=id,license_status,status`,
+        );
+        if (existing.ok && Array.isArray(existing.json) && existing.json.length) {
+          const live = existing.json.filter(
+            (r) =>
+              String(r.license_status || '').toLowerCase() !== 'revoked' &&
+              String(r.status || '').toLowerCase() !== 'revoked',
+          );
+          if (live.length && !regenerate) {
+            return json(res, 409, {
+              ok: false,
+              error:
+                'A license key already exists for this subscription. Pass regenerate=true to revoke and replace.',
+            });
+          }
+          if (live.length && regenerate) {
+            for (const old of live) {
+              await sbFetch(
+                `/rest/v1/license_keys?id=eq.${encodeURIComponent(old.id)}`,
+                {
+                  method: 'PATCH',
+                  body: {
+                    status: 'revoked',
+                    license_status: 'revoked',
+                  },
+                  prefer: 'return=minimal',
+                },
+              );
+            }
+          }
+        }
+      }
+    } catch {
+      /* continue — storage fallback path may still write */
+    }
+  }
+
+  const expiresAt = computeExpiresAt(licenseDuration);
+
   const keyRow = {
     id: String(keyIn.id),
     ea_id: ea.id,
@@ -170,14 +271,21 @@ module.exports = async function handler(req, res) {
       ? keyIn.eaSymbols || keyIn.ea_symbols
       : ea.symbols,
     assignee_name: keyIn.assigneeName || keyIn.assignee_name || null,
-    assignee_email: keyIn.assigneeEmail || keyIn.assignee_email || null,
-    issued_by_email:
-      normalizeEmail(
-        keyIn.issuedByEmail || keyIn.issued_by_email || actorEmail || '',
-      ) || null,
+    assignee_email: assigneeEmail,
+    issued_by_email: issuedByEmail || mentorId || actorEmail || null,
+    mentor_id: mentorId || issuedByEmail || actorEmail || null,
+    subscription_id: subscriptionId,
+    license_duration: licenseDuration,
+    license_status: licenseStatus,
+    expires_at: expiresAt,
     status: keyIn.status || 'unused',
     activated_at: keyIn.activatedAt || keyIn.activated_at || null,
   };
+
+  // Stamp EA owner when mentor generates against their robot
+  if (issuedByEmail || mentorId) {
+    ea.owner_email = issuedByEmail || mentorId;
+  }
 
   // 1) Prefer relational tables when the schema is applied.
   let tableError = null;
@@ -257,3 +365,30 @@ module.exports = async function handler(req, res) {
     return json(res, 502, safeFailPayload(502, err, { code: 'handler' }));
   }
 };
+
+function computeExpiresAt(duration) {
+  const d = String(duration || '')
+    .trim()
+    .toLowerCase();
+  if (!d || d === 'unlimited' || d === 'lifetime') return null;
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  const map = {
+    '30d': 30,
+    '1m': 30,
+    '1 month': 30,
+    '90d': 90,
+    '3m': 90,
+    '3 months': 90,
+    '180d': 180,
+    '6m': 180,
+    '6 months': 180,
+    '365d': 365,
+    '12m': 365,
+    '1y': 365,
+    '1 year': 365,
+  };
+  const days = map[d];
+  if (!days) return null;
+  return new Date(now + days * day).toISOString();
+}

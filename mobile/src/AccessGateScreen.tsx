@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -13,9 +14,16 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAppState } from './AppState';
 import { TripleTapLogo } from './TripleTapLogo';
+import { displaySubscriptionStatus } from './subscriptions/types';
 
 const RED = '#FF0000';
 const BG = '#050505';
+
+/** External checkout / payment contact — CapePulse. */
+export const LUMO_EDGE_PRO_CHECKOUT_URL =
+  'https://capepaulse.lovable.app/contact';
+
+const PAYMENT_METHODS = ['EFT / Bank transfer', 'PayPal', 'Crypto', 'Other'];
 
 function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
@@ -23,15 +31,17 @@ function isValidEmail(v: string) {
 
 /**
  * Front door before EA control UI.
- * Collects Email + Name, then mock Access for Lumo Edge Pro — $35.
+ * Collects Email + Name + payment proof → pending subscription.
+ * License activate only after super-admin approval.
  */
 export function AccessGateScreen() {
   const { unlockEaAccess } = useAppState();
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState(PAYMENT_METHODS[0]!);
+  const [paymentReference, setPaymentReference] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<'form' | 'paying'>('form');
 
   const onAccess = async () => {
     setError('');
@@ -43,15 +53,32 @@ export function AccessGateScreen() {
       setError('Enter a valid email');
       return;
     }
+    if (!paymentMethod.trim()) {
+      setError('Select a payment method');
+      return;
+    }
+    if (!paymentReference.trim()) {
+      setError('Enter payment reference / proof');
+      return;
+    }
     setBusy(true);
-    setPhase('paying');
     try {
-      // Mock Stripe / checkout — demo unlock after a short delay.
-      await new Promise((r) => setTimeout(r, 1100));
-      await unlockEaAccess({ email: email.trim(), name: name.trim() });
+      try {
+        await Linking.openURL(LUMO_EDGE_PRO_CHECKOUT_URL);
+      } catch {
+        /* checkout link optional — proof still submitted */
+      }
+      const result = await unlockEaAccess({
+        email: email.trim(),
+        name: name.trim(),
+        paymentMethod: paymentMethod.trim(),
+        paymentReference: paymentReference.trim(),
+      });
+      if (!result.ok) {
+        setError(result.error);
+      }
     } catch {
-      setError('Could not complete access — try again.');
-      setPhase('form');
+      setError('Could not submit payment — try again.');
     } finally {
       setBusy(false);
     }
@@ -77,60 +104,88 @@ export function AccessGateScreen() {
           <Text style={styles.product}>Lumo Edge Pro</Text>
           <Text style={styles.price}>$35</Text>
           <Text style={styles.tagline}>
-            Step 1 of 2 — purchase Lumo Edge Pro access, then activate with your
-            mentor license key.
+            Step 1 — submit payment proof. After approval you can activate with
+            your mentor license key.
           </Text>
 
-          {phase === 'paying' ? (
-            <View style={styles.paying}>
-              <ActivityIndicator color={RED} size="large" />
-              <Text style={styles.payingText}>Processing access…</Text>
-              <Text style={styles.payingHint}>Mock checkout · Stripe not required</Text>
+          <View style={styles.form}>
+            <Text style={styles.label}>NAME</Text>
+            <TextInput
+              style={styles.input}
+              value={name}
+              onChangeText={setName}
+              placeholder="Your name"
+              placeholderTextColor="#6B7280"
+              autoCapitalize="words"
+              editable={!busy}
+            />
+            <Text style={styles.label}>EMAIL</Text>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="you@email.com"
+              placeholderTextColor="#6B7280"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!busy}
+            />
+            <Text style={styles.label}>PAYMENT METHOD</Text>
+            <View style={styles.methodRow}>
+              {PAYMENT_METHODS.map((m) => {
+                const on = m === paymentMethod;
+                return (
+                  <Pressable
+                    key={m}
+                    onPress={() => setPaymentMethod(m)}
+                    style={[styles.methodChip, on && styles.methodChipOn]}
+                    disabled={busy}
+                  >
+                    <Text
+                      style={[styles.methodText, on && styles.methodTextOn]}
+                    >
+                      {m}
+                    </Text>
+                  </Pressable>
+                );
+              })}
             </View>
-          ) : (
-            <View style={styles.form}>
-              <Text style={styles.label}>NAME</Text>
-              <TextInput
-                style={styles.input}
-                value={name}
-                onChangeText={setName}
-                placeholder="Your name"
-                placeholderTextColor="#6B7280"
-                autoCapitalize="words"
-                editable={!busy}
-              />
-              <Text style={styles.label}>EMAIL</Text>
-              <TextInput
-                style={styles.input}
-                value={email}
-                onChangeText={setEmail}
-                placeholder="you@email.com"
-                placeholderTextColor="#6B7280"
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!busy}
-              />
-              {error ? <Text style={styles.error}>{error}</Text> : null}
-              <Pressable
-                style={({ pressed }) => [
-                  styles.cta,
-                  pressed && { opacity: 0.85 },
-                  busy && { opacity: 0.6 },
-                ]}
-                onPress={onAccess}
-                disabled={busy}
-                accessibilityRole="button"
-                accessibilityLabel="Access Lumo Edge Pro for 35 dollars"
-              >
-                <Text style={styles.ctaText}>Access · Lumo Edge Pro — $35</Text>
-              </Pressable>
-              <Text style={styles.fine}>
-                Demo checkout — no real charge. Next you will enter a mentor
-                license key to activate your EA (name, picture, symbols).
-              </Text>
-            </View>
-          )}
+            <Text style={styles.label}>PAYMENT REFERENCE / PROOF</Text>
+            <TextInput
+              style={styles.input}
+              value={paymentReference}
+              onChangeText={setPaymentReference}
+              placeholder="Transaction ID, receipt ref, or proof note"
+              placeholderTextColor="#6B7280"
+              editable={!busy}
+            />
+            {error ? <Text style={styles.error}>{error}</Text> : null}
+            <Pressable
+              style={({ pressed }) => [
+                styles.cta,
+                pressed && { opacity: 0.85 },
+                busy && { opacity: 0.6 },
+              ]}
+              onPress={onAccess}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="Submit Lumo Edge Pro payment for approval"
+            >
+              {busy ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.ctaText}>
+                  Submit payment · Lumo Edge Pro — $35
+                </Text>
+              )}
+            </Pressable>
+            <Text style={styles.fine}>
+              Opens checkout if available, then submits your payment for super
+              admin approval ({displaySubscriptionStatus('pending')}). License
+              keys unlock only after approval.
+            </Text>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
@@ -196,6 +251,20 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
+  methodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  methodChip: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  methodChipOn: {
+    borderColor: RED,
+    backgroundColor: 'rgba(255,0,0,0.18)',
+  },
+  methodText: { color: '#E5E7EB', fontSize: 12, fontWeight: '600' },
+  methodTextOn: { color: '#fff' },
   error: { color: '#FF6B6B', fontSize: 13, marginTop: 4 },
   cta: {
     marginTop: 18,
@@ -203,6 +272,8 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingVertical: 16,
     alignItems: 'center',
+    minHeight: 52,
+    justifyContent: 'center',
   },
   ctaText: {
     color: '#fff',
@@ -217,11 +288,4 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     textAlign: 'center',
   },
-  paying: {
-    marginTop: 48,
-    alignItems: 'center',
-    gap: 14,
-  },
-  payingText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  payingHint: { color: '#6B7280', fontSize: 12 },
 });

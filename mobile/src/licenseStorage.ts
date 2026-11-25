@@ -38,6 +38,11 @@ export type StoredLicenseKey = {
   assigneeName?: string | null;
   assigneeEmail?: string | null;
   issuedByEmail?: string | null;
+  mentorId?: string | null;
+  subscriptionId?: string | null;
+  licenseDuration?: string | null;
+  licenseStatus?: string | null;
+  expiresAt?: string | null;
   status?: string | null;
   activatedAt?: string | null;
 };
@@ -283,6 +288,29 @@ function rowToKey(row: Record<string, unknown>): StoredLicenseKey {
       (row.issued_by_email as string | null) ??
       (row.issuedByEmail as string | null) ??
       null,
+    mentorId:
+      (row.mentor_id as string | null) ??
+      (row.mentorId as string | null) ??
+      (row.issued_by_email as string | null) ??
+      (row.issuedByEmail as string | null) ??
+      null,
+    subscriptionId:
+      (row.subscription_id as string | null) ??
+      (row.subscriptionId as string | null) ??
+      null,
+    licenseDuration:
+      (row.license_duration as string | null) ??
+      (row.licenseDuration as string | null) ??
+      null,
+    licenseStatus:
+      (row.license_status as string | null) ??
+      (row.licenseStatus as string | null) ??
+      (row.status as string | null) ??
+      'unused',
+    expiresAt:
+      (row.expires_at as string | null) ??
+      (row.expiresAt as string | null) ??
+      null,
     status: (row.status as string | null) ?? 'unused',
     activatedAt:
       (row.activated_at as string | null) ??
@@ -305,6 +333,11 @@ export type CatalogLoadOpts = {
   isSuperAdmin?: boolean;
 };
 
+/**
+ * Remote catalog: mentor-scoped via RPC when possible.
+ * Unscoped client loads never dump all license_keys — use /api/licenses/list
+ * or lookup by typed key instead.
+ */
 async function fetchRemoteCatalog(
   opts?: CatalogLoadOpts,
 ): Promise<RemoteFetch> {
@@ -354,21 +387,39 @@ async function fetchRemoteCatalog(
       };
     }
 
-    const [easRes, keysRes] = await Promise.all([
-      sb.from('managed_eas').select('*'),
-      sb.from('license_keys').select('*'),
-    ]);
-    if (easRes.error || keysRes.error) {
-      const msg = easRes.error?.message || keysRes.error?.message || 'fetch failed';
-      console.warn('[edges] supabase catalog fetch failed');
+    if (opts?.isSuperAdmin) {
+      const [easRes, keysRes] = await Promise.all([
+        sb.from('managed_eas').select('*'),
+        sb.from('license_keys').select('*'),
+      ]);
+      if (easRes.error || keysRes.error) {
+        const msg =
+          easRes.error?.message || keysRes.error?.message || 'fetch failed';
+        console.warn('[edges] supabase catalog fetch failed');
+        return { ok: false, eas: [], keys: [], error: msg };
+      }
+      return {
+        ok: true,
+        eas: (easRes.data || []).map((r) =>
+          rowToEa(r as Record<string, unknown>),
+        ),
+        keys: (keysRes.data || []).map((r) =>
+          rowToKey(r as Record<string, unknown>),
+        ),
+      };
+    }
+
+    // Client / anonymous: EA branding only — never dump all keys.
+    const easRes = await sb.from('managed_eas').select('*');
+    if (easRes.error) {
+      const msg = easRes.error.message || 'fetch failed';
+      console.warn('[edges] supabase catalog fetch failed', msg);
       return { ok: false, eas: [], keys: [], error: msg };
     }
     return {
       ok: true,
       eas: (easRes.data || []).map((r) => rowToEa(r as Record<string, unknown>)),
-      keys: (keysRes.data || []).map((r) =>
-        rowToKey(r as Record<string, unknown>),
-      ),
+      keys: [],
     };
   } catch (err) {
     console.warn('[edges] supabase catalog fetch error');

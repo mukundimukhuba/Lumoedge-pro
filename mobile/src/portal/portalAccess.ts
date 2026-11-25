@@ -22,6 +22,7 @@ export type PortalRole = 'super_admin' | 'mentor' | 'regular_admin';
 export const ALL_NAV = [
   { id: 'dashboard', label: 'Dashboard' },
   { id: 'mentors', label: 'Mentors' },
+  { id: 'subscriptions', label: 'Subscriptions' },
   { id: 'top-mentors', label: 'Top Mentors' },
   { id: 'manage-eas', label: 'Manage EAs' },
   { id: 'license-keys', label: 'License Keys' },
@@ -45,6 +46,7 @@ export const MENTOR_NAV_IDS: readonly NavId[] = [
 
 export const ADMIN_ONLY_NAV_IDS: readonly NavId[] = [
   'mentors',
+  'subscriptions',
   'top-mentors',
   'settings',
   'mentor-commission',
