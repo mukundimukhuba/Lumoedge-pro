@@ -383,20 +383,31 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     };
   }, [mentor?.email]);
 
+  /** Bumps on each catalog refresh so stale unscoped fetches cannot overwrite. */
+  const catalogEpochRef = useRef(0);
+
   const refreshLicenseCatalog = useCallback(async () => {
-    const catalog = await loadLicenseCatalog(catalogLoadOpts());
+    const epoch = ++catalogEpochRef.current;
+    const opts = catalogLoadOpts();
+    const catalog = await loadLicenseCatalog(opts);
+    if (epoch !== catalogEpochRef.current) return;
     applyCatalog(catalog.eas, catalog.keys);
-    // Only re-persist when there is something to keep — never rewrite empty.
-    // Quiet + skipRemote: local disk only (avoid re-push storms on focus).
-    if (catalog.eas.length || catalog.keys.length) {
+    // Mentor-scoped: always persist (allow empty) so other mentors' disk rows
+    // from a prior unscoped hydrate are purged.
+    const scopedMentor = Boolean(opts?.scopeOwnerEmail && !opts?.isSuperAdmin);
+    if (catalog.eas.length || catalog.keys.length || scopedMentor) {
       await saveLicenseCatalog(catalog.eas, catalog.keys, {
         broadcast: false,
         skipRemote: true,
+        allowEmpty: scopedMentor,
       });
     }
   }, [catalogLoadOpts]);
 
+  // Wait for mentor session restore so the first catalog load is already scoped
+  // (avoids flashing / persisting every mentor's EAs into Manage EAs).
   useEffect(() => {
+    if (!mentorReady) return;
     let cancelled = false;
     (async () => {
       try {
@@ -406,8 +417,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           AsyncStorage.getItem(QUOTE_SETUPS_KEY),
           AsyncStorage.getItem(CLIENT_SUB_KEY),
         ]);
-        const catalog = await loadLicenseCatalog();
-        if (cancelled) return;
+        const epoch = ++catalogEpochRef.current;
+        const catalog = await loadLicenseCatalog(catalogLoadOpts());
+        if (cancelled || epoch !== catalogEpochRef.current) return;
         if (accessRaw) {
           const parsed = JSON.parse(accessRaw) as EaAccess;
           // Checkout-started sessions may have empty email until linked.
@@ -426,11 +438,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           }
         }
         applyCatalog(catalog.eas, catalog.keys);
-        // Persist merged remote+local only when non-empty (no silent wipe).
-        if (catalog.eas.length || catalog.keys.length) {
+        const scopedMentor = Boolean(
+          catalogLoadOpts()?.scopeOwnerEmail && !catalogLoadOpts()?.isSuperAdmin,
+        );
+        if (catalog.eas.length || catalog.keys.length || scopedMentor) {
           await saveLicenseCatalog(catalog.eas, catalog.keys, {
             broadcast: false,
             skipRemote: true,
+            allowEmpty: scopedMentor,
           });
         }
         let loadedSetups: QuoteSetup[] = [];
@@ -497,7 +512,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mentorReady, catalogLoadOpts]);
 
   // Keep portal + Activate in sync (same tab custom event, BroadcastChannel,
   // cross-tab storage, and window focus).
@@ -841,13 +856,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           | string
           | null,
       }));
-      // Mentor view: replace in-memory keys with scoped set (keep local EAs).
+      // Mentor view: reload scoped EAs + replace keys (never keep foreign EAs).
       // Client view: only merge keys for this email — never other mentors' keys.
       if (role === 'mentor') {
-        applyCatalog(easRef.current, mapped);
-        await saveLicenseCatalog(easRef.current, mapped, {
+        const admin = isSuperAdminEmail(normalized);
+        const catalog = await loadLicenseCatalog({
+          scopeOwnerEmail: admin ? null : normalized,
+          isSuperAdmin: admin,
+        });
+        const nextEas = catalog.eas;
+        const nextKeys = mapped.length ? mapped : catalog.keys;
+        applyCatalog(nextEas, nextKeys);
+        await saveLicenseCatalog(nextEas, nextKeys, {
           skipRemote: true,
           broadcast: false,
+          allowEmpty: !admin,
         });
       } else {
         const mine = mapped.filter(
@@ -1010,7 +1033,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
       if (!eaId) return;
 
-      const catalog = await loadLicenseCatalog();
+      // Keep mentor isolation — never pull the full catalog while scoped.
+      const catalog = await loadLicenseCatalog(catalogLoadOpts());
       applyCatalog(catalog.eas, catalog.keys);
 
       let live = catalog.eas.find((e) => e.id === eaId) || null;
@@ -1025,6 +1049,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             remote.ea.createdAt ||
             live?.createdAt ||
             new Date().toISOString(),
+          ownerEmail:
+            (remote.ea as { ownerEmail?: string | null }).ownerEmail ??
+            live?.ownerEmail ??
+            null,
         };
         const nextEas = catalog.eas.some((e) => e.id === live!.id)
           ? catalog.eas.map((e) => (e.id === live!.id ? { ...e, ...live! } : e))
@@ -1058,7 +1086,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       };
       setActiveEa(nextSession);
       await persistActiveSession(nextSession);
-    }, [persistActiveSession]);
+    }, [persistActiveSession, catalogLoadOpts]);
 
   // Home: pull latest managed-EA branding (no re-activate required).
   useEffect(() => {

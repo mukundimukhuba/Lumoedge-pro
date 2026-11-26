@@ -150,8 +150,34 @@ export async function verifyDemoMentor(
   }
 
   const map = await loadProfiles();
-  const stored = map[normalized];
-  if (!stored || stored.passwordHash !== digest) return null;
+  let stored = map[normalized];
+
+  // Local miss (other browser / cleared storage): verify against cloud hash.
+  if (!stored || stored.passwordHash !== digest) {
+    try {
+      const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
+      const remote = await fetchMentorProfile(normalized);
+      const remoteHash = remote?.passwordHash;
+      if (!remote || !remoteHash || remoteHash !== digest) {
+        return null;
+      }
+      const next: MentorSession = {
+        email: normalized,
+        mentorName: remote.mentorName || '',
+        name: remote.name || '',
+        contact: remote.contact || '',
+        createdAt: remote.createdAt || new Date().toISOString(),
+        status: normalizeStatus(remote.status),
+        role: normalizePortalRole(remote.role, normalized),
+      };
+      map[normalized] = { ...next, passwordHash: digest };
+      await saveProfiles(map);
+      return next;
+    } catch {
+      return null;
+    }
+  }
+
   const { passwordHash: _h, ...session } = stored;
 
   // Prefer cloud approval status so pending stays locked until approved.
@@ -159,6 +185,7 @@ export async function verifyDemoMentor(
     const { fetchMentorProfile } = await import('../portal/data/mentorsApi');
     const remote = await fetchMentorProfile(normalized);
     if (remote) {
+      // Never let a null remote hash wipe the digest we just verified.
       const next: MentorSession = {
         ...session,
         mentorName: remote.mentorName || session.mentorName,
@@ -260,19 +287,31 @@ export async function registerMentor(fields: {
   const map = await loadProfiles();
   map[email] = { ...session, passwordHash };
   await saveProfiles(map);
-  // Best-effort cloud sync so Mentors approve/decline works across devices.
+  // Prefer security-definer RPC so password_hash lands even when direct
+  // upsert fails (e.g. missing portal_role column). Local signup still wins.
   try {
-    const { upsertMentorProfile } = await import('../portal/data/mentorsApi');
-    await upsertMentorProfile({
+    const { registerMentorPendingRemote, upsertMentorProfile } = await import(
+      '../portal/data/mentorsApi'
+    );
+    const rpc = await registerMentorPendingRemote({
       email: session.email,
       mentorName: session.mentorName,
       name: session.name,
       contact: session.contact,
-      status: 'pending',
       passwordHash,
-      createdAt: session.createdAt,
-      keyAllotment: 0,
     });
+    if (!rpc.ok) {
+      await upsertMentorProfile({
+        email: session.email,
+        mentorName: session.mentorName,
+        name: session.name,
+        contact: session.contact,
+        status: 'pending',
+        passwordHash,
+        createdAt: session.createdAt,
+        keyAllotment: 0,
+      });
+    }
   } catch {
     /* local signup still valid */
   }

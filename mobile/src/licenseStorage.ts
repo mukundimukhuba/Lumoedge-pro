@@ -410,7 +410,11 @@ async function fetchRemoteCatalog(
     }
 
     // Client / anonymous: EA branding only — never dump all keys.
-    const easRes = await sb.from('managed_eas').select('*');
+    // Keep rows for Activate picture/name lookups; portal mentor loads must
+    // pass scopeOwnerEmail so isolation filtering applies on merge.
+    const easRes = await sb
+      .from('managed_eas')
+      .select('id,name,picture_uri,symbols,created_at,owner_email');
     if (easRes.error) {
       const msg = easRes.error.message || 'fetch failed';
       console.warn('[edges] supabase catalog fetch failed', msg);
@@ -724,6 +728,23 @@ export async function loadLicenseCatalog(
   let diskEas = disk.eas;
   let diskKeys = disk.keys;
 
+  const scopedMentor =
+    opts?.scopeOwnerEmail && !opts?.isSuperAdmin
+      ? String(opts.scopeOwnerEmail).trim().toLowerCase()
+      : '';
+
+  // Portal mentor session: filter disk/memory BEFORE merge so a prior
+  // unscoped hydrate (client path / race) cannot leak other mentors' EAs.
+  if (scopedMentor) {
+    const { scopeCatalogForMentor } = await import('./portal/mentorScope');
+    const diskScoped = scopeCatalogForMentor(diskEas, diskKeys, scopedMentor);
+    diskEas = diskScoped.eas;
+    diskKeys = diskScoped.keys;
+    const memScoped = scopeCatalogForMentor(memoryEas, memoryKeys, scopedMentor);
+    memoryEas = memScoped.eas;
+    memoryKeys = memScoped.keys;
+  }
+
   // Remote (cross-device) merges in when Supabase secrets are configured.
   // Failed fetches must NOT be treated as an empty catalog.
   const remote = await fetchRemoteCatalog(opts);
@@ -738,13 +759,9 @@ export async function loadLicenseCatalog(
 
   // Portal mentor session: drop other mentors’ rows so Manage EA / Generate
   // never mixes catalogs (even if disk still has legacy shared data).
-  if (opts?.scopeOwnerEmail && !opts?.isSuperAdmin) {
+  if (scopedMentor) {
     const { scopeCatalogForMentor } = await import('./portal/mentorScope');
-    const scoped = scopeCatalogForMentor(
-      eas,
-      keys,
-      opts.scopeOwnerEmail,
-    );
+    const scoped = scopeCatalogForMentor(eas, keys, scopedMentor);
     eas = scoped.eas;
     keys = scoped.keys;
   }
@@ -755,7 +772,7 @@ export async function loadLicenseCatalog(
 
   // Last resort: rebuild stub EAs from vault after a localStorage wipe.
   // Skip when scoped — vault stubs have no owner and would leak into portal.
-  if (!eas.length && !(opts?.scopeOwnerEmail && !opts?.isSuperAdmin)) {
+  if (!eas.length && !scopedMentor) {
     eas = await recoverEasFromVault(eas);
   }
 
@@ -763,6 +780,14 @@ export async function loadLicenseCatalog(
   const repaired = await repairManagedEaBranding(eas, keys);
   eas = repaired.eas;
   keys = repaired.keys;
+
+  // Final belt-and-suspenders scope (vault hydrate must not reintroduce others).
+  if (scopedMentor) {
+    const { scopeCatalogForMentor } = await import('./portal/mentorScope');
+    const scoped = scopeCatalogForMentor(eas, keys, scopedMentor);
+    eas = scoped.eas;
+    keys = scoped.keys;
+  }
 
   memoryEas = eas;
   memoryKeys = keys;

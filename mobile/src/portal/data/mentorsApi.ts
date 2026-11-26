@@ -116,9 +116,43 @@ export async function fetchMentorProfile(
       .maybeSingle();
     if (error || !data) return local;
     const remote = rowFromDb(data as Record<string, unknown>);
-    return local ? { ...local, ...remote } : remote;
+    if (!local) return remote;
+    // Never let a null cloud hash wipe a locally verified password digest.
+    return {
+      ...local,
+      ...remote,
+      passwordHash: remote.passwordHash || local.passwordHash,
+    };
   } catch {
     return local;
+  }
+}
+
+/** Security-definer signup — stores password_hash reliably for cross-device login. */
+export async function registerMentorPendingRemote(input: {
+  email: string;
+  mentorName: string;
+  name: string;
+  contact: string;
+  passwordHash: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, error: 'supabase not configured' };
+  try {
+    const { error } = await sb.rpc('register_mentor_pending', {
+      p_email: input.email.trim().toLowerCase(),
+      p_mentor_name: input.mentorName.trim(),
+      p_name: input.name.trim(),
+      p_contact: input.contact.trim(),
+      p_password_hash: input.passwordHash,
+    });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -139,7 +173,16 @@ export async function listMentorProfiles(): Promise<MentorProfileRow[]> {
     for (const row of local) byEmail.set(row.email, row);
     for (const row of remote) {
       const prev = byEmail.get(row.email);
-      byEmail.set(row.email, prev ? { ...prev, ...row } : row);
+      byEmail.set(
+        row.email,
+        prev
+          ? {
+              ...prev,
+              ...row,
+              passwordHash: row.passwordHash || prev.passwordHash,
+            }
+          : row,
+      );
     }
     return [...byEmail.values()].sort((a, b) =>
       b.createdAt.localeCompare(a.createdAt),
@@ -160,13 +203,12 @@ export async function upsertMentorProfile(input: {
   createdAt?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const email = input.email.trim().toLowerCase();
-  const payload = {
+  const base = {
     email,
     mentor_name: input.mentorName.trim(),
     name: input.name.trim(),
     contact: input.contact.trim(),
     status: input.status,
-    portal_role: input.status === 'demo' ? 'super_admin' : 'mentor',
     password_hash: input.passwordHash || null,
     key_allotment: Number(input.keyAllotment || 0) || 0,
     created_at: input.createdAt || new Date().toISOString(),
@@ -177,9 +219,19 @@ export async function upsertMentorProfile(input: {
   if (!sb) return { ok: true };
 
   try {
-    const { error } = await sb.from('mentor_profiles').upsert(payload, {
+    // Prefer including portal_role (007); retry without if column missing.
+    const withRole = {
+      ...base,
+      portal_role: input.status === 'demo' ? 'super_admin' : 'mentor',
+    };
+    let { error } = await sb.from('mentor_profiles').upsert(withRole, {
       onConflict: 'email',
     });
+    if (error && /portal_role/i.test(error.message || '')) {
+      ({ error } = await sb.from('mentor_profiles').upsert(base, {
+        onConflict: 'email',
+      }));
+    }
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (err) {

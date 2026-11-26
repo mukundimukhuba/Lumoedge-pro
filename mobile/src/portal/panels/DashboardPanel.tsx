@@ -54,6 +54,8 @@ export function DashboardPanel() {
   }, []);
 
   // Keep stats in sync when catalog changes — never flip busy from this path.
+  // Scoped local math only (mentor email present) so counts do not jump
+  // between global disk leftovers and mentor-owned rows.
   useEffect(() => {
     if (busyRef.current) return;
     setStats(statsFromLocal(licenseKeys, eas, mentor?.email));
