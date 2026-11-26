@@ -14,6 +14,10 @@ const {
   assertCanWriteOwnedRow,
 } = require('../_lib/mentorScope');
 const { verifyChallengeToken } = require('../_lib/humanChallenge');
+const {
+  assertEmailCanReceiveNewKey,
+  MSG_EMAIL_HAS_MENTOR,
+} = require('../_lib/licenseExclusivity');
 
 /**
  * POST /api/licenses/put
@@ -221,6 +225,55 @@ module.exports = async function handler(req, res) {
   // Ownership: mentors may only write keys as themselves (super admin exempt).
   if (issuedByEmail && !isSuperAdmin(issuedByEmail)) {
     /* identity stamped below — further checks when subscription linked */
+  }
+
+  // One email = one live license key. Mentors must delete the existing key
+  // before generating a new one (including cross-mentor).
+  if (isGenerate) {
+    const emailGate = await assertEmailCanReceiveNewKey(assigneeEmail);
+    if (!emailGate.ok) {
+      // Same-mentor regenerate: revoke their own live keys for this email first.
+      const existingIssuer = normalizeEmail(
+        emailGate.existing?.issuedByEmail || '',
+      );
+      const self = normalizeEmail(issuedByEmail || mentorId || actorEmail);
+      if (
+        regenerate &&
+        emailGate.code === 'email_has_mentor' &&
+        existingIssuer &&
+        self &&
+        existingIssuer === self
+      ) {
+        const { findLiveKeysForEmail } = require('../_lib/licenseExclusivity');
+        const live = await findLiveKeysForEmail(assigneeEmail);
+        for (const old of live) {
+          const oldIssuer = normalizeEmail(
+            old.issued_by_email || old.mentor_id || '',
+          );
+          if (oldIssuer !== self) continue;
+          await sbFetch(
+            `/rest/v1/license_keys?id=eq.${encodeURIComponent(old.id)}`,
+            {
+              method: 'PATCH',
+              body: {
+                status: 'revoked',
+                license_status: 'revoked',
+                device_id: null,
+              },
+              prefer: 'return=minimal',
+            },
+          );
+        }
+      } else {
+        return json(res, emailGate.status, {
+          ok: false,
+          error: emailGate.error || MSG_EMAIL_HAS_MENTOR,
+          code: emailGate.code || 'email_has_mentor',
+          userMessage: emailGate.error || MSG_EMAIL_HAS_MENTOR,
+          configured: true,
+        });
+      }
+    }
   }
 
   // If subscription linked: must be approved/active for this client; no dup key unless regenerate.

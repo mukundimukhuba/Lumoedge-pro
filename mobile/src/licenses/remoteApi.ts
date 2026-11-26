@@ -16,6 +16,7 @@ export type RemoteSyncResult = {
   error?: string;
   hint?: string;
   tableError?: string;
+  code?: string;
   configured?: boolean;
   key_normalized?: string;
   /** Public http URL after server uploaded a data: logo (if any). */
@@ -211,6 +212,8 @@ export async function putLicenseRemote(
         ok: false,
         error: safeMessageFromApiBody(data, 'portal'),
         configured: data.configured !== false,
+        code: data.code ? String(data.code) : undefined,
+        tableError: data.code ? String(data.code) : undefined,
       };
     }
     const eaPic =
@@ -281,6 +284,152 @@ export async function lookupLicenseRemote(
       ok: false,
       error: toSafeUserMessage(err, 'portal'),
     };
+  }
+}
+
+export type ActivateLicenseResult = {
+  ok: boolean;
+  error?: string;
+  code?: string;
+  deviceId?: string;
+  configured?: boolean;
+};
+
+export type ValidateLicenseResult = {
+  ok: boolean;
+  access: boolean;
+  error?: string;
+  code?: string;
+  configured?: boolean;
+};
+
+export type DeleteLicenseResult = {
+  ok: boolean;
+  error?: string;
+  code?: string;
+  revoked?: boolean;
+  assigneeEmail?: string | null;
+  expiredSubscriptions?: number;
+  configured?: boolean;
+};
+
+/** Bind license key to this device (one email / one device). */
+export async function activateLicenseRemote(input: {
+  key: string;
+  email: string;
+  deviceId: string;
+}): Promise<ActivateLicenseResult> {
+  try {
+    const res = await fetch(`${apiBase()}/api/licenses/activate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        key: normalizeLicenseKey(input.key),
+        email: String(input.email || '')
+          .trim()
+          .toLowerCase(),
+        deviceId: input.deviceId,
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: false,
+        error: safeMessageFromApiBody(data, 'generic'),
+        code: data.code ? String(data.code) : undefined,
+        configured: data.configured !== false,
+      };
+    }
+    return {
+      ok: true,
+      deviceId: data.deviceId ? String(data.deviceId) : input.deviceId,
+      configured: true,
+    };
+  } catch (err) {
+    return { ok: false, error: toSafeUserMessage(err, 'generic') };
+  }
+}
+
+/** Poll while EA is active — revoked keys / other-device kicks access. */
+export async function validateLicenseRemote(input: {
+  key: string;
+  email: string;
+  deviceId: string;
+}): Promise<ValidateLicenseResult> {
+  try {
+    const res = await fetch(`${apiBase()}/api/licenses/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        key: normalizeLicenseKey(input.key),
+        email: String(input.email || '')
+          .trim()
+          .toLowerCase(),
+        deviceId: input.deviceId,
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    const access = Boolean(data.access ?? data.ok);
+    if (!res.ok || !access) {
+      return {
+        ok: false,
+        access: false,
+        error: safeMessageFromApiBody(data, 'generic'),
+        code: data.code ? String(data.code) : undefined,
+        configured: data.configured !== false,
+      };
+    }
+    return { ok: true, access: true, configured: true };
+  } catch (err) {
+    // Network blip — do not kick the client offline.
+    return {
+      ok: false,
+      access: true,
+      error: toSafeUserMessage(err, 'generic'),
+      code: 'network',
+    };
+  }
+}
+
+/** Mentor deletes one issued student key (revokes + expires subscription). */
+export async function deleteLicenseRemote(input: {
+  keyId: string;
+  actorEmail: string;
+}): Promise<DeleteLicenseResult> {
+  try {
+    const res = await fetch(`${apiBase()}/api/licenses/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        keyId: input.keyId,
+        actorEmail: String(input.actorEmail || '')
+          .trim()
+          .toLowerCase(),
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: false,
+        error: safeMessageFromApiBody(data, 'portal'),
+        code: data.code ? String(data.code) : undefined,
+        configured: data.configured !== false,
+      };
+    }
+    return {
+      ok: true,
+      revoked: true,
+      assigneeEmail: data.assigneeEmail
+        ? String(data.assigneeEmail)
+        : null,
+      expiredSubscriptions:
+        typeof data.expiredSubscriptions === 'number'
+          ? data.expiredSubscriptions
+          : 0,
+      configured: true,
+    };
+  } catch (err) {
+    return { ok: false, error: toSafeUserMessage(err, 'portal') };
   }
 }
 

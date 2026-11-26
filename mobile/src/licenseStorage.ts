@@ -606,6 +606,7 @@ export type SyncIssuedResult = CatalogPushResult & {
   keyPictureUri?: string | null;
   key?: StoredLicenseKey;
   ea?: StoredEa | null;
+  code?: string;
 };
 
 /**
@@ -704,6 +705,7 @@ export async function syncIssuedLicenseRemote(
       ok: false,
       error: result.error || 'Remote write failed',
       hint: result.hint || result.tableError,
+      code: result.code || result.tableError,
       key: keyOut,
       ea: eaOut,
     };

@@ -37,6 +37,7 @@ export function LicenseKeysPanel() {
     eas,
     licenseKeys,
     generateLicenseKey,
+    deleteLicenseKey,
     refreshScopedLicenseKeys,
     mentor,
   } = useAppState();
@@ -310,6 +311,20 @@ export function LicenseKeysPanel() {
       return;
     }
     const { key: row, remote } = result;
+    if (!remote.ok) {
+      setFlashError(true);
+      if (
+        remote.code === 'email_has_mentor' ||
+        /this email has a mentor/i.test(String(remote.error || ''))
+      ) {
+        setFlash(
+          'This email has a mentor. Delete the existing license key first, then generate a new one.',
+        );
+      } else {
+        setFlash(toSafeUserMessage(remote.error, 'portal'));
+      }
+      return;
+    }
     setLastGenerated({
       clientEmail: row.assigneeEmail || email,
       eaName: row.eaName || ea?.name || '',
@@ -317,25 +332,34 @@ export function LicenseKeysPanel() {
       duration: row.licenseDuration || duration,
       status: row.licenseStatus || row.status || 'unused',
     });
-    if (remote.ok) {
-      setFlashError(false);
-      setFlash(
-        `License key generated · cloud sync OK (${remote.via || 'remote'}).`,
-      );
-      setAssigneeName('');
-      setAssigneeEmail('');
-      setRegenerate(false);
-      resetRobot();
-      await refreshScopedLicenseKeys({ role: 'mentor', email: mentorEmail });
-    } else {
-      setFlashError(true);
-      setFlash(
-        `Key saved on this device, but cloud sync failed. ${toSafeUserMessage(
-          remote.error,
-          'portal',
-        )}`,
-      );
+    setFlashError(false);
+    setFlash(
+      `License key generated · cloud sync OK (${remote.via || 'remote'}).`,
+    );
+    setAssigneeName('');
+    setAssigneeEmail('');
+    setRegenerate(false);
+    resetRobot();
+    await refreshScopedLicenseKeys({ role: 'mentor', email: mentorEmail });
+  };
+
+  const onDeleteKey = async (keyId: string, label: string) => {
+    const confirmMsg = `Delete license key for ${label}? The client will lose EA access immediately and must subscribe again.`;
+    if (typeof window !== 'undefined') {
+      if (!window.confirm(confirmMsg)) return;
     }
+    setFlashError(false);
+    setFlash('Deleting license key…');
+    const res = await deleteLicenseKey(keyId);
+    if (!res.ok) {
+      setFlashError(true);
+      setFlash(toSafeUserMessage(res.error, 'portal'));
+      return;
+    }
+    setFlashError(false);
+    setFlash('License key deleted. Client access revoked — they must subscribe again.');
+    if (lastGenerated) setLastGenerated(null);
+    await refreshScopedLicenseKeys({ role: 'mentor', email: mentorEmail });
   };
 
   return (
@@ -565,6 +589,22 @@ export function LicenseKeysPanel() {
                   {k.subscriptionId ? (
                     <Text style={styles.hint}>Sub: {k.subscriptionId}</Text>
                   ) : null}
+                  {String(k.licenseStatus || k.status || '').toLowerCase() !==
+                  'revoked' ? (
+                    <Pressable
+                      onPress={() =>
+                        void onDeleteKey(
+                          k.id,
+                          k.assigneeEmail || k.assigneeName || k.key,
+                        )
+                      }
+                      style={styles.deleteBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete license key for ${k.assigneeEmail || k.eaName}`}
+                    >
+                      <Text style={styles.deleteText}>Delete key</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ))}
             </View>
@@ -587,6 +627,22 @@ export function LicenseKeysPanel() {
               </Text>
               {k.subscriptionId ? (
                 <Text style={styles.hint}>Sub: {k.subscriptionId}</Text>
+              ) : null}
+              {String(k.licenseStatus || k.status || '').toLowerCase() !==
+              'revoked' ? (
+                <Pressable
+                  onPress={() =>
+                    void onDeleteKey(
+                      k.id,
+                      k.assigneeEmail || k.assigneeName || k.key,
+                    )
+                  }
+                  style={styles.deleteBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Delete license key for ${k.assigneeEmail || k.eaName}`}
+                >
+                  <Text style={styles.deleteText}>Delete key</Text>
+                </Pressable>
               ) : null}
             </View>
           ))
@@ -705,4 +761,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: 0.5,
   },
+  deleteBtn: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.55)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(127,29,29,0.35)',
+  },
+  deleteText: { color: '#FCA5A5', fontWeight: '800', fontSize: 12 },
 });

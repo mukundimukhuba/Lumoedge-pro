@@ -338,22 +338,28 @@ export function EaControlScreen() {
     setAutoEngineOpen(true);
   };
 
+  const REMOVE_EA_CONFIRM =
+    'Are you sure you want to remove this EA and pay subscription again to use a different EA?';
+
   const onRemove = () => {
-    Alert.alert(
-      'Remove bot',
-      'Clear this licensed EA session? You will need the license key again.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => {
-            setStatus('removed');
-            void clearActiveEa();
-          },
-        },
-      ],
-    );
+    const go = () => {
+      setStatus('removed');
+      void clearActiveEa({ requireResubscribe: true });
+    };
+    if (Platform.OS === 'web') {
+      const ok =
+        typeof window !== 'undefined' && window.confirm(REMOVE_EA_CONFIRM);
+      if (ok) go();
+      return;
+    }
+    Alert.alert('Remove EA', REMOVE_EA_CONFIRM, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: go,
+      },
+    ]);
   };
 
   /** Leave this EA session and open Activate for another license key. */

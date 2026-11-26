@@ -36,9 +36,13 @@ import {
 } from './pictureVault';
 import { persistPictureRemote } from './supabase/eaPictureUpload';
 import {
+  activateLicenseRemote,
+  deleteLicenseRemote,
   fetchEaRemote,
   putEaBrandingRemote,
+  validateLicenseRemote,
 } from './licenses/remoteApi';
+import { getOrCreateDeviceId } from './deviceId';
 import {
   canManageEa,
   isSuperAdminEmail,
@@ -246,8 +250,19 @@ type AppStateValue = {
     },
   ) => Promise<{
     key: LicenseKey;
-    remote: { ok: boolean; via?: string; error?: string; hint?: string };
+    remote: {
+      ok: boolean;
+      via?: string;
+      error?: string;
+      hint?: string;
+      code?: string;
+    };
   } | null>;
+  /** Mentor deletes one issued key — client loses access and must re-subscribe. */
+  deleteLicenseKey: (keyId: string) => Promise<
+    | { ok: true }
+    | { ok: false; error: string }
+  >;
   eaAccess: EaAccess | null;
   accessReady: boolean;
   /** True after we resolved whether this client has a real subscription. */
@@ -296,7 +311,7 @@ type AppStateValue = {
     | { ok: true; session: ActiveEaSession }
     | { ok: false; error: string }
   >;
-  clearActiveEa: () => Promise<void>;
+  clearActiveEa: (opts?: { requireResubscribe?: boolean }) => Promise<void>;
   refreshLicenseCatalog: () => Promise<void>;
   /** Pull latest managed-EA name/picture into the active Home session. */
   refreshActiveEaBranding: () => Promise<void>;
@@ -1162,44 +1177,83 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       ...row,
       regenerate: Boolean(assignee.regenerate),
     };
-    // Also keep compressed picture on the live EA so Manage EAs + Activate match.
-    let nextEas = easRef.current.map((e) =>
-      e.id === ea.id && eaPictureUri ? { ...e, pictureUri: eaPictureUri } : e,
-    );
-    let nextKeys = [row, ...keysRef.current];
-    if (eaPictureUri) {
-      await vaultPutEaPicture(ea.id, eaPictureUri);
-      await vaultPutKeyPicture(row.id, eaPictureUri);
-    }
-    applyCatalog(nextEas, nextKeys);
-    // Local first (skip remote bulk) then explicit single-key remote write.
-    await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
-    const liveEa = nextEas.find((e) => e.id === ea.id) || {
+    const liveEa = {
       ...ea,
+      pictureUri: eaPictureUri || ea.pictureUri,
       ownerEmail: ea.ownerEmail || issuer,
     };
-    if (!liveEa.ownerEmail && issuer) {
-      liveEa.ownerEmail = issuer;
-    }
+    // Remote-first so exclusivity failures never leave a local orphan key.
     const remote = await syncIssuedLicenseRemote(rowForRemote, liveEa, {
       generate: true,
       challengeToken: assignee.challengeToken || null,
       actorEmail: issuer,
     });
-    // Prefer durable http URLs returned from sync so Activate/Home never lose the logo.
-    if (remote.keyPictureUri || remote.eaPictureUri) {
-      const durable =
-        remote.keyPictureUri || remote.eaPictureUri || eaPictureUri;
-      nextKeys = nextKeys.map((k) =>
-        k.id === row.id ? { ...k, eaPictureUri: durable } : k,
-      );
-      nextEas = nextEas.map((e) =>
-        e.id === ea.id ? { ...e, pictureUri: durable } : e,
-      );
-      applyCatalog(nextEas, nextKeys);
-      row.eaPictureUri = durable;
+    if (!remote.ok) {
+      return {
+        key: row,
+        remote: {
+          ok: false,
+          error: remote.error,
+          hint: remote.hint,
+          code: remote.code || remote.tableError,
+        },
+      };
     }
-    return { key: row, remote };
+    if (eaPictureUri) {
+      await vaultPutEaPicture(ea.id, eaPictureUri);
+      await vaultPutKeyPicture(row.id, eaPictureUri);
+    }
+    const durable =
+      remote.keyPictureUri || remote.eaPictureUri || eaPictureUri;
+    if (durable) row.eaPictureUri = durable;
+    let nextEas = easRef.current.map((e) =>
+      e.id === ea.id && durable ? { ...e, pictureUri: durable } : e,
+    );
+    if (!nextEas.some((e) => e.id === ea.id)) {
+      nextEas = [...nextEas, { ...liveEa, pictureUri: durable || liveEa.pictureUri }];
+    }
+    const nextKeys = [row, ...keysRef.current.filter((k) => k.id !== row.id)];
+    applyCatalog(nextEas, nextKeys);
+    await saveLicenseCatalog(nextEas, nextKeys, { skipRemote: true });
+    return {
+      key: row,
+      remote: {
+        ok: true,
+        via: remote.via,
+        hint: remote.hint,
+      },
+    };
+  };
+
+  const deleteLicenseKey: AppStateValue['deleteLicenseKey'] = async (
+    keyId,
+  ) => {
+    const actor = normalizeMentorEmail(mentor?.email);
+    if (!actor) {
+      return { ok: false, error: 'Sign in to the Mentors Portal first.' };
+    }
+    const id = String(keyId || '').trim();
+    if (!id) return { ok: false, error: 'Missing license key id.' };
+    const local = keysRef.current.find((k) => k.id === id);
+    if (local) {
+      const issuer = normalizeMentorEmail(
+        local.issuedByEmail || local.mentorId,
+      );
+      if (issuer && issuer !== actor && !isSuperAdminEmail(actor)) {
+        return {
+          ok: false,
+          error: 'Not allowed to delete another mentor’s license key',
+        };
+      }
+    }
+    const remote = await deleteLicenseRemote({ keyId: id, actorEmail: actor });
+    if (!remote.ok) {
+      return { ok: false, error: remote.error || 'Could not delete license key' };
+    }
+    const nextKeys = keysRef.current.filter((k) => k.id !== id);
+    applyCatalog(easRef.current, nextKeys);
+    await saveLicenseCatalog(easRef.current, nextKeys, { skipRemote: true });
+    return { ok: true };
   };
 
   const persistQuoteSetups = useCallback(async (rows: QuoteSetup[]) => {
@@ -1341,6 +1395,26 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // Server device bind — one email = one active device.
+    if (clientEmail) {
+      const deviceId = await getOrCreateDeviceId();
+      const bound = await activateLicenseRemote({
+        key,
+        email: clientEmail,
+        deviceId,
+      });
+      if (!bound.ok) {
+        return {
+          ok: false,
+          error:
+            bound.error ||
+            (bound.code === 'active_other_device'
+              ? 'This email is active on another device'
+              : 'Could not activate license on this device'),
+        };
+      }
+    }
+
     const activatedAt = new Date().toISOString();
     let activatedKey: LicenseKey = {
       ...found.key,
@@ -1425,12 +1499,59 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     return { ok: true, session };
   };
 
-  const clearActiveEa = async () => {
+  const clearActiveEa = async (opts?: { requireResubscribe?: boolean }) => {
     await AsyncStorage.removeItem(ACTIVE_EA_KEY);
     setActiveEa(null);
     // Keep Quotes selections until the user explicitly removes them.
     setStatus('stopped');
+    if (opts?.requireResubscribe) {
+      await clearClientAccessSession({ keepSubscriptionRecord: false });
+    }
   };
+
+  // When mentor deletes/revokes a key, kick the client off the EA immediately
+  // and force subscription again.
+  useEffect(() => {
+    if (!activeEa?.licenseKey) return;
+    const email = eaAccess?.email?.trim().toLowerCase() || '';
+    if (!email) return;
+    let cancelled = false;
+    const kick = async () => {
+      try {
+        const deviceId = await getOrCreateDeviceId();
+        const res = await validateLicenseRemote({
+          key: activeEa.licenseKey,
+          email,
+          deviceId,
+        });
+        if (cancelled) return;
+        if (res.access) return;
+        await AsyncStorage.removeItem(ACTIVE_EA_KEY);
+        setActiveEa(null);
+        setStatus('stopped');
+        await clearClientAccessSession({ keepSubscriptionRecord: false });
+      } catch {
+        /* network — keep session */
+      }
+    };
+    void kick();
+    const timer = setInterval(() => {
+      void kick();
+    }, 12_000);
+    const onFocus = () => {
+      void kick();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus);
+    }
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus);
+      }
+    };
+  }, [activeEa?.licenseKey, eaAccess?.email, clearClientAccessSession]);
 
   const value = useMemo(
     () => ({
@@ -1452,6 +1573,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       updateEaBranding,
       licenseKeys,
       generateLicenseKey,
+      deleteLicenseKey,
       eaAccess,
       accessReady,
       subscriptionReady,
