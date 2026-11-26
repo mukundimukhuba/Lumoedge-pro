@@ -110,6 +110,29 @@ export function SubscriptionsPanel() {
       return;
     }
     setMsg(`Approved ${row.clientEmail} — subscription active`);
+    setEmailQuery('');
+    setFilter('approved');
+    await load();
+  };
+
+  /** Declined / Expired → active again (same approve path; unblocks client). */
+  const reactivate = async (row: SubscriptionRow) => {
+    setBusyId(row.id);
+    setMsg('');
+    setErr('');
+    const res = await setSubscriptionStatus({
+      actorEmail: mentor!.email,
+      subscriptionId: row.id,
+      status: 'approved',
+      reviewNote: 'Reactivated from Declined/Expired',
+    });
+    setBusyId(null);
+    if (!res.ok) {
+      setErr(toSafeUserMessage(res.error, 'portal'));
+      return;
+    }
+    setMsg(`Reactivated ${row.clientEmail} — subscription active`);
+    setEmailQuery('');
     setFilter('approved');
     await load();
   };
@@ -129,6 +152,7 @@ export function SubscriptionsPanel() {
       return;
     }
     setMsg(`Declined ${row.clientEmail}`);
+    setEmailQuery('');
     setFilter('declined');
     await load();
   };
@@ -146,9 +170,11 @@ export function SubscriptionsPanel() {
       <Text style={styles.hint}>
         Review client payment submissions. Pending never lists emails that
         already have an active or approved subscription. Approve to activate
-        access; decline blocks license generation for that client.
+        access; decline blocks license generation. Use Reactivate on Declined
+        or Expired to restore access.
       </Text>
 
+      {/* Always visible on Pending / Approved / Declined — do not hide per tab. */}
       <TextInput
         style={styles.search}
         value={emailQuery}
@@ -167,10 +193,7 @@ export function SubscriptionsPanel() {
             styles.filterBtn,
             !searching && filter === 'pending' && styles.filterOn,
           ]}
-          onPress={() => {
-            setFilter('pending');
-            setEmailQuery('');
-          }}
+          onPress={() => setFilter('pending')}
           accessibilityRole="button"
           accessibilityLabel="Pending subscriptions"
         >
@@ -183,10 +206,7 @@ export function SubscriptionsPanel() {
             styles.filterBtn,
             !searching && filter === 'approved' && styles.filterOn,
           ]}
-          onPress={() => {
-            setFilter('approved');
-            setEmailQuery('');
-          }}
+          onPress={() => setFilter('approved')}
           accessibilityRole="button"
           accessibilityLabel="Approved subscriptions"
         >
@@ -199,10 +219,7 @@ export function SubscriptionsPanel() {
             styles.filterBtn,
             !searching && filter === 'declined' && styles.filterOn,
           ]}
-          onPress={() => {
-            setFilter('declined');
-            setEmailQuery('');
-          }}
+          onPress={() => setFilter('declined')}
           accessibilityRole="button"
           accessibilityLabel="Declined subscriptions"
         >
@@ -232,6 +249,8 @@ export function SubscriptionsPanel() {
           const status = String(row.status || '').toLowerCase();
           const alreadyActive = isSubscriptionUsable(status);
           const canReview = status === 'pending' && !alreadyActive;
+          const canReactivate =
+            (status === 'declined' || status === 'expired') && !alreadyActive;
           const statusLabel = displaySubscriptionStatus(row.status);
           return (
             <View key={row.id} style={styles.card}>
@@ -293,6 +312,20 @@ export function SubscriptionsPanel() {
                     accessibilityLabel="Decline payment"
                   >
                     <Text style={styles.btnText}>Decline</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              {canReactivate ? (
+                <View style={styles.actions}>
+                  <Pressable
+                    style={[styles.btn, styles.approve, busy && styles.disabled]}
+                    onPress={() => void reactivate(row)}
+                    disabled={busy}
+                    accessibilityRole="button"
+                    accessibilityLabel="Reactivate subscription"
+                  >
+                    <Text style={styles.btnText}>Reactivate</Text>
                   </Pressable>
                 </View>
               ) : null}
