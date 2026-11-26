@@ -307,29 +307,44 @@ export async function sendBrokerOrder(
 
 /**
  * Live account poll — uses connect token as `id` (MT5 session).
+ * Always times out so restore/poll never hang forever.
  */
 export async function fetchBrokerAccount(
   mt5Id: string,
+  opts?: { timeoutMs?: number },
 ): Promise<BrokerAccount> {
   const root = getBrokersApiRoot();
   const url = new URL('/api/brokers/account', root || 'http://127.0.0.1');
   url.searchParams.set('id', mt5Id);
-  const res = await fetch(url.toString(), {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-  });
-  const data = (await res.json()) as BrokerAccount & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error || `Account fetch failed (${res.status})`);
+  const ctrl = new AbortController();
+  const timeoutMs = Math.max(1500, opts?.timeoutMs ?? 12000);
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
+    const data = (await res.json()) as BrokerAccount & { error?: string };
+    if (!res.ok) {
+      throw new Error(data.error || `Account fetch failed (${res.status})`);
+    }
+    const currency = String(data.currency || '').trim() || undefined;
+    return {
+      ...data,
+      currency,
+      trades: Array.isArray(data.trades) ? data.trades : [],
+      ordersOk: data.ordersOk === true,
+      balance: Number(data.balance),
+      equity: Number(data.equity),
+      source: data.source || 'mt5-live',
+    };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Account fetch timed out');
+    }
+    throw err;
+  } finally {
+    clearTimeout(t);
   }
-  const currency = String(data.currency || '').trim() || undefined;
-  return {
-    ...data,
-    currency,
-    trades: Array.isArray(data.trades) ? data.trades : [],
-    ordersOk: data.ordersOk === true,
-    balance: Number(data.balance),
-    equity: Number(data.equity),
-    source: data.source || 'mt5-live',
-  };
 }
