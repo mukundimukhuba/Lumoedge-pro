@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
+import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import {
   connectBrokerApi,
@@ -673,13 +674,9 @@ export function ConnectBrokerScreen() {
 
   return (
     <View style={styles.root}>
-      <LinearGradient
-        colors={['#0A0000', '#050505', '#000000']}
-        locations={[0, 0.45, 1]}
-        style={StyleSheet.absoluteFill}
-      />
+      <EaBlurWallpaper darken={0.12} />
 
-      <View style={{ paddingTop: Math.max(insets.top, 10) }}>
+      <View style={{ paddingTop: Math.max(insets.top, 10), zIndex: 1 }}>
         <View style={styles.header}>
           <Pressable
             accessibilityLabel="back"
@@ -702,7 +699,7 @@ export function ConnectBrokerScreen() {
       </View>
 
       <ScrollView
-        style={styles.scroll}
+        style={[styles.scroll, { zIndex: 1, backgroundColor: 'transparent' }]}
         contentContainerStyle={[
           styles.scrollBody,
           { paddingBottom: 88 + dockPad },
