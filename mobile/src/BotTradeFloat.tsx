@@ -310,7 +310,12 @@ export function BotTradeFloat({
           <View style={styles.fabImgWrap} pointerEvents="none">
             <Image
               source={botImage}
-              style={styles.fabImg}
+              style={[
+                styles.fabImg,
+                Platform.OS === 'web'
+                  ? ({ objectFit: 'cover', objectPosition: 'center 22%' } as object)
+                  : null,
+              ]}
               resizeMode="cover"
               accessibilityIgnoresInvertColors
             />
@@ -356,7 +361,12 @@ export function BotTradeFloat({
                 >
                   <Image
                     source={botImage}
-                    style={styles.sheetAvatar}
+                    style={[
+                      styles.sheetAvatar,
+                      Platform.OS === 'web'
+                        ? ({ objectFit: 'cover' } as object)
+                        : null,
+                    ]}
                     resizeMode="cover"
                   />
                 </View>

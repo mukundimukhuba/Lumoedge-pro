@@ -14,6 +14,7 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type ImageSourcePropType,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -25,6 +26,10 @@ import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { pushAutoTradeHistory } from './autoTradeHistory';
 import { BotTradeFloat } from './BotTradeFloat';
 import { loadMt5Token } from './brokers/mt5Token';
+import {
+  eaPictureDisplayUri,
+  eaPictureImageSource,
+} from './eaPicture';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
 import { PaymentPendingScreen } from './PaymentPendingScreen';
@@ -123,9 +128,22 @@ export function EaControlRoot() {
   );
 }
 
+const fallbackMascot = require('../assets/mascot.jpg');
+
+function isUsablePictureUri(uri: string | null | undefined): uri is string {
+  return (
+    !!uri &&
+    (uri.startsWith('data:') ||
+      uri.startsWith('blob:') ||
+      uri.startsWith('http') ||
+      uri.startsWith('file:') ||
+      uri.startsWith('/'))
+  );
+}
+
 export function EaControlScreen() {
   const router = useRouter();
-  const { height: windowH } = useWindowDimensions();
+  const { height: windowH, width: windowW } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const {
     status,
@@ -140,15 +158,9 @@ export function EaControlScreen() {
     clearActiveEa,
   } = useAppState();
   const eaTitle = activeEa?.name?.trim() || 'edges ea control';
-  const eaPicture =
-    activeEa?.pictureUri &&
-    (activeEa.pictureUri.startsWith('data:') ||
-      activeEa.pictureUri.startsWith('blob:') ||
-      activeEa.pictureUri.startsWith('http') ||
-      activeEa.pictureUri.startsWith('file:') ||
-      activeEa.pictureUri.startsWith('/'))
-      ? { uri: activeEa.pictureUri }
-      : require('../assets/mascot.jpg');
+  const rawPictureUri = isUsablePictureUri(activeEa?.pictureUri)
+    ? activeEa.pictureUri
+    : null;
   const [sheet, setSheet] = useState<Sheet>('none');
   const [query, setQuery] = useState('');
   const [calMonth] = useState(() => new Date());
@@ -157,6 +169,11 @@ export function EaControlScreen() {
   const [autoEngineOpen, setAutoEngineOpen] = useState(false);
   const [mt5Token, setMt5Token] = useState<string | null>(null);
   const [historyTick, setHistoryTick] = useState(0);
+  /** Fall back to the raw public URL if Supabase render transforms are disabled. */
+  const [heroTransformFailed, setHeroTransformFailed] = useState(false);
+  useEffect(() => {
+    setHeroTransformFailed(false);
+  }, [rawPictureUri]);
 
   useEffect(() => {
     let cancelled = false;
@@ -187,14 +204,30 @@ export function EaControlScreen() {
   const safeTop = Math.max(insets.top, Platform.OS === 'web' ? 8 : 0);
   const scale = Math.min(1.08, Math.max(0.85, layoutH / 844));
   /**
-   * Measured reference: face hero + neck/body strip ≈ 52.9% total.
-   * Face ~80% of that band; neck strip ~20% (lower-body crop of same pic).
+   * Measured reference: hero band ≈ 52.9% of frame.
+   * Single full-bleed cover fills the band (no dual face/neck crop).
    */
   const heroTotalH = Math.max(240, Math.min(Math.round(layoutH * 0.529), 460));
-  const neckH = Math.max(48, Math.round(heroTotalH * 0.2));
-  const faceH = heroTotalH - neckH;
-  /** Shared image height so face shows top, neck shows bottom of same pic. */
-  const bleedImgH = Math.round(faceH * 1.55);
+  const heroLayout = useMemo(
+    () => ({ width: Math.max(1, windowW), height: heroTotalH }),
+    [windowW, heroTotalH],
+  );
+  const avatarLayout = useMemo(() => ({ width: 40, height: 40 }), []);
+  const eaPicture = useMemo<ImageSourcePropType>(() => {
+    if (!rawPictureUri) return fallbackMascot;
+    const displayUri =
+      !heroTransformFailed && rawPictureUri.startsWith('http')
+        ? eaPictureDisplayUri(rawPictureUri, heroLayout) || rawPictureUri
+        : rawPictureUri;
+    return eaPictureImageSource(displayUri, heroLayout);
+  }, [rawPictureUri, heroLayout, heroTransformFailed]);
+  const eaAvatar = useMemo<ImageSourcePropType>(() => {
+    if (!rawPictureUri) return fallbackMascot;
+    const displayUri = rawPictureUri.startsWith('http')
+      ? eaPictureDisplayUri(rawPictureUri, avatarLayout) || rawPictureUri
+      : rawPictureUri;
+    return eaPictureImageSource(displayUri, avatarLayout);
+  }, [rawPictureUri, avatarLayout]);
   const dockPad = Math.max(6, 2 + safeBottom);
   const dockH = Math.round(58 * scale) + dockPad;
   /** Reference stack gaps ≈ 10–15px (use 12). */
@@ -413,7 +446,7 @@ export function EaControlScreen() {
         <View
           style={[
             styles.heroWrap,
-            { height: heroTotalH - 1 },
+            { height: heroTotalH - 1, backgroundColor: accent },
             // Web: dissolve the hard cut with a soft mask (reads as smoke into UI).
             Platform.OS === 'web'
               ? ({
@@ -425,58 +458,44 @@ export function EaControlScreen() {
               : null,
           ]}
         >
-          {/* Face band: full-bleed EA picture (pic bg fills — no black gutters). */}
-          <View
-            style={[styles.heroFace, { height: faceH, backgroundColor: accent }]}
-            pointerEvents="box-none"
-          >
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Edges logo — triple tap for Mentors Portal"
-              onPress={onLogoPress}
-              hitSlop={20}
-              style={({ pressed }) => [
-                styles.logoHit,
-                Platform.OS === 'web'
-                  ? ({ cursor: 'pointer', touchAction: 'manipulation' } as object)
-                  : null,
-                pressed && { opacity: 0.92 },
-              ]}
-            >
-              <Image
-                source={eaPicture}
-                style={[styles.heroBleedImg, { height: bleedImgH }]}
-                resizeMode="cover"
-              />
-            </Pressable>
-          </View>
-
-          {/* Neck/lower-body strip: same pic, cropped to lower portion. */}
-          <View
+          {/* Single full-bleed cover — fills the hero band without letterbox or dual-crop chop. */}
+          <Image
+            source={eaPicture}
             style={[
-              styles.heroNeck,
-              {
-                height: neckH,
-                backgroundColor: accent,
-                marginTop: -1,
-              },
+              styles.heroCoverImg,
+              // RN-web Image paints via background-image; set both object-* and
+              // background* so cover + face bias apply across engines.
+              Platform.OS === 'web'
+                ? ({
+                    objectFit: 'cover',
+                    objectPosition: 'center 22%',
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center 22%',
+                    backgroundRepeat: 'no-repeat',
+                  } as object)
+                : null,
             ]}
-            pointerEvents="none"
-          >
-            <Image
-              source={eaPicture}
-              style={[
-                styles.heroBleedImg,
-                {
-                  height: bleedImgH,
-                  marginTop: -(bleedImgH - neckH),
-                },
-              ]}
-              resizeMode="cover"
-            />
-          </View>
+            resizeMode="cover"
+            onError={() => {
+              if (!heroTransformFailed) setHeroTransformFailed(true);
+            }}
+            accessibilityIgnoresInvertColors
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Edges logo — triple tap for Mentors Portal"
+            onPress={onLogoPress}
+            hitSlop={20}
+            style={({ pressed }) => [
+              styles.logoHit,
+              Platform.OS === 'web'
+                ? ({ cursor: 'pointer', touchAction: 'manipulation' } as object)
+                : null,
+              pressed && { opacity: 0.92 },
+            ]}
+          />
 
-          {/* Soft black cloud/smoke — starts above the chin cut so the hard edge dissolves. */}
+          {/* Soft black cloud/smoke — dissolves the hero into the UI below. */}
           <LinearGradient
             colors={[
               'transparent',
@@ -502,7 +521,7 @@ export function EaControlScreen() {
             styles.title,
             {
               fontSize: titleSize,
-              marginTop: -Math.max(36, Math.round(neckH * 0.55)),
+              marginTop: -Math.max(36, Math.round(heroTotalH * 0.11)),
               marginBottom: Math.max(4, gapTight - 4),
             },
           ]}
@@ -614,7 +633,7 @@ export function EaControlScreen() {
                 hitSlop={8}
               >
                 <Image
-                  source={eaPicture}
+                  source={eaAvatar}
                   style={[
                     styles.statusThumb,
                     {
@@ -623,7 +642,11 @@ export function EaControlScreen() {
                       height: Math.max(30, Math.round(34 * scale)),
                       borderRadius: Math.max(15, Math.round(17 * scale)),
                     },
+                    Platform.OS === 'web'
+                      ? ({ objectFit: 'cover' } as object)
+                      : null,
                   ]}
+                  resizeMode="cover"
                 />
               </Pressable>
               <View style={styles.statusText}>
@@ -1491,28 +1514,16 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     position: 'relative',
   },
-  heroFace: {
+  /** Full-bleed cover fills the hero band (no letterbox / dual-crop). */
+  heroCoverImg: {
+    ...StyleSheet.absoluteFill,
     width: '100%',
-    maxWidth: '100%',
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-  },
-  heroNeck: {
-    width: '100%',
-    maxWidth: '100%',
-    overflow: 'hidden',
-  },
-  /** Full-bleed cover — no black Image bg so uploaded pic colour fills the band. */
-  heroBleedImg: {
-    width: '100%',
-    alignSelf: 'stretch',
+    height: '100%',
   },
   logoHit: {
     ...StyleSheet.absoluteFill,
     zIndex: 25,
     elevation: 25,
-    overflow: 'hidden',
   },
   /** Soft black cloud/smoke under hero → UI (no hard cut line). */
   heroSmoke: {
@@ -1697,6 +1708,8 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 20,
     borderWidth: 1.5,
+    overflow: 'hidden',
+    backgroundColor: '#1A0000',
   },
   statusText: { flex: 1, minWidth: 0 },
   statusTitle: {

@@ -144,7 +144,7 @@ export function ManageEasPanel() {
         mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.75,
+        quality: 1,
         base64: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -181,7 +181,7 @@ export function ManageEasPanel() {
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.75,
+        quality: 1,
         base64: true,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -257,6 +257,7 @@ export function ManageEasPanel() {
               <Image
                 source={{ uri: pictureDataUrl }}
                 style={styles.preview}
+                resizeMode="cover"
                 accessibilityLabel="uploaded EA picture"
               />
             ) : (
@@ -394,6 +395,7 @@ export function ManageEasPanel() {
                       !missingPic ? { uri: ea.pictureUri! } : fallbackMascot
                     }
                     style={styles.eaThumb}
+                    resizeMode="cover"
                   />
                   <View style={{ flex: 1 }}>
                     {isEditing ? (
@@ -435,7 +437,7 @@ export function ManageEasPanel() {
                           const result =
                             await ImagePicker.launchImageLibraryAsync({
                               mediaTypes: ['images'],
-                              quality: 0.85,
+                              quality: 1,
                               base64: true,
                             });
                           if (result.canceled || !result.assets?.[0]) return;
