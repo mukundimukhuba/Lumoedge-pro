@@ -89,7 +89,11 @@ export function EaControlRoot() {
   // onboarding → genuine payment pending → license activate → control
   // Never invent a pending gate for users without a real subscription.
   // Keep wallpaper visible while hydrating — never flash an empty white/black card.
-  const phone = !accessReady || (eaAccess && !subscriptionReady) ? (
+  // Do NOT remount when subscription soft-refreshes if an EA session is already live
+  // (that was the open-app double-load glitch).
+  const waitingHydration =
+    !accessReady || (Boolean(eaAccess) && !subscriptionReady && !activeEa);
+  const phone = waitingHydration ? (
     <View
       style={[
         styles.root,

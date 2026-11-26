@@ -687,7 +687,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setSubscriptionReady(true);
       return;
     }
-    setSubscriptionReady(false);
+    // Soft refresh only — never flip ready→false (that remounted Home → Loading
+    // → Home on every open after AsyncStorage hydrate set eaAccess).
     void refreshClientSubscription();
   }, [eaAccess?.email, eaAccess?.unlockedAt, refreshClientSubscription]);
 

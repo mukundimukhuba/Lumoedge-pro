@@ -264,23 +264,47 @@ function buildExplanation(
   return `${base} ${strategyBlurb(side as Side)}`;
 }
 
+/**
+ * Web file / camera picker. Must:
+ * - append the input to the document (Safari ignores detached .click())
+ * - resolve on cancel (otherwise `picking` stays true forever → Upload dead)
+ * - call .click() synchronously inside the user gesture (no prior await)
+ */
 function pickWebFile(accept: string, capture?: string): Promise<string | null> {
+  if (typeof document === 'undefined') {
+    return Promise.resolve(null);
+  }
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = accept;
+    input.style.display = 'none';
     if (capture) input.setAttribute('capture', capture);
+
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      if (input.parentNode) input.parentNode.removeChild(input);
+      resolve(value);
+    };
+
     input.onchange = () => {
       const file = input.files?.[0];
       if (!file) {
-        resolve(null);
+        finish(null);
         return;
       }
       const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || null));
-      reader.onerror = () => resolve(null);
+      reader.onloadend = () =>
+        finish(String(reader.result || '') || null);
+      reader.onerror = () => finish(null);
       reader.readAsDataURL(file);
     };
+    input.oncancel = () => finish(null);
+    // Some browsers omit `cancel`; unlock via beginPick's timeout instead of
+    // a focus race that can resolve(null) while the dialog is still open.
+    document.body.appendChild(input);
     input.click();
   });
 }
@@ -455,6 +479,8 @@ function EdgesRadar({
 
   return (
     <View
+      // Animation must never steal taps from Upload / Camera below.
+      pointerEvents="box-none"
       style={[
         styles.radarOuter,
         {
@@ -473,6 +499,7 @@ function EdgesRadar({
       {/* Chart INSIDE radar — circular crop */}
       {chartUri ? (
         <Image
+          pointerEvents="none"
           source={{ uri: chartUri }}
           style={[
             styles.radarChart,
@@ -487,6 +514,7 @@ function EdgesRadar({
         />
       ) : (
         <LinearGradient
+          pointerEvents="none"
           colors={[
             'rgba(0,0,0,0.2)',
             hexToRgba(accent, 0.1),
@@ -605,6 +633,7 @@ function EdgesRadar({
       ) : null}
 
       <View
+        pointerEvents="none"
         style={[
           styles.radarCore,
           {
@@ -971,44 +1000,45 @@ export function ChartScannerScreen() {
     return () => clearTimeout(t);
   }, [params.proof, params.demo]);
 
-  const pickLibrary = async () => {
+  const beginPick = async (mode: 'library' | 'camera') => {
+    // Never block on radar INITIALISING / sweep — picker is always available.
     if (picking.current) return;
     picking.current = true;
-    try {
-      if (Platform.OS === 'web') {
-        await applyChart(await pickWebFile('image/*'));
-        return;
-      }
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        setDetectError('Photo library permission required.');
-        return;
-      }
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.85,
-        base64: true,
-      });
-      if (res.canceled || !res.assets?.[0]) return;
-      const a = res.assets[0];
-      if (a.base64) {
-        await applyChart(
-          `data:${a.mimeType || 'image/jpeg'};base64,${a.base64}`,
-        );
-      } else {
-        await applyChart(a.uri);
-      }
-    } finally {
+    // Safety: if a prior web cancel never resolved, unlock after 60s.
+    const unlock = setTimeout(() => {
       picking.current = false;
-    }
-  };
-
-  const pickCamera = async () => {
-    if (picking.current) return;
-    picking.current = true;
+    }, 60_000);
     try {
+      setDetectError(null);
       if (Platform.OS === 'web') {
-        await applyChart(await pickWebFile('image/*', 'environment'));
+        // Sync gesture path — do not await permissions before input.click().
+        const data = await pickWebFile(
+          'image/*',
+          mode === 'camera' ? 'environment' : undefined,
+        );
+        if (data) await applyChart(data);
+        return;
+      }
+      if (mode === 'library') {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          setDetectError('Photo library permission required.');
+          return;
+        }
+        const res = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 0.85,
+          base64: true,
+        });
+        if (res.canceled || !res.assets?.[0]) return;
+        const a = res.assets[0];
+        if (a.base64) {
+          await applyChart(
+            `data:${a.mimeType || 'image/jpeg'};base64,${a.base64}`,
+          );
+        } else {
+          await applyChart(a.uri);
+        }
         return;
       }
       const perm = await ImagePicker.requestCameraPermissionsAsync();
@@ -1029,9 +1059,24 @@ export function ChartScannerScreen() {
       } else {
         await applyChart(a.uri);
       }
+    } catch (err) {
+      setDetectError(
+        err instanceof Error
+          ? `Could not open picker: ${err.message}`
+          : 'Could not open image picker.',
+      );
     } finally {
+      clearTimeout(unlock);
       picking.current = false;
     }
+  };
+
+  const pickLibrary = () => {
+    void beginPick('library');
+  };
+
+  const pickCamera = () => {
+    void beginPick('camera');
   };
 
   const clearChart = () => {
@@ -1371,16 +1416,20 @@ export function ChartScannerScreen() {
           ) : null}
         </View>
 
-        <View style={styles.captureRow}>
+        <View style={styles.captureRow} pointerEvents="box-none">
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Upload chart"
+            testID="scanner-upload"
+            // @ts-expect-error web-only proof marker
+            dataSet={{ scannerUpload: '1' }}
             onPress={pickLibrary}
             style={({ pressed }) => [
               styles.captureTile,
               {
                 borderColor: hexToRgba(accent, 0.55),
                 opacity: pressed ? 0.85 : 1,
+                zIndex: 2,
               },
             ]}
           >
@@ -1391,12 +1440,16 @@ export function ChartScannerScreen() {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Take photo"
+            testID="scanner-camera"
+            // @ts-expect-error web-only proof marker
+            dataSet={{ scannerCamera: '1' }}
             onPress={pickCamera}
             style={({ pressed }) => [
               styles.captureTile,
               {
                 borderColor: hexToRgba(accent, 0.55),
                 opacity: pressed ? 0.85 : 1,
+                zIndex: 2,
               },
             ]}
           >
