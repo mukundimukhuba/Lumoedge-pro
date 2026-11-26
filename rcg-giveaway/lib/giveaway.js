@@ -22,7 +22,7 @@ const RATE_MAX_CLAIM = 6;
  * Path: /g/rcg-<token>/  — not linked from the main PWA.
  * Override with Vercel env GIVEAWAY_ACCESS_TOKEN if rotated.
  */
-const DEFAULT_GIVEAWAY_ACCESS_TOKEN = 'd36f2878e48d3ab9b649572a';
+const DEFAULT_GIVEAWAY_ACCESS_TOKEN = 'REVOKED-do-not-use';
 
 function giveawayAccessToken() {
   return (
@@ -40,17 +40,13 @@ function giveawaySecretPath() {
  * Prevents random visitors who only know /api/giveaway/* from claiming.
  */
 function assertGiveawayAccess(raw) {
-  const got = String(raw || '').trim();
-  const exp = giveawayAccessToken();
-  if (!got || !exp || got !== exp) {
-    return {
-      ok: false,
-      status: 404,
-      error: 'Not found',
-      code: 'giveaway_not_found',
-    };
-  }
-  return { ok: true };
+  // REVOKED (Mukundi 2026-11-26): invite permanently disabled.
+  return {
+    ok: false,
+    status: 410,
+    error: 'This giveaway has been revoked.',
+    code: 'giveaway_revoked',
+  };
 }
 
 /** Catalog EA kept for RCG giveaway — never rewrite the stored name casing. */

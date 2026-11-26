@@ -73,6 +73,28 @@ function serveStatic(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    // Hard revoke switch — host must not serve invite/claim after takedown.
+    if (String(process.env.GIVEAWAY_REVOKED || '1').trim() !== '0') {
+      const host = req.headers.host || 'localhost';
+      const url = new URL(req.url || '/', `http://${host}`);
+      const pathname = url.pathname.replace(/\/+$/, '') || '/';
+      if (pathname.startsWith('/api/giveaway')) {
+        return send(res, 410, JSON.stringify({ ok: false, error: 'This giveaway has been revoked.', code: 'giveaway_revoked' }), {
+          'Content-Type': 'application/json; charset=utf-8',
+          'X-Robots-Tag': 'noindex, nofollow',
+        });
+      }
+      if (pathname === '/health' || pathname === '/api/health') {
+        return send(res, 200, JSON.stringify({ ok: true, service: 'rcg-giveaway-host', revoked: true }), {
+          'Content-Type': 'application/json; charset=utf-8',
+        });
+      }
+      return send(res, 410, 'This giveaway has been revoked.', {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-Robots-Tag': 'noindex, nofollow',
+      });
+    }
+
     const host = req.headers.host || 'localhost';
     const url = new URL(req.url || '/', `http://${host}`);
     const pathname = url.pathname.replace(/\/+$/, '') || '/';
