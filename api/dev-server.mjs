@@ -16,6 +16,9 @@ const healthHandler = require(path.join(__dirname, 'brokers', 'health.js'));
 const accountHandler = require(path.join(__dirname, 'brokers', 'account.js'));
 const orderHandler = require(path.join(__dirname, 'brokers', 'order.js'));
 const symbolsHandler = require(path.join(__dirname, 'brokers', 'symbols.js'));
+const scanHandler = require(path.join(__dirname, 'scan', 'index.js'));
+const scanStatusHandler = require(path.join(__dirname, 'scan', 'status.js'));
+const scanAutoHandler = require(path.join(__dirname, 'scan', 'auto.js'));
 
 const PORT = Number(process.env.BROKERS_DEV_PORT || 8787);
 
@@ -74,6 +77,24 @@ const server = http.createServer(async (req, res) => {
     ) {
       req.url = `/api/brokers/symbols${url.search}`;
       await symbolsHandler(req, fakeRes);
+      return;
+    }
+    if (url.pathname === '/api/scan' || url.pathname === '/scan') {
+      req.url = '/api/scan';
+      await scanHandler(req, fakeRes);
+      return;
+    }
+    if (
+      url.pathname === '/api/scan/status' ||
+      url.pathname === '/scan/status'
+    ) {
+      req.url = '/api/scan/status';
+      await scanStatusHandler(req, fakeRes);
+      return;
+    }
+    if (url.pathname === '/api/scan/auto' || url.pathname === '/scan/auto') {
+      req.url = '/api/scan/auto';
+      await scanAutoHandler(req, fakeRes);
       return;
     }
     if (url.pathname === '/health') {

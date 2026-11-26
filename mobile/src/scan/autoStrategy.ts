@@ -1,14 +1,21 @@
 /**
  * Live-candle auto strategy (client-side rules + local preview).
  *
+ * Conservative: prefer SKIP over a weak/ambiguous trade.
  * • Session = last 20 candles; bounce check = last 8
- * • Flat session → no trade
- * • Last 8 reverse of session → no trade
- * • Bounce against trend is not a flip (stay with session)
+ * • Flat / weak session → SKIP
+ * • Last 8 reverse of session → SKIP
+ * • Bounce against trend → SKIP (do not “stay with session” on a counter-move)
  * • TF order: M15 → H1 → M5 → M1
  */
 
-import { buildTpLadder, formatPrice, type Side } from './strategy';
+import {
+  AUTO_TRADE_MIN_ACCURACY,
+  SKIP_REASON,
+  buildTpLadder,
+  formatPrice,
+  type Side,
+} from './strategy';
 
 export type Candle = {
   open: number;
@@ -32,6 +39,9 @@ export type AutoStrategyResult = {
   accuracy: number;
 };
 
+/** Session must cover at least this fraction of the range to count as directional. */
+export const MIN_SESSION_MOVE_PCT = 0.28;
+
 export function sessionBiasFromCandles(
   candles: Candle[],
   sessionBars = 20,
@@ -40,13 +50,13 @@ export function sessionBiasFromCandles(
   if (slice.length < 5) return 'flat';
   const first = slice[0].open;
   const last = slice[slice.length - 1].close;
-  const range = Math.max(
-    ...slice.map((c) => c.high),
-  ) - Math.min(...slice.map((c) => c.low));
+  const range =
+    Math.max(...slice.map((c) => c.high)) -
+    Math.min(...slice.map((c) => c.low));
   if (range <= 0) return 'flat';
   const move = last - first;
   const pct = Math.abs(move) / range;
-  if (pct < 0.18) return 'flat';
+  if (pct < MIN_SESSION_MOVE_PCT) return 'flat';
   return move > 0 ? 'bull' : 'bear';
 }
 
@@ -61,7 +71,6 @@ export function bounceAgainstSession(
   const first = slice[0].open;
   const last = slice[slice.length - 1].close;
   const bounceUp = last > first;
-  // Bounce against bullish session = short bounce (not a flip)
   if (session === 'bull' && !bounceUp) return true;
   if (session === 'bear' && bounceUp) return true;
   return false;
@@ -87,6 +96,32 @@ export function last8ReversesSession(
   return local !== session;
 }
 
+function sessionStrengthPct(
+  candles: Candle[],
+  sessionBars = 20,
+): number {
+  const slice = candles.slice(-sessionBars);
+  if (slice.length < 5) return 0;
+  const first = slice[0].open;
+  const last = slice[slice.length - 1].close;
+  const range =
+    Math.max(...slice.map((c) => c.high)) -
+    Math.min(...slice.map((c) => c.low));
+  if (range <= 0) return 0;
+  return Math.abs(last - first) / range;
+}
+
+/** Map session strength → accuracy band; never inflate past evidence. */
+export function accuracyFromStrength(strength: number): number {
+  if (strength < MIN_SESSION_MOVE_PCT) return 0;
+  // 0.28 → ~85, 0.45 → ~90, 0.70+ → ~94
+  const raw = 70 + strength * 35;
+  return Math.max(
+    0,
+    Math.min(96, Math.round(raw)),
+  );
+}
+
 export function evaluateLiveCandles(
   candles: Candle[],
   opts?: { sessionBars?: number; bounceBars?: number },
@@ -94,12 +129,13 @@ export function evaluateLiveCandles(
   const sessionBars = opts?.sessionBars ?? 20;
   const bounceBars = opts?.bounceBars ?? 8;
   const session = sessionBiasFromCandles(candles, sessionBars);
+  const strength = sessionStrengthPct(candles, sessionBars);
 
   if (session === 'flat') {
     return {
       trade: false,
       skip: true,
-      reason: 'Flat session (last 20) — no trade',
+      reason: SKIP_REASON.FLAT_SESSION,
       sessionBias: 'flat',
       bounceAgainstTrend: false,
       accuracy: 0,
@@ -110,7 +146,7 @@ export function evaluateLiveCandles(
     return {
       trade: false,
       skip: true,
-      reason: 'Last 8 reverse session — no trade',
+      reason: SKIP_REASON.REVERSE_SESSION,
       sessionBias: session,
       bounceAgainstTrend: true,
       accuracy: 0,
@@ -118,28 +154,50 @@ export function evaluateLiveCandles(
   }
 
   const against = bounceAgainstSession(candles, session, bounceBars);
-  // Bounce against trend is NOT a flip — stay with session bias
+  // Prefer SKIP when bounce fights the session — do not guess continuation.
+  if (against) {
+    return {
+      trade: false,
+      skip: true,
+      reason: SKIP_REASON.BOUNCE_AGAINST,
+      sessionBias: session,
+      bounceAgainstTrend: true,
+      accuracy: 0,
+    };
+  }
+
+  const accuracy = accuracyFromStrength(strength);
+  if (accuracy < AUTO_TRADE_MIN_ACCURACY) {
+    return {
+      trade: false,
+      skip: true,
+      reason: SKIP_REASON.WEAK_MOVE,
+      sessionBias: session,
+      bounceAgainstTrend: false,
+      accuracy,
+    };
+  }
+
   const side: Side = session === 'bull' ? 'buy' : 'sell';
   const last = candles[candles.length - 1];
   const entry = last.close;
   const swingLow = Math.min(...candles.slice(-bounceBars).map((c) => c.low));
-  const swingHigh = Math.max(...candles.slice(-bounceBars).map((c) => c.high));
+  const swingHigh = Math.max(
+    ...candles.slice(-bounceBars).map((c) => c.high),
+  );
   const stopLoss =
     side === 'buy'
       ? Math.min(swingLow, entry) * 0.999
       : Math.max(swingHigh, entry) * 1.001;
   const ladder = buildTpLadder(entry, stopLoss, side, 3);
-  const accuracy = against ? 76 : 82;
 
   return {
     trade: true,
     skip: false,
-    reason: against
-      ? 'Bounce against trend — stay with session (not a flip)'
-      : 'Session + bounce aligned',
+    reason: 'Session + bounce aligned — live levels only',
     side,
     sessionBias: session,
-    bounceAgainstTrend: against,
+    bounceAgainstTrend: false,
     entry: Number(formatPrice(entry)),
     stopLoss: Number(formatPrice(stopLoss, entry)),
     takeProfits: ladder.tps,
@@ -171,8 +229,8 @@ export function synthesizePreviewCandles(
       bias === 'flat'
         ? Math.sin(i / 2) * step * 0.4
         : bias === 'bull'
-          ? step * (0.35 + (i % 3) * 0.1)
-          : -step * (0.35 + (i % 3) * 0.1);
+          ? step * (0.55 + (i % 3) * 0.15)
+          : -step * (0.55 + (i % 3) * 0.15);
     const open = px;
     const close = px + drift;
     const high = Math.max(open, close) + step * 0.25;

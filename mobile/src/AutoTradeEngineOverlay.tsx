@@ -12,7 +12,14 @@ import {
   postAutoScan,
   type AutoScanSignal,
 } from './scan/autoApi';
-import { buildTpLadder, formatPrice } from './scan/strategy';
+import {
+  AUTO_TRADE_MIN_ACCURACY,
+  SKIP_REASON,
+  buildTpLadder,
+  evaluateAutoTradeGate,
+  formatPrice,
+  formatSkipReasons,
+} from './scan/strategy';
 import {
   formatOrderSendComment,
   sendBrokerOrder,
@@ -117,6 +124,7 @@ export function AutoTradeEngineOverlay({
         let chosen: AutoScanSignal | null = null;
         let chosenSymbol: string = '';
         let chosenTf: string = AUTO_TIMEFRAMES[0];
+        const skipLog: string[] = [];
 
         // Walk Quotes-selected symbols only; server tries TFs M15→H1→M5→M1.
         // Body locked to curl: { symbol, id }
@@ -134,10 +142,8 @@ export function AutoTradeEngineOverlay({
         }
         if (!token) {
           setPhase('error');
-          setError(
-            'Connect MetaTrader first. Auto Trade sends scans to your linked MT5.',
-          );
-          setStatus('MT5 not linked');
+          setError(SKIP_REASON.MT5_REQUIRED);
+          setStatus('MT5 not linked — SKIP');
           return;
         }
         chosenSymbol = markets[0];
@@ -147,7 +153,7 @@ export function AutoTradeEngineOverlay({
           setMarketIdx(mi);
           setTfIdx(0);
           const symbol = markets[mi];
-          setStatus(`Live scan ${symbol}…`);
+          setStatus(`Live MT5 scan ${symbol}…`);
 
           // Show TF pipeline progress in UI while waiting
           for (let ti = 0; ti < AUTO_TIMEFRAMES.length; ti++) {
@@ -161,14 +167,68 @@ export function AutoTradeEngineOverlay({
           if (ac.signal.aborted || id !== runId.current) return;
 
           if (!api.ok) {
-            if (/no trade|skip|flat|reverse/i.test(api.error || '')) {
+            const why =
+              api.reason ||
+              api.error ||
+              'Auto Scan failed';
+            if (/no trade|skip|flat|reverse|prefer no trade/i.test(why)) {
+              skipLog.push(`${symbol}: ${why}`);
+              setStatus(`SKIP ${symbol}`);
               continue;
             }
-            if (!chosen) setError(api.error || 'Auto Scan failed');
+            skipLog.push(`${symbol}: ${why}`);
+            if (!chosen) setError(why);
             continue;
           }
 
-          if (api.skip || api.trade === false) continue;
+          if (api.skip || api.trade === false) {
+            const why =
+              api.reason ||
+              formatSkipReasons(api.gateReasons || []) ||
+              SKIP_REASON.API_UNCLEAR;
+            skipLog.push(`${symbol}: ${why}`);
+            setStatus(`SKIP ${symbol}`);
+            continue;
+          }
+
+          const setupPreview =
+            (quoteSetups || []).find(
+              (s) =>
+                String(s.symbol || '').toUpperCase() ===
+                String(symbol || '').toUpperCase(),
+            ) ||
+            normalizeQuoteSetup({
+              symbol,
+              lotSize,
+              trades,
+            });
+          const side =
+            api.direction === 'sell'
+              ? 'sell'
+              : api.direction === 'buy'
+                ? 'buy'
+                : null;
+          const gate = evaluateAutoTradeGate({
+            accuracy: Number(api.accuracy) || 0,
+            side,
+            symbol,
+            demo: api.demo,
+            entryPrice: api.entryPrice ?? null,
+            stopLoss: api.stopLoss ?? null,
+            lotSize: setupPreview?.lotSize ?? lotSize,
+            trades: setupPreview?.trades ?? trades,
+            requireMt5: true,
+            mt5Connected: true,
+          });
+          if (!gate.allowed) {
+            const why =
+              gate.skipReason ||
+              formatSkipReasons(gate.reasons) ||
+              SKIP_REASON.API_UNCLEAR;
+            skipLog.push(`${symbol}: ${why}`);
+            setStatus(`SKIP ${symbol}`);
+            continue;
+          }
 
           if (api.direction) {
             chosen = {
@@ -180,16 +240,22 @@ export function AutoTradeEngineOverlay({
             chosenTf = api.timeframe || AUTO_TIMEFRAMES[0];
             break;
           }
+
+          skipLog.push(`${symbol}: ${SKIP_REASON.NO_DIRECTION}`);
         }
 
         if (ac.signal.aborted || id !== runId.current) return;
 
         if (!chosen?.direction) {
           setPhase('error');
+          const detail =
+            skipLog.length > 0
+              ? skipLog.slice(0, 6).join('\n')
+              : 'No tradeable setup across selected Quotes.';
           setError(
-            'No tradeable setup across markets (flat / reverse / bounce rules).',
+            `Prefer SKIP over bad trades (gate ≥${AUTO_TRADE_MIN_ACCURACY}%).\n${detail}`,
           );
-          setStatus('No trade');
+          setStatus('SKIP — no safe setup');
           return;
         }
 
@@ -210,7 +276,7 @@ export function AutoTradeEngineOverlay({
 
         setSignal(chosen);
         setStatus(
-          `${chosenSymbol} ${chosenTf} · ${(chosen.direction || '').toUpperCase()} signal`,
+          `${chosenSymbol} ${chosenTf} · ${(chosen.direction || '').toUpperCase()} · ${chosen.accuracy ?? '—'}%`,
         );
         setPhase('signal');
         await sleep(900, ac.signal);
@@ -226,9 +292,7 @@ export function AutoTradeEngineOverlay({
         }
         if (ac.signal.aborted || id !== runId.current) return;
 
-        setPhase('execute');
-        setStatus('Sending order to MT5…');
-
+        // Final gate immediately before OrderSend — never guess.
         const setup =
           (quoteSetups || []).find(
             (s) =>
@@ -243,6 +307,40 @@ export function AutoTradeEngineOverlay({
         const sendLots = setup?.lotSize ?? lotSize;
         const sendTrades = setup?.trades ?? trades;
         const side = chosen.direction === 'sell' ? 'sell' : 'buy';
+        const finalGate = evaluateAutoTradeGate({
+          accuracy: Number(chosen.accuracy) || 0,
+          side,
+          symbol: chosenSymbol,
+          demo: chosen.demo,
+          entryPrice: chosen.entryPrice ?? null,
+          stopLoss: chosen.stopLoss ?? null,
+          lotSize: sendLots,
+          trades: sendTrades,
+          requireMt5: true,
+          mt5Connected: true,
+        });
+        if (!finalGate.allowed) {
+          setPhase('error');
+          setError(
+            formatSkipReasons(finalGate.reasons) ||
+              SKIP_REASON.API_UNCLEAR,
+          );
+          setStatus('SKIP — blocked before OrderSend');
+          onExecuted?.({
+            symbol: chosenSymbol,
+            direction: String(chosen.direction),
+            trades: 0,
+            lotSize: sendLots,
+            requestedTrades: sendTrades,
+            status: 'failed',
+            note: finalGate.skipReason || 'Client gate blocked OrderSend',
+          });
+          return;
+        }
+
+        setPhase('execute');
+        setStatus('Sending order to MT5…');
+
         const operation: 0 | 1 = side === 'sell' ? 1 : 0;
         const tps = Array.isArray(chosen.takeProfits)
           ? chosen.takeProfits.filter((n) => Number.isFinite(n) && n > 0)
@@ -494,6 +592,15 @@ export function AutoTradeEngineOverlay({
               ) : null}
               {signal.summary ? (
                 <Text style={styles.signalSum}>{signal.summary}</Text>
+              ) : null}
+              {signal.accuracy != null ? (
+                <Text style={styles.signalSum}>
+                  Gate ≥{AUTO_TRADE_MIN_ACCURACY}% · live prices required · prefer
+                  SKIP
+                </Text>
+              ) : null}
+              {signal.reason && signal.skip ? (
+                <Text style={styles.demoNote}>{signal.reason}</Text>
               ) : null}
               {signal.demo ? (
                 <Text style={styles.demoNote}>
