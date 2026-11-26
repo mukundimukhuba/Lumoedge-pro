@@ -4,7 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
-import { popToHome, pushAppPage, type AppPageHref } from './navPush';
+import { router, type Href } from 'expo-router';
+import { pushAppPage, type AppPageHref } from './navPush';
 
 const BASE = {
   black: '#000000',
@@ -75,7 +76,9 @@ export function EdgesBottomDock({
         onHomeRetap?.();
         return;
       }
-      popToHome();
+      // Dock Home always lands on / in one tap (replace), even after a
+      // chain of pushes — back-arrow / Quotes done still use popToHome.
+      router.replace('/' as Href);
       return;
     }
     if (tab === active) return;
