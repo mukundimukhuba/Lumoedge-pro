@@ -1,10 +1,9 @@
 import { BlurView } from 'expo-blur';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { usePathname } from 'expo-router';
+import { router, usePathname, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
-import { router, type Href } from 'expo-router';
 import { pushAppPage, type AppPageHref } from './navPush';
 
 const BASE = {
