@@ -93,7 +93,7 @@ export function EdgesBottomDock({
           pointerEvents="none"
           style={[
             StyleSheet.absoluteFill,
-            { backgroundColor: 'rgba(0,0,0,0.88)' },
+            { backgroundColor: 'rgba(0,0,0,0.72)' },
           ]}
         />
       ) : (
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     borderTopWidth: 1,
     overflow: 'hidden',
-    backgroundColor: BASE.black,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
   dockRow: {
     flexDirection: 'row',

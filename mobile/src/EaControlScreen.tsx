@@ -34,6 +34,7 @@ import {
   cardForSymbol,
   filterFallbackSymbols,
 } from './brokers/symbolMeta';
+import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { eaPictureImageSource } from './eaPicture';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
@@ -388,6 +389,9 @@ export function EaControlScreen() {
         if (h > 0) setLayoutH(h);
       }}
     >
+      {/* iPhone-style blurred EA wallpaper — sharp hero sits above. */}
+      <EaBlurWallpaper source={eaPicture} uri={rawPictureUri} />
+
       <MirrorSignalListener />
 
       <Pressable
@@ -479,18 +483,17 @@ export function EaControlScreen() {
             ]}
           />
 
-          {/* Soft black cloud/smoke — dissolves the hero into the UI below. */}
+          {/* Soft smoke — dissolves the sharp hero into the blurred wallpaper below. */}
           <LinearGradient
             colors={[
               'transparent',
-              'rgba(0,0,0,0.18)',
-              'rgba(0,0,0,0.4)',
-              'rgba(0,0,0,0.68)',
-              'rgba(0,0,0,0.88)',
-              'rgba(0,0,0,0.97)',
-              '#000000',
+              'rgba(0,0,0,0.12)',
+              'rgba(0,0,0,0.28)',
+              'rgba(0,0,0,0.42)',
+              'rgba(0,0,0,0.28)',
+              'transparent',
             ]}
-            locations={[0, 0.16, 0.34, 0.52, 0.7, 0.86, 1]}
+            locations={[0, 0.22, 0.45, 0.62, 0.82, 1]}
             style={[
               styles.heroSmoke,
               { height: Math.max(210, Math.round(heroTotalH * 0.72)) },
@@ -524,7 +527,7 @@ export function EaControlScreen() {
               paddingBottom: gapSm,
               paddingHorizontal: sidePad,
               gap: gapTight,
-              backgroundColor: BASE.black,
+              backgroundColor: 'transparent',
             },
           ]}
         >
@@ -743,6 +746,8 @@ export function EaControlScreen() {
         onRequestClose={closeSheet}
       >
         <View style={styles.modalBackdrop}>
+          {/* Quotes / settings sheets keep the same blurred EA wallpaper behind glass. */}
+          <EaBlurWallpaper source={eaPicture} uri={rawPictureUri} darken={0.2} />
           <Glass
             accent={accent}
             style={styles.sheet}
@@ -1596,7 +1601,13 @@ const styles = StyleSheet.create({
     position: 'relative',
     zIndex: 0,
   },
-  scroll: { flex: 1, width: '100%', maxWidth: '100%' },
+  scroll: {
+    flex: 1,
+    width: '100%',
+    maxWidth: '100%',
+    backgroundColor: 'transparent',
+    zIndex: 1,
+  },
   scrollContent: {
     flexGrow: 1,
     width: '100%',
@@ -1608,6 +1619,7 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     overflow: 'hidden',
     position: 'relative',
+    zIndex: 2,
   },
   /** Full-bleed cover fills the hero band (no letterbox / dual-crop). */
   heroCoverImg: {
@@ -1657,7 +1669,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
   },
   lower: {
-    backgroundColor: BASE.black,
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'flex-start',
     paddingHorizontal: 16,
@@ -1680,7 +1692,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingBottom: 4,
     paddingTop: 2,
-    backgroundColor: BASE.black,
+    backgroundColor: 'transparent',
     borderTopWidth: 0,
   },
   bottomBar: {
@@ -1846,11 +1858,12 @@ const styles = StyleSheet.create({
   },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.72)',
+    backgroundColor: 'transparent',
     justifyContent: 'flex-end',
     padding: 14,
+    overflow: 'hidden',
   },
-  sheet: { borderRadius: 28, maxHeight: '82%' },
+  sheet: { borderRadius: 28, maxHeight: '82%', zIndex: 2 },
   sheetBody: { padding: 16, gap: 12 },
   sheetHeader: {
     flexDirection: 'row',
