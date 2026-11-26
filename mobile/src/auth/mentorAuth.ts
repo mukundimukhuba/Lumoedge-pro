@@ -296,43 +296,41 @@ export async function registerMentor(fields: {
     status: 'pending',
     role: 'mentor',
   };
-  const map = await loadProfiles();
-  map[email] = { ...session, passwordHash };
-  await saveProfiles(map);
   try {
     const { hydrateSupabaseConfig } = await import('../supabase/client');
     await hydrateSupabaseConfig();
   } catch {
-    /* local signup still valid */
+    /* API path does not need anon key */
   }
-  // Prefer security-definer RPC so password_hash lands even when direct
-  // upsert fails (e.g. missing portal_role column). Local signup still wins.
-  try {
-    const { registerMentorPendingRemote, upsertMentorProfile } = await import(
-      '../portal/data/mentorsApi'
+
+  // Shared DB insert is mandatory — never show "waiting for approval" for a
+  // device-only row the Super Admin cannot see.
+  const { registerMentorPendingRemote } = await import(
+    '../portal/data/mentorsApi'
+  );
+  const remote = await registerMentorPendingRemote({
+    email: session.email,
+    mentorName: session.mentorName,
+    name: session.name,
+    contact: session.contact,
+    passwordHash,
+  });
+  if (!remote.ok) {
+    throw new Error(
+      remote.error ||
+        'Could not register mentor in shared database. Please try again.',
     );
-    const rpc = await registerMentorPendingRemote({
-      email: session.email,
-      mentorName: session.mentorName,
-      name: session.name,
-      contact: session.contact,
-      passwordHash,
-    });
-    if (!rpc.ok) {
-      await upsertMentorProfile({
-        email: session.email,
-        mentorName: session.mentorName,
-        name: session.name,
-        contact: session.contact,
-        status: 'pending',
-        passwordHash,
-        createdAt: session.createdAt,
-        keyAllotment: 0,
-      });
-    }
-  } catch {
-    /* local signup still valid */
   }
+
+  if (remote.mentor) {
+    session.status = normalizeStatus(remote.mentor.status);
+    session.role = normalizePortalRole(remote.mentor.role, email);
+    session.createdAt = remote.mentor.createdAt || session.createdAt;
+  }
+
+  const map = await loadProfiles();
+  map[email] = { ...session, passwordHash };
+  await saveProfiles(map);
   return session;
 }
 

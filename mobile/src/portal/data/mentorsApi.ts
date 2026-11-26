@@ -1,9 +1,12 @@
 /**
- * Mentors Portal data helpers — prefer Supabase, fall back to local AsyncStorage.
+ * Mentors Portal data helpers — shared DB via /api/mentors/* (service role).
+ * Device AsyncStorage is only a password/session cache, never source of truth
+ * for Super Admin Pending.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getSupabase } from '../../supabase/client';
 import type { MentorSession } from '../../auth/mentorAuth';
+import { safeMessageFromApiBody, toSafeUserMessage } from '../safeErrors';
 
 const LOCAL_PROFILES_KEY = 'edges-mentor-profiles-v1';
 
@@ -31,6 +34,13 @@ type LocalStored = {
   keyAllotment?: number;
 };
 
+function apiBase() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+  return '';
+}
+
 function rowFromDb(r: Record<string, unknown>): MentorProfileRow {
   const statusRaw = String(r.status || 'pending');
   const status: MentorProfileRow['status'] =
@@ -54,8 +64,16 @@ function rowFromDb(r: Record<string, unknown>): MentorProfileRow {
     role,
     keyAllotment: Number(r.key_allotment ?? r.keyAllotment ?? 0) || 0,
     createdAt: String(r.created_at ?? r.createdAt ?? new Date().toISOString()),
-    passwordHash: r.password_hash ? String(r.password_hash) : undefined,
+    passwordHash: r.password_hash
+      ? String(r.password_hash)
+      : r.passwordHash
+        ? String(r.passwordHash)
+        : undefined,
   };
+}
+
+function rowFromApi(r: Record<string, unknown>): MentorProfileRow {
+  return rowFromDb(r);
 }
 
 async function loadLocalProfiles(): Promise<MentorProfileRow[]> {
@@ -69,7 +87,9 @@ async function loadLocalProfiles(): Promise<MentorProfileRow[]> {
       name: p.name || '',
       contact: p.contact || '',
       status: p.status || 'pending',
-      role: (p as LocalStored & { role?: MentorProfileRow['role'] }).role || 'mentor',
+      role:
+        (p as LocalStored & { role?: MentorProfileRow['role'] }).role ||
+        'mentor',
       keyAllotment: Number(p.keyAllotment || 0) || 0,
       createdAt: p.createdAt || new Date().toISOString(),
       passwordHash: p.passwordHash,
@@ -90,57 +110,82 @@ async function patchLocalProfile(
       : {};
     const key = email.trim().toLowerCase();
     const prev = map[key];
-    if (!prev) return;
-    map[key] = { ...prev, ...patch, email: key };
+    if (!prev) {
+      if (!patch.email && !key) return;
+      map[key] = {
+        email: key,
+        mentorName: String(patch.mentorName || ''),
+        name: String(patch.name || ''),
+        contact: String(patch.contact || ''),
+        createdAt: String(patch.createdAt || new Date().toISOString()),
+        status: (patch.status as MentorProfileRow['status']) || 'pending',
+        role: patch.role || 'mentor',
+        passwordHash: patch.passwordHash,
+        keyAllotment: Number(patch.keyAllotment || 0) || 0,
+      };
+    } else {
+      map[key] = { ...prev, ...patch, email: key };
+    }
     await AsyncStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(map));
   } catch {
     /* ignore */
   }
 }
 
-
-export async function fetchMentorProfile(
-  email: string,
-): Promise<MentorProfileRow | null> {
-  const key = email.trim().toLowerCase();
-  if (!key) return null;
-  const local =
-    (await loadLocalProfiles()).find((row) => row.email === key) || null;
-  const sb = getSupabase();
-  if (!sb) return local;
-  try {
-    const { data, error } = await sb
-      .from('mentor_profiles')
-      .select('*')
-      .eq('email', key)
-      .maybeSingle();
-    if (error || !data) return local;
-    const remote = rowFromDb(data as Record<string, unknown>);
-    if (!local) return remote;
-    // Never let a null cloud hash wipe a locally verified password digest.
-    return {
-      ...local,
-      ...remote,
-      passwordHash: remote.passwordHash || local.passwordHash,
-    };
-  } catch {
-    return local;
-  }
-}
-
-/** Security-definer signup — stores password_hash reliably for cross-device login. */
+/** Register mentor into shared DB via service-role API. */
 export async function registerMentorPendingRemote(input: {
   email: string;
   mentorName: string;
   name: string;
   contact: string;
   passwordHash: string;
-}): Promise<{ ok: boolean; error?: string }> {
+}): Promise<{ ok: boolean; error?: string; mentor?: MentorProfileRow }> {
+  const email = input.email.trim().toLowerCase();
+  // 1) Server API (works when Vercel has service role but no anon key)
+  try {
+    const res = await fetch(`${apiBase()}/api/mentors/register`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email,
+        mentorName: input.mentorName.trim(),
+        name: input.name.trim(),
+        contact: input.contact.trim(),
+        passwordHash: input.passwordHash,
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (res.ok && data.ok && data.mentor) {
+      return {
+        ok: true,
+        mentor: rowFromApi(data.mentor as Record<string, unknown>),
+      };
+    }
+    // Fall through to client RPC if API missing (older deploy)
+    if (res.status !== 404) {
+      return {
+        ok: false,
+        error: safeMessageFromApiBody(data, 'register') || 'Register failed',
+      };
+    }
+  } catch {
+    /* try client supabase */
+  }
+
   const sb = getSupabase();
-  if (!sb) return { ok: false, error: 'supabase not configured' };
+  if (!sb) {
+    return {
+      ok: false,
+      error:
+        'Could not reach mentor registration service. Check connection and try again.',
+    };
+  }
   try {
     const { error } = await sb.rpc('register_mentor_pending', {
-      p_email: input.email.trim().toLowerCase(),
+      p_email: email,
       p_mentor_name: input.mentorName.trim(),
       p_name: input.name.trim(),
       p_contact: input.contact.trim(),
@@ -156,40 +201,111 @@ export async function registerMentorPendingRemote(input: {
   }
 }
 
-export async function listMentorProfiles(): Promise<MentorProfileRow[]> {
-  const local = await loadLocalProfiles();
-  const sb = getSupabase();
-  if (!sb) return local.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+export async function fetchMentorProfile(
+  email: string,
+): Promise<MentorProfileRow | null> {
+  const key = email.trim().toLowerCase();
+  if (!key) return null;
 
+  // Shared DB via service-role API first
+  try {
+    const res = await fetch(`${apiBase()}/api/mentors/get`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email: key }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (res.ok && data.ok && data.mentor) {
+      const remote = rowFromApi(data.mentor as Record<string, unknown>);
+      await patchLocalProfile(key, {
+        mentorName: remote.mentorName,
+        name: remote.name,
+        contact: remote.contact,
+        status: remote.status,
+        role: remote.role,
+        keyAllotment: remote.keyAllotment,
+        createdAt: remote.createdAt,
+        passwordHash: remote.passwordHash,
+      });
+      return remote;
+    }
+  } catch {
+    /* fall through */
+  }
+
+  const local =
+    (await loadLocalProfiles()).find((row) => row.email === key) || null;
+  const sb = getSupabase();
+  if (!sb) return local;
   try {
     const { data, error } = await sb
       .from('mentor_profiles')
       .select('*')
-      .order('created_at', { ascending: false });
+      .eq('email', key)
+      .maybeSingle();
     if (error || !data) return local;
-
-    const remote = data.map((r) => rowFromDb(r as Record<string, unknown>));
-    const byEmail = new Map<string, MentorProfileRow>();
-    for (const row of local) byEmail.set(row.email, row);
-    for (const row of remote) {
-      const prev = byEmail.get(row.email);
-      byEmail.set(
-        row.email,
-        prev
-          ? {
-              ...prev,
-              ...row,
-              passwordHash: row.passwordHash || prev.passwordHash,
-            }
-          : row,
-      );
-    }
-    return [...byEmail.values()].sort((a, b) =>
-      b.createdAt.localeCompare(a.createdAt),
-    );
+    const remote = rowFromDb(data as Record<string, unknown>);
+    if (!local) return remote;
+    return {
+      ...local,
+      ...remote,
+      passwordHash: remote.passwordHash || local.passwordHash,
+    };
   } catch {
     return local;
   }
+}
+
+/**
+ * Super Admin list — shared DB ONLY (no AsyncStorage merge).
+ * Pass actorEmail so the API can authorize.
+ */
+export async function listMentorProfiles(
+  actorEmail?: string,
+): Promise<MentorProfileRow[]> {
+  const actor = (actorEmail || '').trim().toLowerCase();
+
+  if (actor) {
+    // Super Admin Pending must never merge AsyncStorage as source of truth.
+    const res = await fetch(`${apiBase()}/api/mentors/list`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ actorEmail: actor }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (res.ok && data.ok && Array.isArray(data.mentors)) {
+      return (data.mentors as Record<string, unknown>[]).map(rowFromApi);
+    }
+    throw new Error(
+      safeMessageFromApiBody(data, 'portal') ||
+        'Could not load mentors from shared database',
+    );
+  }
+
+  // Non-admin callers (e.g. Top Mentors name lookup): try anon client, else local names only.
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      const { data, error } = await sb
+        .from('mentor_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+      if (!error && data) {
+        return data.map((r) => rowFromDb(r as Record<string, unknown>));
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return (await loadLocalProfiles()).sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
 }
 
 export async function upsertMentorProfile(input: {
@@ -203,6 +319,17 @@ export async function upsertMentorProfile(input: {
   createdAt?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const email = input.email.trim().toLowerCase();
+  // Demo / seed path: prefer register API only for pending mentors
+  if (input.status === 'pending' && input.passwordHash) {
+    return registerMentorPendingRemote({
+      email,
+      mentorName: input.mentorName,
+      name: input.name,
+      contact: input.contact,
+      passwordHash: input.passwordHash,
+    });
+  }
+
   const base = {
     email,
     mentor_name: input.mentorName.trim(),
@@ -219,7 +346,6 @@ export async function upsertMentorProfile(input: {
   if (!sb) return { ok: true };
 
   try {
-    // Prefer including portal_role (007); retry without if column missing.
     const withRole = {
       ...base,
       portal_role: input.status === 'demo' ? 'super_admin' : 'mentor',
@@ -259,13 +385,55 @@ export async function setMentorStatus(
   }
 
   const key = email.trim().toLowerCase();
+
+  try {
+    const res = await fetch(`${apiBase()}/api/mentors/set-status`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        actorEmail: SUPER_ADMIN_EMAIL,
+        email: key,
+        status,
+        keyAllotment:
+          typeof keyAllotment === 'number'
+            ? Math.max(0, Math.floor(keyAllotment))
+            : undefined,
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (res.ok && data.ok) {
+      await patchLocalProfile(key, {
+        status,
+        ...(typeof keyAllotment === 'number' ? { keyAllotment } : {}),
+      });
+      return { ok: true };
+    }
+    if (res.status !== 404) {
+      return {
+        ok: false,
+        error: safeMessageFromApiBody(data, 'portal') || 'Status update failed',
+      };
+    }
+  } catch {
+    /* fall through to client */
+  }
+
   await patchLocalProfile(key, {
     status,
     ...(typeof keyAllotment === 'number' ? { keyAllotment } : {}),
   });
 
   const sb = getSupabase();
-  if (!sb) return { ok: true };
+  if (!sb) {
+    return {
+      ok: false,
+      error:
+        'Could not update mentor in shared database. Status was not changed.',
+    };
+  }
 
   try {
     const patch: Record<string, unknown> = {
@@ -275,7 +443,6 @@ export async function setMentorStatus(
     if (typeof keyAllotment === 'number') {
       patch.key_allotment = Math.max(0, Math.floor(keyAllotment));
     }
-    // Prefer RPC when migration applied
     const { error: rpcErr } = await sb.rpc('admin_set_mentor_status', {
       actor_email: SUPER_ADMIN_EMAIL,
       target_email: key,
