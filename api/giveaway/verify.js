@@ -7,15 +7,16 @@ const {
   fingerprintToken,
   findExistingClaim,
   rcgPublicServers,
+  assertGiveawayAccess,
 } = require('../_lib/giveaway');
 
 /**
  * POST /api/giveaway/verify
- * Body: { login, password, server }
- * Connects live MT5 via BROKER_API_URL, confirms RCG (server allowlist /
- * company signal), returns a short-lived claimToken. Never stores password.
+ * Body: { accessToken, login, password, server }
+ * Connects live MT5 via BROKER_API_URL, confirms RCG, returns claimToken.
+ * Requires the secret invite token (same as /g/rcg-<token>/ path).
  *
- * GET  /api/giveaway/verify → public allowlist servers (no secrets).
+ * GET /api/giveaway/verify?t=<accessToken> → server list for the invite page.
  */
 async function handler(req, res) {
   applyCors(res);
@@ -25,6 +26,20 @@ async function handler(req, res) {
   }
 
   if (req.method === 'GET') {
+    const url = new URL(req.url || '/', 'http://localhost');
+    const gate = assertGiveawayAccess(
+      url.searchParams.get('t') ||
+        url.searchParams.get('accessToken') ||
+        req.headers['x-giveaway-token'] ||
+        '',
+    );
+    if (!gate.ok) {
+      return json(res, gate.status, {
+        ok: false,
+        error: gate.error,
+        code: gate.code,
+      });
+    }
     return json(res, 200, {
       ok: true,
       servers: rcgPublicServers(),
@@ -53,6 +68,21 @@ async function handler(req, res) {
     return json(res, 400, { ok: false, error: 'Invalid JSON body' });
   }
 
+  const accessGate = assertGiveawayAccess(
+    body.accessToken ||
+      body.access_token ||
+      body.t ||
+      req.headers['x-giveaway-token'] ||
+      '',
+  );
+  if (!accessGate.ok) {
+    return json(res, accessGate.status, {
+      ok: false,
+      error: accessGate.error,
+      code: accessGate.code,
+    });
+  }
+
   const login = String(body.login || body.account || body.user || '').trim();
   const password = String(body.password || '');
   const server = normalizeServer(body.server || '');
@@ -71,9 +101,6 @@ async function handler(req, res) {
     });
   }
 
-  // Soft pre-check: allowlisted servers skip the post-connect company path
-  // ambiguity. Unknown servers still connect so company_match can accept
-  // renamed MetaQuotes names Mukundi has not added to the allowlist yet.
   const result = await connectLiveMt5({
     user: login,
     password,
@@ -89,7 +116,6 @@ async function handler(req, res) {
     });
   }
 
-  // Optional company signal from AccountSummary (when bridge exposes it).
   let company = '';
   try {
     const acct = await fetchLiveAccount(result.token);
@@ -101,10 +127,6 @@ async function handler(req, res) {
           acct.account.CompanyName ||
           '',
       ).trim();
-      // Prefer login from live summary when present
-      if (acct.account.login) {
-        /* keep form login — both should match */
-      }
     }
   } catch {
     /* company optional */
@@ -126,8 +148,6 @@ async function handler(req, res) {
     mt5TokenFingerprint: fingerprintToken(result.token),
   });
 
-  // Soft hint if this login already claimed (still return token so they can
-  // re-fetch the same key via claim).
   let alreadyClaimed = false;
   try {
     const hit = await findExistingClaim({ login });

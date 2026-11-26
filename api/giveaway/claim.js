@@ -5,13 +5,14 @@ const {
   rateLimitClaim,
   verifyClaimToken,
   issueGiveawayLicense,
+  assertGiveawayAccess,
 } = require('../_lib/giveaway');
 
 /**
  * POST /api/giveaway/claim
- * Body: { claimToken, email, name? }
+ * Body: { accessToken, claimToken, email, name? }
  * Issues one free Lumo Edge Pro license for a verified RCG MT5 account.
- * One claim per MT5 login and per email. No payment path.
+ * Requires the secret invite token. One claim per MT5 login and per email.
  */
 async function handler(req, res) {
   applyCors(res);
@@ -45,6 +46,21 @@ async function handler(req, res) {
     body = await readJsonBody(req);
   } catch {
     return json(res, 400, { ok: false, error: 'Invalid JSON body' });
+  }
+
+  const accessGate = assertGiveawayAccess(
+    body.accessToken ||
+      body.access_token ||
+      body.t ||
+      req.headers['x-giveaway-token'] ||
+      '',
+  );
+  if (!accessGate.ok) {
+    return json(res, accessGate.status, {
+      ok: false,
+      error: accessGate.error,
+      code: accessGate.code,
+    });
   }
 
   const tokenGate = verifyClaimToken(

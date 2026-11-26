@@ -150,7 +150,7 @@ export default function Root({ children }: PropsWithChildren) {
         </div>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var p=(location&&location.pathname)||'';var el=document.getElementById('lumo-boot-splash');if(!el)return;if(/^\\/giveaway(\\/|$)/i.test(p)){el.remove();return;}setTimeout(function(){var n=document.getElementById('lumo-boot-splash');if(n)n.remove();},5000);}catch(e){}})();`,
+            __html: `(function(){try{var p=(location&&location.pathname)||'';var el=document.getElementById('lumo-boot-splash');if(!el)return;if(/^\\/g(\\/|$)/i.test(p)){el.remove();return;}setTimeout(function(){var n=document.getElementById('lumo-boot-splash');if(n)n.remove();},5000);}catch(e){}})();`,
           }}
         />
         {children}

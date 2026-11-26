@@ -6,11 +6,12 @@
   <meta name="theme-color" content="#05070D" />
   <meta name="color-scheme" content="dark" />
   <title>RCG Giveaway — Lumo Edge Pro</title>
-  <meta name="description" content="Free trading robot + free Lumo Edge Pro app access for RCG Markets account holders only." />
-  <meta property="og:title" content="Lumo Edge Pro — Free for RCG accounts" />
+  <meta name="description" content="Invite-only: free trading robot + free Lumo Edge Pro app access for RCG Markets account holders." />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta property="og:title" content="Lumo Edge Pro — RCG invite" />
   <meta property="og:description" content="Verify your RCG Markets MT5 account and claim a free robot + app subscription." />
   <meta property="og:type" content="website" />
-  <meta property="og:url" content="https://lumoedgepro.vercel.app/giveaway/rcg" />
+  <meta property="og:url" content="https://lumoedgepro.vercel.app/g/rcg-d36f2878e48d3ab9b649572a" />
   <meta name="twitter:card" content="summary_large_image" />
   <link rel="icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -450,6 +451,9 @@
 
   <script>
     (function () {
+      // Invite-only token — must match /g/rcg-<token>/ path + GIVEAWAY_ACCESS_TOKEN.
+      const ACCESS_TOKEN = 'd36f2878e48d3ab9b649572a';
+      const SHARE_URL = 'https://lumoedgepro.vercel.app/g/rcg-' + ACCESS_TOKEN;
       const state = { claimToken: null, servers: [] };
 
       const $ = (id) => document.getElementById(id);
@@ -481,7 +485,11 @@
       async function api(path, opts) {
         const res = await fetch(path, {
           method: (opts && opts.method) || 'GET',
-          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-Giveaway-Token': ACCESS_TOKEN,
+          },
           body: opts && opts.body ? JSON.stringify(opts.body) : undefined,
         });
         let data = {};
@@ -491,7 +499,7 @@
 
       async function loadServers() {
         try {
-          const { res, data } = await api('/api/giveaway/verify');
+          const { res, data } = await api('/api/giveaway/verify?t=' + encodeURIComponent(ACCESS_TOKEN));
           if (res.ok && data && Array.isArray(data.servers) && data.servers.length) {
             state.servers = data.servers;
             const current = serverSelect.value;
@@ -517,17 +525,17 @@
           const { res, data } = await api('/api/giveaway/verify', {
             method: 'POST',
             body: {
+              accessToken: ACCESS_TOKEN,
               server: serverSelect.value,
               login: $('login').value.trim(),
               password: $('password').value,
             },
           });
           if (!res.ok || !data.ok) {
-            const code = data && data.code;
             const err =
               (data && (data.userMessage || data.error)) ||
               'Verification failed. Check login, password, and RCG server.';
-            showMsg(verifyMsg, err, code === 'not_rcg' ? 'err' : 'err');
+            showMsg(verifyMsg, err, 'err');
             return;
           }
           state.claimToken = data.claimToken;
@@ -571,6 +579,7 @@
           const { res, data } = await api('/api/giveaway/claim', {
             method: 'POST',
             body: {
+              accessToken: ACCESS_TOKEN,
               claimToken: state.claimToken,
               email: $('email').value.trim(),
               name: $('name').value.trim(),
@@ -614,11 +623,10 @@
       });
 
       $('shareBtn').addEventListener('click', async () => {
-        const shareUrl = 'https://lumoedgepro.vercel.app/giveaway/rcg';
-        const text = 'Lumo Edge Pro free for RCG Markets accounts — verify your MT5 and claim a free robot + app key: ' + shareUrl;
+        const text = 'Lumo Edge Pro RCG invite — verify your MT5 and claim free robot + app: ' + SHARE_URL;
         if (navigator.share) {
           try {
-            await navigator.share({ title: 'Lumo Edge Pro RCG Giveaway', text, url: shareUrl });
+            await navigator.share({ title: 'Lumo Edge Pro RCG Invite', text, url: SHARE_URL });
             return;
           } catch (_) { /* fall through */ }
         }

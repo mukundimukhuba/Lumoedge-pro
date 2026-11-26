@@ -17,6 +17,42 @@ const RATE_WINDOW_MS = 15 * 60 * 1000;
 const RATE_MAX_VERIFY = 8;
 const RATE_MAX_CLAIM = 6;
 
+/**
+ * Shared access token for the secret giveaway link.
+ * Path: /g/rcg-<token>/  — not linked from the main PWA.
+ * Override with Vercel env GIVEAWAY_ACCESS_TOKEN if rotated.
+ */
+const DEFAULT_GIVEAWAY_ACCESS_TOKEN = 'd36f2878e48d3ab9b649572a';
+
+function giveawayAccessToken() {
+  return (
+    String(process.env.GIVEAWAY_ACCESS_TOKEN || DEFAULT_GIVEAWAY_ACCESS_TOKEN)
+      .trim() || DEFAULT_GIVEAWAY_ACCESS_TOKEN
+  );
+}
+
+function giveawaySecretPath() {
+  return `/g/rcg-${giveawayAccessToken()}`;
+}
+
+/**
+ * Require the invite token on every giveaway API call.
+ * Prevents random visitors who only know /api/giveaway/* from claiming.
+ */
+function assertGiveawayAccess(raw) {
+  const got = String(raw || '').trim();
+  const exp = giveawayAccessToken();
+  if (!got || !exp || got !== exp) {
+    return {
+      ok: false,
+      status: 404,
+      error: 'Not found',
+      code: 'giveaway_not_found',
+    };
+  }
+  return { ok: true };
+}
+
 const GIVEAWAY_EA_ID = () =>
   String(process.env.GIVEAWAY_EA_ID || 'ea-rcg-giveaway').trim() ||
   'ea-rcg-giveaway';
@@ -364,6 +400,10 @@ function splitSymbols(raw) {
 
 module.exports = {
   CLAIM_TTL_MS,
+  DEFAULT_GIVEAWAY_ACCESS_TOKEN,
+  giveawayAccessToken,
+  giveawaySecretPath,
+  assertGiveawayAccess,
   clientIp,
   rateLimitVerify,
   rateLimitClaim,

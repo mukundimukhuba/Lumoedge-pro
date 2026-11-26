@@ -12,6 +12,8 @@ const {
 const {
   makeClaimToken,
   verifyClaimToken,
+  assertGiveawayAccess,
+  giveawayAccessToken,
 } = require('../api/_lib/giveaway');
 
 assert.ok(isRcgServer('RCGMarkets-Real'));
@@ -57,5 +59,10 @@ assert.strictEqual(decoded.login, '12345678');
 assert.strictEqual(decoded.server, 'RCGMarkets-Real');
 assert.ok(!verifyClaimToken('nope').ok);
 assert.ok(!verifyClaimToken(token.slice(0, -2) + 'xx').ok);
+
+assert.ok(assertGiveawayAccess(giveawayAccessToken()).ok);
+assert.ok(!assertGiveawayAccess('').ok);
+assert.ok(!assertGiveawayAccess('wrong-token').ok);
+assert.strictEqual(assertGiveawayAccess('wrong').status, 404);
 
 console.log('test-rcg-giveaway: ok');

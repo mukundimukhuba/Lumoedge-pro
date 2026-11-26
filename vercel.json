@@ -15,8 +15,14 @@
     "api/giveaway/claim.js": { "maxDuration": 30 }
   },
   "rewrites": [
-    { "source": "/giveaway/rcg", "destination": "/giveaway/rcg/index.html" },
-    { "source": "/giveaway/rcg/", "destination": "/giveaway/rcg/index.html" },
+    {
+      "source": "/g/rcg-d36f2878e48d3ab9b649572a",
+      "destination": "/g/rcg-d36f2878e48d3ab9b649572a/index.html"
+    },
+    {
+      "source": "/g/rcg-d36f2878e48d3ab9b649572a/",
+      "destination": "/g/rcg-d36f2878e48d3ab9b649572a/index.html"
+    },
     { "source": "/portal", "destination": "/portal/index.html" },
     { "source": "/portal/", "destination": "/portal/index.html" },
     { "source": "/portal/dashboard", "destination": "/portal/dashboard/index.html" },
@@ -24,7 +30,7 @@
     { "source": "/portal/pending", "destination": "/portal/pending/index.html" },
     { "source": "/portal/pending/", "destination": "/portal/pending/index.html" },
     {
-      "source": "/((?!api/|_expo/|assets/|favicon.ico|giveaway/|.*\\..*).*)",
+      "source": "/((?!api/|_expo/|assets/|favicon.ico|g/|.*\\..*).*)",
       "destination": "/index.html"
     }
   ]

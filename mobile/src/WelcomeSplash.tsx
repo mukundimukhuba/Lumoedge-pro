@@ -20,36 +20,27 @@ const MAX_VISIBLE_MS = 4500;
 
 const mascot = require('../assets/splash-mascot.png');
 
-/** Public marketing / claim deep links — never block with the boot splash. */
-export function isGiveawayPath(pathname?: string): boolean {
-  if (Platform.OS !== 'web') return false;
-  const p =
-    pathname ||
-    (typeof window !== 'undefined' ? window.location?.pathname || '' : '');
-  return /^\/giveaway(\/|$)/i.test(p);
-}
-
 function removeHtmlBoot() {
   if (Platform.OS !== 'web' || typeof document === 'undefined') return;
   document.getElementById('lumo-boot-splash')?.remove();
 }
 
 /**
- * Boot splash: bouncing mascot + welcome copy, then reveal the app.
- * Skipped entirely on `/giveaway/*`. Always auto-dismisses by MAX_VISIBLE_MS.
+ * Boot splash for the main PWA only.
+ * Secret giveaway lives on static /g/rcg-* HTML (never mounts this component).
+ * Always auto-dismisses by MAX_VISIBLE_MS so Safari/hydrate hangs cannot trap.
  */
 export function WelcomeSplash({ children }: { children: ReactNode }) {
-  const skipSplash = isGiveawayPath();
   const { accessReady } = useAppState();
-  const [dismissed, setDismissed] = useState(skipSplash);
-  const [canExit, setCanExit] = useState(skipSplash);
+  const [dismissed, setDismissed] = useState(false);
+  const [canExit, setCanExit] = useState(false);
 
   const opacity = useRef(new Animated.Value(1)).current;
   const bounce = useRef(new Animated.Value(0)).current;
   const textOpacity = useRef(new Animated.Value(0)).current;
   const textY = useRef(new Animated.Value(10)).current;
   const startedAt = useRef(Date.now());
-  const exiting = useRef(skipSplash);
+  const exiting = useRef(false);
 
   const beginExit = () => {
     if (exiting.current) return;
@@ -71,14 +62,12 @@ export function WelcomeSplash({ children }: { children: ReactNode }) {
     else setTimeout(run, wait);
   };
 
-  // Drop native splash. Kill HTML boot immediately on giveaway deep links.
   useEffect(() => {
     SplashScreen.hideAsync().catch(() => {});
-    if (skipSplash) removeHtmlBoot();
-  }, [skipSplash]);
+  }, []);
 
   useEffect(() => {
-    if (skipSplash || dismissed) return;
+    if (dismissed) return;
 
     const bounceLoop = Animated.loop(
       Animated.sequence([
@@ -115,7 +104,6 @@ export function WelcomeSplash({ children }: { children: ReactNode }) {
     ]).start();
 
     const minTimer = setTimeout(() => setCanExit(true), MIN_VISIBLE_MS);
-    // Hard ceiling — dismiss even if accessReady never flips.
     const maxTimer = setTimeout(() => {
       setCanExit(true);
       beginExit();
@@ -126,21 +114,20 @@ export function WelcomeSplash({ children }: { children: ReactNode }) {
       clearTimeout(minTimer);
       clearTimeout(maxTimer);
     };
-    // beginExit is stable enough via refs; intentionally omit from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skipSplash, dismissed, bounce, textOpacity, textY]);
+  }, [dismissed, bounce, textOpacity, textY]);
 
   useEffect(() => {
-    if (skipSplash || !accessReady || !canExit || dismissed) return;
+    if (!accessReady || !canExit || dismissed) return;
     beginExit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skipSplash, accessReady, canExit, dismissed]);
+  }, [accessReady, canExit, dismissed]);
 
   useEffect(() => {
     if (dismissed) removeHtmlBoot();
   }, [dismissed]);
 
-  if (dismissed || skipSplash) return <>{children}</>;
+  if (dismissed) return <>{children}</>;
 
   const translateY = bounce.interpolate({
     inputRange: [0, 1],

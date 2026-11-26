@@ -73,10 +73,10 @@ function ensureDarkEdgeHtml(file) {
       html = html.replace(/<body([^>]*)>/i, `<body$1>${bootDiv}`);
     }
   }
-  // Giveaway deep links + hard timeout — never leave the HTML boot bounce stuck.
+  // Secret /g/* invite pages + hard timeout — never leave the HTML boot bounce stuck.
   if (!/lumo-boot-splash-guard/i.test(html)) {
     const guard =
-      '<script id="lumo-boot-splash-guard">(function(){try{var p=(location&&location.pathname)||\'\';var el=document.getElementById(\'lumo-boot-splash\');if(!el)return;if(/^\\/giveaway(\\/|$)/i.test(p)){el.remove();return;}setTimeout(function(){var n=document.getElementById(\'lumo-boot-splash\');if(n)n.remove();},5000);}catch(e){}})();</script>';
+      '<script id="lumo-boot-splash-guard">(function(){try{var p=(location&&location.pathname)||\'\';var el=document.getElementById(\'lumo-boot-splash\');if(!el)return;if(/^\\/g(\\/|$)/i.test(p)){el.remove();return;}setTimeout(function(){var n=document.getElementById(\'lumo-boot-splash\');if(n)n.remove();},5000);}catch(e){}})();</script>';
     if (/<\/body>/i.test(html)) {
       html = html.replace(/<\/body>/i, `${guard}</body>`);
     } else if (/<body[^>]*>/i.test(html)) {
@@ -123,13 +123,12 @@ for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
 }
 
 /**
- * Standalone public giveaway pages (not the Expo SPA shell).
- * Must overwrite any Expo-exported giveaway/*.html so WhatsApp / deep links
- * never land on the bouncing Welcome splash.
+ * Secret invite pages under /g/… (static HTML only — not the Expo SPA shell).
+ * Never linked from the main PWA. Must not be overwritten by Expo export.
  */
-const giveawaySrc = path.join(publicDir, 'giveaway');
-if (fs.existsSync(giveawaySrc)) {
-  copyDir(giveawaySrc, path.join(dest, 'giveaway'));
+const secretGSrc = path.join(publicDir, 'g');
+if (fs.existsSync(secretGSrc)) {
+  copyDir(secretGSrc, path.join(dest, 'g'));
 }
 
 fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, '404.html'));
@@ -148,8 +147,8 @@ for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
   fs.mkdirSync(path.join(root, p), { recursive: true });
   fs.copyFileSync(path.join(dest, 'index.html'), path.join(root, p, 'index.html'));
 }
-if (fs.existsSync(path.join(dest, 'giveaway'))) {
-  copyDir(path.join(dest, 'giveaway'), path.join(root, 'giveaway'));
+if (fs.existsSync(path.join(dest, 'g'))) {
+  copyDir(path.join(dest, 'g'), path.join(root, 'g'));
 }
 fs.copyFileSync(path.join(dest, 'index.html'), path.join(root, '404.html'));
 
