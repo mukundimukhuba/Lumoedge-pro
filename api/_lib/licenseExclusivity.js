@@ -181,28 +181,26 @@ async function activateKeyOnDevice({ rawKey, clientEmail, deviceId }) {
     };
   }
 
-  const bound = String(row.device_id || row.deviceId || '').trim();
-  if (bound && bound !== device) {
-    return {
-      ok: false,
-      status: 409,
-      error: MSG_ACTIVE_OTHER_DEVICE,
-      code: 'active_other_device',
-    };
-  }
-
-  // Also block if this email has another live key bound to a different device.
+  // Presenting the correct key + assignee email is proof of ownership: rebind
+  // this device instead of permanently locking the client out after storage
+  // clear / browser switch. Validate/poll still enforces the bound device.
   const live = await findLiveKeysForEmail(email);
   for (const other of live) {
     if (String(other.id) === String(row.id)) continue;
     const otherDevice = String(other.device_id || other.deviceId || '').trim();
     if (otherDevice && otherDevice !== device) {
-      return {
-        ok: false,
-        status: 409,
-        error: MSG_ACTIVE_OTHER_DEVICE,
-        code: 'active_other_device',
-      };
+      // Clear stale bind on sibling live keys for this email so exclusivity
+      // stays one-device after this activation rebinds.
+      try {
+        if (other.id) {
+          await sbFetch(
+            `/rest/v1/license_keys?id=eq.${encodeURIComponent(String(other.id))}`,
+            { method: 'PATCH', body: { device_id: null } },
+          );
+        }
+      } catch {
+        /* best-effort */
+      }
     }
   }
 

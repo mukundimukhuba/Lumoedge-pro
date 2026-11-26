@@ -63,16 +63,18 @@ export function AccessGateScreen() {
         setBusy(false);
         return;
       }
-      // Optional external pay link — never wait on Cape Pulse callbacks.
-      // Stay in-app on Approval pending (do not same-tab navigate away).
-      try {
-        if (Platform.OS === 'web' && typeof window !== 'undefined') {
-          window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer');
-        } else {
-          await Linking.openURL(result.checkoutUrl);
+      // Optional external pay link — skip when already approved/active
+      // (empty checkoutUrl) so we don't bounce restored clients to Cape Pulse.
+      if (result.checkoutUrl) {
+        try {
+          if (Platform.OS === 'web' && typeof window !== 'undefined') {
+            window.open(result.checkoutUrl, '_blank', 'noopener,noreferrer');
+          } else {
+            await Linking.openURL(result.checkoutUrl);
+          }
+        } catch {
+          /* payment link optional — pending row already created */
         }
-      } catch {
-        /* payment link optional — pending row already created */
       }
       // Routing flips to PaymentPendingScreen via AppState; no further nav.
       setBusy(false);

@@ -61,6 +61,7 @@ import {
 } from './subscriptions/remoteApi';
 import {
   isSubscriptionUsable,
+  pickPreferredClientSubscription,
   type SubscriptionRow,
 } from './subscriptions/types';
 
@@ -645,8 +646,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     });
 
     if (res.ok) {
-      const latest =
-        res.subscriptions.find((s) => isGenuineClientSubscription(s)) || null;
+      const genuine = res.subscriptions.filter((s) =>
+        isGenuineClientSubscription(s),
+      );
+      // Prefer active/approved over a newer pending re-checkout row.
+      const latest = pickPreferredClientSubscription(genuine);
       if (latest) {
         setClientSubscription(latest);
         try {
@@ -697,9 +701,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     clientSubscription?.status,
   );
 
+  // Active/approved must never route to PaymentPending/Declined screens.
   const isClientPaymentPending = Boolean(
     isGenuineClientSubscription(clientSubscription) &&
-      !canAccessLicenseSection,
+      !isSubscriptionUsable(clientSubscription?.status),
   );
 
   const beginClientCheckout: AppStateValue['beginClientCheckout'] = async ({
@@ -711,6 +716,47 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!clientName) return { ok: false, error: 'Enter your name' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail)) {
       return { ok: false, error: 'Enter a valid email' };
+    }
+
+    // Already approved/active → reuse that subscription. Do not create a new
+    // pending row that would kick the client back to "Approval pending".
+    const existing = await listSubscriptions({
+      role: 'client',
+      actorEmail: clientEmail,
+      clientEmail,
+    });
+    if (existing.ok) {
+      const preferred = pickPreferredClientSubscription(
+        existing.subscriptions.filter((s) => isGenuineClientSubscription(s)),
+      );
+      if (preferred && isSubscriptionUsable(preferred.status)) {
+        const now = new Date().toISOString();
+        const access: EaAccess = {
+          email: clientEmail,
+          name: clientName || preferred.clientName || '',
+          unlockedAt: now,
+          product: 'Lumo Edge Pro',
+          priceUsd: preferred.amountUsd || 35,
+        };
+        try {
+          await AsyncStorage.setItem(
+            CLIENT_SUB_KEY,
+            JSON.stringify(preferred),
+          );
+          await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(access));
+          await AsyncStorage.removeItem(CLIENT_CHECKOUT_KEY);
+        } catch {
+          return { ok: false, error: 'Could not save access state' };
+        }
+        setClientSubscription(preferred);
+        setEaAccess(access);
+        setSubscriptionReady(true);
+        return {
+          ok: true,
+          checkoutUrl: '',
+          subscription: preferred,
+        };
+      }
     }
 
     const ref = `cape-pulse-${Date.now()}`;
@@ -746,6 +792,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       paymentReference: submitted.subscription.paymentReference || ref,
       status: (submitted.subscription.status || 'pending') as SubscriptionRow['status'],
     };
+    const alreadyUsable = isSubscriptionUsable(serverSub.status);
     const now = new Date().toISOString();
     const access: EaAccess = {
       email: clientEmail,
@@ -757,16 +804,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     try {
       await AsyncStorage.setItem(CLIENT_SUB_KEY, JSON.stringify(serverSub));
       await AsyncStorage.setItem(EA_ACCESS_KEY, JSON.stringify(access));
-      await AsyncStorage.setItem(
-        CLIENT_CHECKOUT_KEY,
-        JSON.stringify({
-          id: serverSub.id,
-          startedAt: now,
-          checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
-          clientEmail,
-          clientName,
-        }),
-      );
+      if (alreadyUsable) {
+        await AsyncStorage.removeItem(CLIENT_CHECKOUT_KEY);
+      } else {
+        await AsyncStorage.setItem(
+          CLIENT_CHECKOUT_KEY,
+          JSON.stringify({
+            id: serverSub.id,
+            startedAt: now,
+            checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
+            clientEmail,
+            clientName,
+          }),
+        );
+      }
     } catch {
       return { ok: false, error: 'Could not save checkout state' };
     }
@@ -776,7 +827,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
     return {
       ok: true,
-      checkoutUrl: LUMO_EDGE_PRO_CHECKOUT_URL,
+      checkoutUrl: alreadyUsable ? '' : LUMO_EDGE_PRO_CHECKOUT_URL,
       subscription: serverSub,
     };
   };
