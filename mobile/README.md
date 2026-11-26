@@ -60,6 +60,18 @@ AAB path: `android/app/build/outputs/bundle/release/app-release.aab`
 > `android/` is gitignored (Continuous Native Generation). Regenerate with `npx expo prebuild`.  
 > Sideload APK is **arm64-only** — covers modern phones; emulators needing x86 must use a multi-ABI or EAS build override.
 
+## Phone download (APK)
+
+Public install page (after deploy):
+
+- Page: `https://lumoedgepro.vercel.app/download`
+- Direct APK: `https://lumoedgepro.vercel.app/download/lumo-edge-pro.apk`
+- API redirect: `https://lumoedgepro.vercel.app/api/download/android`
+- Mirror (GitHub Release, works immediately):  
+  `https://github.com/mukundimukhuba/Lumoedge-pro/releases/download/android-v1.0.0-slim/lumo-edge-pro.apk`
+
+The APK lives in repo `download/` and is copied into `dist-web/download/` by `scripts/publish-static.js` on Vercel build. Served as a static file with `Content-Disposition: attachment` (not a serverless stream — avoids body size limits).
+
 ## Screens / flows (full parity)
 
 Access gate → payment pending → license activate → EA home (blur wallpaper) → Quotes → Chart Scanner (camera/gallery upload) → Connect Broker → Mentors Portal (triple-tap) with Manage EAs / License Keys / pending gate.
