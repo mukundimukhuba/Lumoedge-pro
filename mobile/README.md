@@ -47,10 +47,10 @@ cd android && ./gradlew assembleRelease   # APK (arm64-v8a only)
 # or: ./gradlew bundleRelease            # AAB
 ```
 
-Release size knobs (via `expo-build-properties` → `gradle.properties`):
+Release size / stability knobs (via `expo-build-properties` → `gradle.properties`):
 
-- R8 minify + `shrinkResources`
-- `reactNativeArchitectures=arm64-v8a` only (no x86 / armeabi-v7a)
+- **R8 minify OFF** for release (ON caused “keeps stopping” on devices — keep rules ready in `plugins/withAndroidCrashHardening.js`)
+- Phone ABIs: `armeabi-v7a` + `arm64-v8a` (no x86 emulator ABIs)
 - `expo.useLegacyPackaging=true` (compress `.so` inside the APK)
 - Hermes on; GIF/WebP RN image decoders off (app uses JPG/PNG)
 
@@ -67,8 +67,9 @@ Public install page (after deploy):
 - Page: `https://lumoedgepro.vercel.app/download`
 - Direct APK: `https://lumoedgepro.vercel.app/download/lumo-edge-pro.apk`
 - API redirect: `https://lumoedgepro.vercel.app/api/download/android`
-- Mirror (GitHub Release, works immediately):  
-  `https://github.com/mukundimukhuba/Lumoedge-pro/releases/download/android-v1.0.0-slim/lumo-edge-pro.apk`
+- Mirror (GitHub Release — use this on phones):  
+  `https://github.com/mukundimukhuba/Lumoedge-pro/releases/download/android-v1.0.1-fix/lumo-edge-pro.apk`  
+  (supersedes `android-v1.0.0-slim`, which crashed with R8 minify / arm64-only)
 
 The APK lives in repo `download/` and is copied into `dist-web/download/` by `scripts/publish-static.js` on Vercel build. Served as a static file with `Content-Disposition: attachment` (not a serverless stream — avoids body size limits).
 

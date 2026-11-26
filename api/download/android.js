@@ -10,7 +10,7 @@ const { applyCors } = require('../_lib/cors');
  */
 const STATIC_PATH = '/download/lumo-edge-pro.apk';
 const GITHUB_RELEASE =
-  'https://github.com/mukundimukhuba/Lumoedge-pro/releases/download/android-v1.0.0-slim/lumo-edge-pro.apk';
+  'https://github.com/mukundimukhuba/Lumoedge-pro/releases/download/android-v1.0.1-fix/lumo-edge-pro.apk';
 
 module.exports = async function handler(req, res) {
   applyCors(res);
