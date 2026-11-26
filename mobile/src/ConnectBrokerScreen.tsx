@@ -14,11 +14,11 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { EdgesBottomDock } from './EdgesBottomDock';
+import { popToHome } from './navPush';
 import {
   connectBrokerApi,
   fetchBrokerAccount,
@@ -363,7 +363,6 @@ function LiveAccountPanel({
 }
 
 export function ConnectBrokerScreen() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const { accent } = useAppState();
   const dockPad = Math.max(insets.bottom, 10);
@@ -669,7 +668,7 @@ export function ConnectBrokerScreen() {
   };
 
   const goHome = () => {
-    router.replace('/');
+    popToHome();
   };
 
   return (
@@ -1197,7 +1196,7 @@ function Field({
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BASE.black },
+  root: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

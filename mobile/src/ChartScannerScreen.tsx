@@ -16,11 +16,12 @@ import {
   View,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
 import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { EdgesBottomDock } from './EdgesBottomDock';
+import { popToHome } from './navPush';
 import {
   normalizeScanResult,
   postChartScan,
@@ -828,7 +829,6 @@ function LotTradesFields({
 }
 
 export function ChartScannerScreen() {
-  const router = useRouter();
   const params = useLocalSearchParams<{ proof?: string; demo?: string }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
@@ -1199,7 +1199,7 @@ export function ChartScannerScreen() {
   };
 
   const goHome = () => {
-    router.replace('/');
+    popToHome();
   };
 
   const formatWhen = (iso: string) => {
@@ -1671,7 +1671,7 @@ export function ChartScannerScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BASE.black },
+  root: { flex: 1, backgroundColor: 'transparent' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
