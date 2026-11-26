@@ -114,7 +114,13 @@ module.exports = async function handler(req, res) {
     p_client_email: email,
   });
   if (rows) {
-    return json(res, 200, { ok: true, via: 'rpc', subscriptions: rows.map(mapSub) });
+    return json(res, 200, {
+      ok: true,
+      via: 'rpc',
+      // Prefer active/approved first so older clients that take subscriptions[0]
+      // never land on Declined/Pending when a usable row exists.
+      subscriptions: preferUsableFirst(rows.map(mapSub)),
+    });
   }
   const all = await listTableAll();
   const filtered = all.rows.filter(
@@ -123,9 +129,27 @@ module.exports = async function handler(req, res) {
   return json(res, 200, {
     ok: true,
     via: all.via,
-    subscriptions: filtered.map(mapSub),
+    subscriptions: preferUsableFirst(filtered.map(mapSub)),
   });
 };
+
+/** Rank so active/approved beat pending/declined (AN-129). */
+function preferUsableFirst(subs) {
+  const rank = (status) => {
+    const s = String(status || '').toLowerCase();
+    if (s === 'active') return 0;
+    if (s === 'approved') return 1;
+    if (s === 'pending') return 2;
+    if (s === 'expired') return 3;
+    if (s === 'declined') return 4;
+    return 5;
+  };
+  return [...subs].sort((a, b) => {
+    const byRank = rank(a.status) - rank(b.status);
+    if (byRank !== 0) return byRank;
+    return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+  });
+}
 
 async function listViaRpc(name, body) {
   try {
