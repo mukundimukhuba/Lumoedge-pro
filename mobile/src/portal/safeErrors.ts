@@ -102,8 +102,16 @@ export function toSafeUserMessage(
     'Password must be at least 8 characters.',
     'Passwords do not match.',
     'Email is already registered.',
+    'This email has a mentor',
+    'This email is active on another device',
   ];
   if (allowExact.includes(raw)) return raw;
+  if (/this email has a mentor/i.test(raw)) {
+    return 'This email has a mentor';
+  }
+  if (/active on another device/i.test(raw)) {
+    return 'This email is active on another device';
+  }
 
   if (/invalid email or password/i.test(raw)) return SAFE_AUTH_INVALID;
   if (/passwords? do not match/i.test(raw)) return 'Passwords do not match.';

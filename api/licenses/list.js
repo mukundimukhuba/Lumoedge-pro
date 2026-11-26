@@ -144,5 +144,6 @@ function mapKey(row) {
     status: row.status || row.license_status || 'unused',
     activatedAt: row.activated_at || row.activatedAt || null,
     expiresAt: row.expires_at || row.expiresAt || null,
+    deviceId: row.device_id || row.deviceId || null,
   };
 }
