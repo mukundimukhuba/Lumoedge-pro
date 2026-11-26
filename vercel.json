@@ -10,9 +10,13 @@
     "api/brokers/symbols.js": { "maxDuration": 30 },
     "api/scan/index.js": { "maxDuration": 60 },
     "api/scan/status.js": { "maxDuration": 15 },
-    "api/scan/auto.js": { "maxDuration": 60 }
+    "api/scan/auto.js": { "maxDuration": 60 },
+    "api/giveaway/verify.js": { "maxDuration": 60 },
+    "api/giveaway/claim.js": { "maxDuration": 30 }
   },
   "rewrites": [
+    { "source": "/giveaway/rcg", "destination": "/giveaway/rcg/index.html" },
+    { "source": "/giveaway/rcg/", "destination": "/giveaway/rcg/index.html" },
     { "source": "/portal", "destination": "/portal/index.html" },
     { "source": "/portal/", "destination": "/portal/index.html" },
     { "source": "/portal/dashboard", "destination": "/portal/dashboard/index.html" },
@@ -20,7 +24,7 @@
     { "source": "/portal/pending", "destination": "/portal/pending/index.html" },
     { "source": "/portal/pending/", "destination": "/portal/pending/index.html" },
     {
-      "source": "/((?!api/|_expo/|assets/|favicon.ico|.*\\..*).*)",
+      "source": "/((?!api/|_expo/|assets/|favicon.ico|giveaway/|.*\\..*).*)",
       "destination": "/index.html"
     }
   ]

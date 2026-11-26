@@ -588,6 +588,15 @@ async function fetchLiveAccount(id) {
   );
   const leverage = num(s.Leverage ?? s.leverage, null);
   const login = String(s.Login ?? s.login ?? s.Account ?? s.account ?? '').trim();
+  const company = String(
+    s.Company ??
+      s.company ??
+      s.CompanyName ??
+      s.companyName ??
+      s.Broker ??
+      s.broker ??
+      '',
+  ).trim();
 
   if (balance == null && equity == null) {
     return {
@@ -632,6 +641,7 @@ async function fetchLiveAccount(id) {
       id: token,
       sessionId: token,
       login: login || undefined,
+      company: company || undefined,
       currency: currency || undefined,
       balance: bal,
       equity: eq,

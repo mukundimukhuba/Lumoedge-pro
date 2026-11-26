@@ -97,13 +97,6 @@ for (const name of brandFiles) {
   fs.copyFileSync(from, path.join(dest, name));
 }
 
-for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
-  fs.mkdirSync(path.join(dest, p), { recursive: true });
-  fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, p, 'index.html'));
-}
-fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, '404.html'));
-
-// Optional local convenience copy to repo root (does not overwrite api/)
 function copyDir(from, to) {
   fs.mkdirSync(to, { recursive: true });
   for (const ent of fs.readdirSync(from, { withFileTypes: true })) {
@@ -113,6 +106,21 @@ function copyDir(from, to) {
     else fs.copyFileSync(a, b);
   }
 }
+
+for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
+  fs.mkdirSync(path.join(dest, p), { recursive: true });
+  fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, p, 'index.html'));
+}
+
+/** Standalone public giveaway pages (not the Expo SPA shell). */
+const giveawaySrc = path.join(publicDir, 'giveaway');
+if (fs.existsSync(giveawaySrc)) {
+  copyDir(giveawaySrc, path.join(dest, 'giveaway'));
+}
+
+fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, '404.html'));
+
+// Optional local convenience copy to repo root (does not overwrite api/)
 for (const name of ['_expo', 'assets']) {
   const from = path.join(dest, name);
   if (fs.existsSync(from)) copyDir(from, path.join(root, name));
@@ -125,6 +133,9 @@ for (const name of brandFiles) {
 for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
   fs.mkdirSync(path.join(root, p), { recursive: true });
   fs.copyFileSync(path.join(dest, 'index.html'), path.join(root, p, 'index.html'));
+}
+if (fs.existsSync(path.join(dest, 'giveaway'))) {
+  copyDir(path.join(dest, 'giveaway'), path.join(root, 'giveaway'));
 }
 fs.copyFileSync(path.join(dest, 'index.html'), path.join(root, '404.html'));
 
