@@ -79,11 +79,89 @@ export async function fetchLicenseStatus(): Promise<{
   }
 }
 
+export type CaptchaPublicConfig = {
+  provider: 'checkbox' | 'turnstile' | 'recaptcha' | string;
+  siteKey: string | null;
+};
+
+/** Public captcha provider (checkbox fallback when no Turnstile/reCAPTCHA keys). */
+export async function fetchCaptchaConfig(): Promise<{
+  ok: boolean;
+  captcha?: CaptchaPublicConfig;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`${apiBase()}/api/licenses/challenge`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    const captcha = data.captcha as CaptchaPublicConfig | undefined;
+    return {
+      ok: Boolean(data.ok),
+      captcha: captcha || { provider: 'checkbox', siteKey: null },
+      error: data.error ? safeMessageFromApiBody(data, 'portal') : undefined,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      captcha: { provider: 'checkbox', siteKey: null },
+      error: toSafeUserMessage(err, 'portal'),
+    };
+  }
+}
+
+/**
+ * After the mentor ticks “I’m not a robot”, mint a short-lived challenge token
+ * (checkbox provider). Turnstile/reCAPTCHA use the widget response instead.
+ */
+export async function issueCheckboxChallenge(opts?: {
+  actorEmail?: string | null;
+}): Promise<{ ok: boolean; token?: string; error?: string; provider?: string }> {
+  try {
+    const res = await fetch(`${apiBase()}/api/licenses/challenge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        checked: true,
+        actorEmail: opts?.actorEmail || null,
+      }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: false,
+        error: safeMessageFromApiBody(data, 'portal'),
+        provider: data.provider ? String(data.provider) : undefined,
+      };
+    }
+    const token = typeof data.token === 'string' ? data.token : '';
+    if (!token) {
+      return {
+        ok: false,
+        error: 'Challenge token missing — complete the robot check widget',
+        provider: data.provider ? String(data.provider) : undefined,
+      };
+    }
+    return {
+      ok: true,
+      token,
+      provider: data.provider ? String(data.provider) : 'checkbox',
+    };
+  } catch (err) {
+    return { ok: false, error: toSafeUserMessage(err, 'portal') };
+  }
+}
+
 /** Push one EA + key to server (tables or Storage). */
 export async function putLicenseRemote(
   key: StoredLicenseKey & { regenerate?: boolean },
   ea?: StoredEa | null,
-  opts?: { actorEmail?: string | null },
+  opts?: {
+    actorEmail?: string | null;
+    generate?: boolean;
+    challengeToken?: string | null;
+  },
 ): Promise<RemoteSyncResult> {
   const actorEmail =
     opts?.actorEmail || key.issuedByEmail || ea?.ownerEmail || null;
@@ -93,6 +171,8 @@ export async function putLicenseRemote(
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
         actorEmail,
+        generate: Boolean(opts?.generate),
+        challengeToken: opts?.challengeToken || undefined,
         key: {
           id: key.id,
           eaId: key.eaId,

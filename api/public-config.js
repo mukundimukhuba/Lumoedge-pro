@@ -1,4 +1,5 @@
 const { applyCors, json } = require('./_lib/cors');
+const { publicCaptchaConfig } = require('./_lib/humanChallenge');
 
 /**
  * Public client config for Expo web when build-time `extra` omitted the anon key.
@@ -58,5 +59,6 @@ module.exports = async function handler(req, res) {
     // Mentor register/list/approve use /api/mentors/* with service role when
     // the browser anon key is missing (common on Vercel).
     mentorApiConfigured: serviceRoleConfigured,
+    captcha: publicCaptchaConfig(),
   });
 };

@@ -628,6 +628,11 @@ export type SyncIssuedResult = CatalogPushResult & {
 export async function syncIssuedLicenseRemote(
   key: StoredLicenseKey,
   ea?: StoredEa | null,
+  opts?: {
+    generate?: boolean;
+    challengeToken?: string | null;
+    actorEmail?: string | null;
+  },
 ): Promise<SyncIssuedResult> {
   try {
     // Client-side upload first (anon) so put body is already http when possible.
@@ -650,7 +655,11 @@ export async function syncIssuedLicenseRemote(
     };
 
     const { putLicenseRemote } = await import('./licenses/remoteApi');
-    const result = await putLicenseRemote(keyOut, eaOut);
+    const result = await putLicenseRemote(keyOut, eaOut, {
+      actorEmail: opts?.actorEmail || key.issuedByEmail || ea?.ownerEmail || null,
+      generate: Boolean(opts?.generate),
+      challengeToken: opts?.challengeToken || null,
+    });
     if (result.ok) {
       const durableKeyPic =
         result.keyPictureUri ||

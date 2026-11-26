@@ -239,6 +239,7 @@ type AppStateValue = {
       duration: string;
       subscriptionId?: string | null;
       regenerate?: boolean;
+      challengeToken?: string | null;
     },
   ) => Promise<{
     key: LicenseKey;
@@ -1177,7 +1178,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     if (!liveEa.ownerEmail && issuer) {
       liveEa.ownerEmail = issuer;
     }
-    const remote = await syncIssuedLicenseRemote(rowForRemote, liveEa);
+    const remote = await syncIssuedLicenseRemote(rowForRemote, liveEa, {
+      generate: true,
+      challengeToken: assignee.challengeToken || null,
+      actorEmail: issuer,
+    });
     // Prefer durable http URLs returned from sync so Activate/Home never lose the logo.
     if (remote.keyPictureUri || remote.eaPictureUri) {
       const durable =

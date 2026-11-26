@@ -13,16 +13,19 @@ const {
   isSuperAdmin,
   assertCanWriteOwnedRow,
 } = require('../_lib/mentorScope');
+const { verifyChallengeToken } = require('../_lib/humanChallenge');
 
 /**
  * POST /api/licenses/put
- * Body: { ea?: {...}, key: {...}, actorEmail? }
+ * Body: { ea?: {...}, key: {...}, actorEmail?, generate?, challengeToken? }
  * Writes EA + license key to Supabase tables when present; otherwise
  * durable Storage fallback under ea-pictures/catalog/.
  * Data-URL logos are uploaded to Storage and stored as public http URLs
  * (never stripped to null without attempting upload).
  * Portal writes must stamp issued_by_email / owner_email; cross-mentor
  * overwrites of another mentor’s EA are rejected.
+ * When generate=true (Mentors Portal Generate License Key), challengeToken
+ * is required and verified server-side (checkbox HMAC / Turnstile / reCAPTCHA).
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -57,6 +60,28 @@ module.exports = async function handler(req, res) {
       ok: false,
       error: 'key object with id + key is required',
     });
+  }
+
+  const isGenerate = Boolean(body.generate || keyIn.generate);
+  if (isGenerate) {
+    const challenge =
+      body.challengeToken ||
+      body.challenge_token ||
+      keyIn.challengeToken ||
+      keyIn.challenge_token ||
+      '';
+    const remoteip =
+      req.headers['x-forwarded-for']?.toString().split(',')[0]?.trim() ||
+      req.headers['x-real-ip'] ||
+      undefined;
+    const gate = await verifyChallengeToken(challenge, { remoteip });
+    if (!gate.ok) {
+      return json(res, 403, {
+        ok: false,
+        error: gate.error || 'Robot check required',
+        code: 'challenge_required',
+      });
+    }
   }
 
   const keyNorm = normalizeLicenseKey(keyIn.key);
