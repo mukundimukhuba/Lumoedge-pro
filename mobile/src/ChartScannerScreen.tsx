@@ -866,7 +866,11 @@ function LotTradesFields({
 }
 
 export function ChartScannerScreen() {
-  const params = useLocalSearchParams<{ proof?: string; demo?: string }>();
+  const params = useLocalSearchParams<{
+    proof?: string;
+    demo?: string;
+    execPopup?: string;
+  }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
   const { accent, selected, quoteSetups, activeEa, getQuoteSetup } =
@@ -1087,6 +1091,63 @@ export function ChartScannerScreen() {
     // Accept legacy ?demo=1 as an alias for internal proof charts only.
     if (params.proof !== '1' && params.demo !== '1') return;
     proofStarted.current = true;
+    // ?execPopup=1 — UI harness for Execute trades now? (gate-passed mock).
+    if (params.execPopup === '1') {
+      const t = setTimeout(() => {
+        const sym = resolveSymbol('XAUUSD.cent');
+        setSymbol(sym);
+        setTimeframe('H1');
+        setLotRaw('0.01');
+        setTradesRaw('1');
+        setExecuteTradesRaw('2');
+        setChartUri(null);
+        setRadarStatus('SIGNAL DETECTED');
+        setStage2('done');
+        setStage3('done');
+        setStage4('done');
+        setStage5('done');
+        setStage6('idle');
+        setAutoOpenTrades(false);
+        setOutcome({
+          bias: 'Buy',
+          confidence: 90,
+          timeframe: 'H1',
+          tp: '—',
+          sl: '—',
+          entry: '2650.00',
+          side: 'buy',
+          entryNum: 2650,
+          stopNum: 2640,
+          tpNums: [2660, 2670, 2680],
+          explanation:
+            'Proof harness: gate-passed Buy for Execute trades now? UI.',
+          autoTradeAllowed: true,
+          autoTradeReasons: [],
+          skipReason: null,
+          demo: false,
+          source: 'local',
+          mt5Live: true,
+        });
+        setHistory([
+          {
+            id: 'proof_hist_1',
+            symbol: sym,
+            timeframe: 'H1',
+            bias: 'Buy',
+            confidence: 90,
+            message: 'Proof history row',
+            lotSize: 0.01,
+            trades: 1,
+            tp: '2660 / 2670 / 2680',
+            sl: '2640',
+            chartUri: null,
+            at: new Date().toISOString(),
+          },
+        ]);
+        setExecutePromptOpen(true);
+      }, 250);
+      return () => clearTimeout(t);
+    }
     const t = setTimeout(() => {
       void (async () => {
         const uri = await buildProofChartUri('XAUUSD', 'H1');
@@ -1094,7 +1155,7 @@ export function ChartScannerScreen() {
       })();
     }, 200);
     return () => clearTimeout(t);
-  }, [params.proof, params.demo]);
+  }, [params.proof, params.demo, params.execPopup]);
 
   const beginPick = async (mode: 'library' | 'camera') => {
     // Never block on radar INITIALISING / sweep — picker is always available.
