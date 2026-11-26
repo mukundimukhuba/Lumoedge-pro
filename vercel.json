@@ -2,6 +2,12 @@
   "installCommand": "npm install --prefix mobile",
   "buildCommand": "npm run export:web",
   "outputDirectory": "dist-web",
+  "functions": {
+    "api/brokers/connect.js": { "maxDuration": 60 },
+    "api/brokers/health.js": { "maxDuration": 15 },
+    "api/brokers/account.js": { "maxDuration": 30 },
+    "api/brokers/order.js": { "maxDuration": 30 }
+  },
   "rewrites": [
     { "source": "/portal", "destination": "/portal/index.html" },
     { "source": "/portal/", "destination": "/portal/index.html" },

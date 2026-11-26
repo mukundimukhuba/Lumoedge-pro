@@ -21,8 +21,10 @@ import { EdgesBottomDock } from './EdgesBottomDock';
 import {
   connectBrokerApi,
   fetchBrokerAccount,
+  fetchBrokerBridgeHealth,
   searchBrokersApi,
   type BrokerAccount,
+  type BrokerBridgeHealth,
 } from './brokers/api';
 import {
   BROKERS,
@@ -381,8 +383,12 @@ export function ConnectBrokerScreen() {
   const [apiSource, setApiSource] = useState<'local' | 'upstream' | 'offline'>(
     'local',
   );
+  const [bridgeHealth, setBridgeHealth] = useState<BrokerBridgeHealth | null>(
+    null,
+  );
   const searchGen = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bridgePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const servers = useMemo(
     () => (selected ? getBrokerServers(selected) : []),
@@ -478,6 +484,32 @@ export function ConnectBrokerScreen() {
     };
   }, [sessionId, connected]);
 
+  // Bridge health — durable status, never pretend the droplet is up
+  useEffect(() => {
+    if (bridgePollRef.current) {
+      clearInterval(bridgePollRef.current);
+      bridgePollRef.current = null;
+    }
+    if (connected || restoring) return;
+
+    let cancelled = false;
+    const tick = () => {
+      void (async () => {
+        const next = await fetchBrokerBridgeHealth();
+        if (!cancelled) setBridgeHealth(next);
+      })();
+    };
+    tick();
+    bridgePollRef.current = setInterval(tick, 20000);
+    return () => {
+      cancelled = true;
+      if (bridgePollRef.current) {
+        clearInterval(bridgePollRef.current);
+        bridgePollRef.current = null;
+      }
+    };
+  }, [connected, restoring]);
+
   const pickBroker = (name: string) => {
     setSelected(name);
     setQuery(name);
@@ -538,6 +570,18 @@ export function ConnectBrokerScreen() {
     setConnecting(true);
     void (async () => {
       try {
+        const health = await fetchBrokerBridgeHealth();
+        setBridgeHealth(health);
+        if (!health.ok) {
+          setError(
+            health.error ||
+              'MT5 bridge is down. Connect cannot succeed until /health answers.',
+          );
+          setConnected(false);
+          setSessionId(null);
+          setAccount(null);
+          return;
+        }
         const res = await connectBrokerApi({
           broker: selected,
           server: server.trim(),
@@ -580,8 +624,12 @@ export function ConnectBrokerScreen() {
         );
         // Account fetched live via poll — never trust seeded connect payload
         setAccount(null);
-      } catch {
-        setError('Broker API unreachable. Try again.');
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? `Broker API unreachable: ${err.message}`
+            : 'Broker API unreachable. Try again.',
+        );
         setConnected(false);
         setSessionId(null);
         setAccount(null);
@@ -647,6 +695,30 @@ export function ConnectBrokerScreen() {
                     : ' · local catalog'
               }.`}
         </Text>
+
+        {!restoring && !connected && bridgeHealth ? (
+          <Text
+            style={[
+              styles.bridgeHealth,
+              {
+                color: bridgeHealth.ok ? BASE.green : BASE.red,
+              },
+            ]}
+            accessibilityLabel={
+              bridgeHealth.ok
+                ? 'MT5 bridge healthy'
+                : 'MT5 bridge unhealthy'
+            }
+          >
+            {bridgeHealth.ok
+              ? `MT5 bridge ready${
+                  typeof bridgeHealth.latencyMs === 'number'
+                    ? ` · ${bridgeHealth.latencyMs}ms`
+                    : ''
+                }`
+              : 'MT5 bridge down — fix droplet /health before Connect'}
+          </Text>
+        ) : null}
 
         {restoring ? (
           <Text
@@ -1143,6 +1215,11 @@ const styles = StyleSheet.create({
     color: BASE.muted,
     fontSize: 13,
     lineHeight: 18,
+  },
+  bridgeHealth: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   sectionLabel: {
     color: BASE.muted,

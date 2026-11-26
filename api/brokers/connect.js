@@ -4,10 +4,11 @@ const { connectLiveMt5 } = require('../_lib/mt5Live');
 /**
  * POST /api/brokers/connect
  * Body: { broker, server, login, password }
- * Forwards to lumoedge.com /api/mt5/connect. Returns live MT5 token as id.
+ * Forwards to mt5rest ConnectEx (or legacy lumoedge bridge). Returns live MT5 token as id.
  * Never logs password. Never invents demo balance/trades.
+ * Preflights bridge /health so a hung droplet fails fast with a clear error.
  */
-module.exports = async function handler(req, res) {
+async function handler(req, res) {
   applyCors(res);
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
@@ -54,6 +55,7 @@ module.exports = async function handler(req, res) {
     return json(res, result.status || 502, {
       ok: false,
       error: result.error || 'MT5 connect failed',
+      bridge: result.bridge || undefined,
     });
   }
 
@@ -72,4 +74,7 @@ module.exports = async function handler(req, res) {
     // Account is fetched live via /api/brokers/account?id= — never seeded here
     account: null,
   });
-};
+}
+
+module.exports = handler;
+module.exports.config = { maxDuration: 60 };

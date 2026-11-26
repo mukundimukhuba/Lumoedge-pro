@@ -95,6 +95,65 @@ export async function searchBrokersApi(
   return data;
 }
 
+export type BrokerBridgeHealth = {
+  ok: boolean;
+  configured?: boolean;
+  reachable?: boolean;
+  latencyMs?: number;
+  path?: string;
+  detail?: string;
+  error?: string;
+  mode?: string;
+};
+
+/** Probe server-side MT5 bridge /health — never treats failure as success. */
+export async function fetchBrokerBridgeHealth(): Promise<BrokerBridgeHealth> {
+  const root = getBrokersApiRoot();
+  const url = new URL('/api/brokers/health', root || 'http://127.0.0.1');
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
+    let data: BrokerBridgeHealth = { ok: false };
+    try {
+      data = (await res.json()) as BrokerBridgeHealth;
+    } catch {
+      data = { ok: false, error: `Bridge health unreadable (${res.status})` };
+    }
+    if (!res.ok || !data.ok) {
+      return {
+        ok: false,
+        configured: data.configured,
+        reachable: false,
+        latencyMs: data.latencyMs,
+        detail: data.detail,
+        error:
+          String(data.error || '').trim() ||
+          `MT5 bridge unhealthy (${res.status})`,
+        mode: data.mode,
+      };
+    }
+    return data;
+  } catch (err) {
+    return {
+      ok: false,
+      reachable: false,
+      error:
+        err instanceof Error && err.name === 'AbortError'
+          ? 'MT5 bridge health timed out'
+          : err instanceof Error
+            ? `MT5 bridge health unreachable: ${err.message}`
+            : 'MT5 bridge health unreachable',
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function connectBrokerApi(input: {
   broker: string;
   server: string;
@@ -103,28 +162,51 @@ export async function connectBrokerApi(input: {
 }): Promise<BrokerConnectResponse> {
   const root = getBrokersApiRoot();
   const url = new URL('/api/brokers/connect', root || 'http://127.0.0.1');
-  const res = await fetch(url.toString(), {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      broker: input.broker,
-      server: input.server,
-      login: input.login,
-      password: input.password,
-    }),
-  });
-  const data = (await res.json()) as BrokerConnectResponse;
-  if (!res.ok) {
+  const ctrl = new AbortController();
+  // Match server maxDuration (60s) with a little client headroom.
+  const t = setTimeout(() => ctrl.abort(), 65000);
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        broker: input.broker,
+        server: input.server,
+        login: input.login,
+        password: input.password,
+      }),
+      signal: ctrl.signal,
+    });
+    let data: BrokerConnectResponse = { ok: false };
+    try {
+      data = (await res.json()) as BrokerConnectResponse;
+    } catch {
+      data = { ok: false, error: `Connect failed (${res.status})` };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: data.error || `Connect failed (${res.status})`,
+        upstream: data.upstream,
+      };
+    }
+    return data;
+  } catch (err) {
     return {
       ok: false,
-      error: data.error || `Connect failed (${res.status})`,
-      upstream: data.upstream,
+      error:
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Connect timed out waiting for the MT5 bridge. Check bridge health and retry.'
+          : err instanceof Error
+            ? `Broker API unreachable: ${err.message}`
+            : 'Broker API unreachable. Try again.',
     };
+  } finally {
+    clearTimeout(t);
   }
-  return data;
 }
 
 /** MT5 OrderSend comment max length */
