@@ -427,8 +427,8 @@ export function EaControlScreen() {
         <Ionicons name="settings-outline" size={iconSm} color={BASE.white} />
       </Pressable>
 
-      {/* Floating global events chip — always on Home / EA control (above hero). */}
-      <GlobalEventsChip topOffset={safeTop + 8} rightInset={56} />
+      {/* Floating global events orb — always on Home / EA control (above hero). */}
+      <GlobalEventsChip topOffset={safeTop + 8} rightInset={56} accent={accent} />
 
       <ScrollView
         style={styles.scroll}

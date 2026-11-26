@@ -1,33 +1,48 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   listUpcomingSignalEvents,
   type SignalEvent,
 } from './data/signalsApi';
 
+const ORB = 48;
+const RING = 58;
+const BELT = 66;
+const NEON = '#FF2A2A';
+
 /**
- * Floating global events signal chip on EA Home.
- * Always visible (empty state when no upcoming events).
- * Tap opens upcoming events published via Mentors Portal → Add Signal Direction.
+ * Floating global events signal orb on EA Home.
+ * Compact circle + continuous orbital belt; tap opens calendar / signals.
  */
 export function GlobalEventsChip({
   topOffset = 56,
   /** Leave room for settings gear on the right */
   rightInset = 56,
+  accent = NEON,
 }: {
   topOffset?: number;
   rightInset?: number;
+  accent?: string;
 }) {
   const [events, setEvents] = useState<SignalEvent[]>([]);
   const [open, setOpen] = useState(false);
   const [ready, setReady] = useState(false);
+
+  const spin = useRef(new Animated.Value(0)).current;
+  const spinSlow = useRef(new Animated.Value(0)).current;
+  // Web: native driver can stall; match ChartScanner pattern.
+  const nativeAnim = Platform.OS !== 'web';
 
   const load = useCallback(async () => {
     try {
@@ -45,40 +60,139 @@ export function GlobalEventsChip({
     return () => clearInterval(t);
   }, [load]);
 
+  useEffect(() => {
+    const belt = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 7200,
+        easing: Easing.linear,
+        useNativeDriver: nativeAnim,
+      }),
+    );
+    const reverse = Animated.loop(
+      Animated.timing(spinSlow, {
+        toValue: 1,
+        duration: 14000,
+        easing: Easing.linear,
+        useNativeDriver: nativeAnim,
+      }),
+    );
+    belt.start();
+    reverse.start();
+    return () => {
+      belt.stop();
+      reverse.stop();
+    };
+  }, [spin, spinSlow, nativeAnim]);
+
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+  const rotateRev = spinSlow.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['360deg', '0deg'],
+  });
+
   const next = events[0];
   const hasEvents = events.length > 0;
+  const countLabel = !ready ? '…' : hasEvents ? String(events.length) : '0';
+  const statusLabel = !ready
+    ? '…'
+    : hasEvents
+      ? next!.direction.toUpperCase()
+      : 'none';
+
+  const glow = useMemo(
+    () =>
+      Platform.OS === 'web'
+        ? ({
+            boxShadow: `0 0 14px ${accent}88, 0 0 28px ${accent}33`,
+          } as object)
+        : null,
+    [accent],
+  );
 
   return (
     <>
-      <Pressable
-        onPress={() => {
-          void load();
-          setOpen(true);
-        }}
-        style={[
-          styles.chip,
-          { top: topOffset, right: rightInset },
-          !hasEvents && styles.chipEmpty,
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel="Open upcoming events signals"
+      <View
+        style={[styles.anchor, { top: topOffset, right: rightInset }]}
+        pointerEvents="box-none"
       >
-        <Text style={styles.chipLabel}>Events signal</Text>
-        <Text style={styles.chipTitle} numberOfLines={1}>
-          {hasEvents
-            ? `${next!.direction.toUpperCase()}${
-                next!.symbol ? ` · ${next!.symbol}` : ''
-              } · ${next!.title}`
-            : ready
-              ? 'No upcoming events'
-              : 'Loading events…'}
+        <Pressable
+          onPress={() => {
+            void load();
+            setOpen(true);
+          }}
+          style={styles.hit}
+          accessibilityRole="button"
+          accessibilityLabel={
+            hasEvents
+              ? `Open events signals, ${events.length} upcoming`
+              : 'Open upcoming events signals'
+          }
+        >
+          {/* Outer counter-rotating dashed belt */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.belt,
+              {
+                borderColor: `${accent}55`,
+                borderTopColor: accent,
+                borderBottomColor: `${accent}22`,
+                transform: [{ rotate: rotateRev }],
+              },
+            ]}
+          />
+          {/* Primary orbital arc */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.ring,
+              {
+                borderColor: 'transparent',
+                borderTopColor: accent,
+                borderRightColor: `${accent}99`,
+                borderBottomColor: `${accent}33`,
+                transform: [{ rotate }],
+              },
+              glow,
+            ]}
+          />
+          {/* Orb core */}
+          <View
+            style={[
+              styles.orb,
+              {
+                borderColor: hasEvents ? accent : `${accent}99`,
+              },
+              glow,
+            ]}
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={13}
+              color={hasEvents ? accent : '#C4C4C4'}
+            />
+            <Text
+              style={[
+                styles.count,
+                { color: hasEvents ? '#fff' : '#9A9A9A' },
+              ]}
+              numberOfLines={1}
+            >
+              {countLabel}
+            </Text>
+          </View>
+        </Pressable>
+        <Text
+          style={[styles.status, { color: hasEvents ? accent : '#8A8A8A' }]}
+          numberOfLines={1}
+        >
+          {statusLabel}
         </Text>
-        <Text style={styles.chipMeta}>
-          {hasEvents
-            ? `${events.length} upcoming · tap to open`
-            : 'Tap for calendar / signals'}
-        </Text>
-      </Pressable>
+      </View>
 
       <Modal
         visible={open}
@@ -120,7 +234,7 @@ export function GlobalEventsChip({
               )}
             </ScrollView>
             <Pressable
-              style={styles.close}
+              style={[styles.close, { backgroundColor: accent }]}
               onPress={() => setOpen(false)}
               accessibilityRole="button"
             >
@@ -134,33 +248,60 @@ export function GlobalEventsChip({
 }
 
 const styles = StyleSheet.create({
-  chip: {
+  anchor: {
     position: 'absolute',
     left: 12,
     zIndex: 200,
     elevation: 24,
-    borderRadius: 999,
+    width: BELT,
+    alignItems: 'center',
+    ...( { pointerEvents: 'box-none' } as object),
+  },
+  hit: {
+    width: BELT,
+    height: BELT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  belt: {
+    position: 'absolute',
+    width: BELT,
+    height: BELT,
+    borderRadius: BELT / 2,
+    borderWidth: 1.25,
+    borderStyle: 'dashed',
+  },
+  ring: {
+    position: 'absolute',
+    width: RING,
+    height: RING,
+    borderRadius: RING / 2,
+    borderWidth: 2,
+  },
+  orb: {
+    width: ORB,
+    height: ORB,
+    borderRadius: ORB / 2,
     backgroundColor: 'rgba(8, 8, 12, 0.96)',
     borderWidth: 1.5,
-    borderColor: 'rgba(94,200,255,0.75)',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 1,
-    // Keep above hero / settings stacking on web
-    ...( { pointerEvents: 'box-only' } as object),
   },
-  chipEmpty: {
-    borderColor: 'rgba(94,200,255,0.45)',
-  },
-  chipLabel: {
-    color: '#5EC8FF',
-    fontSize: 10,
+  count: {
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
+    letterSpacing: 0.2,
+    lineHeight: 13,
   },
-  chipTitle: { color: '#fff', fontWeight: '800', fontSize: 13 },
-  chipMeta: { color: '#9CA3AF', fontSize: 11 },
+  status: {
+    marginTop: 2,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  },
   scrim: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -190,7 +331,6 @@ const styles = StyleSheet.create({
   close: {
     marginTop: 4,
     borderRadius: 12,
-    backgroundColor: '#7C5CFF',
     paddingVertical: 12,
     alignItems: 'center',
   },
