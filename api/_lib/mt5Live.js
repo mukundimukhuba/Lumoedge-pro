@@ -745,14 +745,16 @@ async function sendLiveOrder({
 }
 
 /**
- * Trim / strip spaces only — never change letter case.
+ * Trim / strip spaces; heal known lowercase suffixes (OCR/API often emit .CENT).
  * Brokers reject OrderSend when suffix case differs from SymbolList
  * (e.g. XAUUSD.cent vs XAUUSD.CENT).
  */
 function preserveBrokerSymbol(symbol) {
-  return String(symbol || '')
+  let s = String(symbol || '')
     .trim()
     .replace(/\s+/g, '');
+  if (/\.cent$/i.test(s)) s = s.replace(/\.cent$/i, '.cent');
+  return s;
 }
 
 /**
