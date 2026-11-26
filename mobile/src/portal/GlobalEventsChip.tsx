@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -16,10 +15,25 @@ import {
   type SignalEvent,
 } from './data/signalsApi';
 
-const ORB = 48;
+const ORB = 46;
 const RING = 58;
-const BELT = 66;
+const BELT = 70;
 const NEON = '#FF2A2A';
+
+/** Web CSS keyframes for a smoother orbital spin than JS Animated. */
+const WEB_SPIN_CSS =
+  Platform.OS === 'web'
+    ? `
+@keyframes lumoEventsOrbSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes lumoEventsOrbSpinRev {
+  from { transform: rotate(360deg); }
+  to { transform: rotate(0deg); }
+}
+`.trim()
+    : '';
 
 /**
  * Floating global events signal orb on EA Home.
@@ -41,8 +55,8 @@ export function GlobalEventsChip({
 
   const spin = useRef(new Animated.Value(0)).current;
   const spinSlow = useRef(new Animated.Value(0)).current;
-  // Web: native driver can stall; match ChartScanner pattern.
   const nativeAnim = Platform.OS !== 'web';
+  const useCssSpin = Platform.OS === 'web';
 
   const load = useCallback(async () => {
     try {
@@ -60,7 +74,19 @@ export function GlobalEventsChip({
     return () => clearInterval(t);
   }, [load]);
 
+  // Inject CSS keyframes once on web for premium continuous spin.
   useEffect(() => {
+    if (!useCssSpin || typeof document === 'undefined') return;
+    const id = 'lumo-events-orb-spin-css';
+    if (document.getElementById(id)) return;
+    const el = document.createElement('style');
+    el.id = id;
+    el.textContent = WEB_SPIN_CSS;
+    document.head.appendChild(el);
+  }, [useCssSpin]);
+
+  useEffect(() => {
+    if (useCssSpin) return;
     const belt = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
@@ -83,7 +109,7 @@ export function GlobalEventsChip({
       belt.stop();
       reverse.stop();
     };
-  }, [spin, spinSlow, nativeAnim]);
+  }, [spin, spinSlow, nativeAnim, useCssSpin]);
 
   const rotate = spin.interpolate({
     inputRange: [0, 1],
@@ -107,11 +133,22 @@ export function GlobalEventsChip({
     () =>
       Platform.OS === 'web'
         ? ({
-            boxShadow: `0 0 14px ${accent}88, 0 0 28px ${accent}33`,
+            boxShadow: `0 0 12px ${accent}77, 0 0 22px ${accent}33`,
           } as object)
         : null,
     [accent],
   );
+
+  const cssSpin = useCssSpin
+    ? ({
+        animation: 'lumoEventsOrbSpin 7.2s linear infinite',
+      } as object)
+    : null;
+  const cssSpinRev = useCssSpin
+    ? ({
+        animation: 'lumoEventsOrbSpinRev 14s linear infinite',
+      } as object)
+    : null;
 
   return (
     <>
@@ -132,20 +169,20 @@ export function GlobalEventsChip({
               : 'Open upcoming events signals'
           }
         >
-          {/* Outer counter-rotating dashed belt */}
+          {/* Outer dashed counter-rotating belt */}
           <Animated.View
             pointerEvents="none"
             style={[
               styles.belt,
               {
-                borderColor: `${accent}55`,
-                borderTopColor: accent,
-                borderBottomColor: `${accent}22`,
-                transform: [{ rotate: rotateRev }],
+                borderColor: `${accent}AA`,
               },
+              useCssSpin
+                ? cssSpinRev
+                : { transform: [{ rotate: rotateRev }] },
             ]}
           />
-          {/* Primary orbital arc */}
+          {/* Bright orbital arc (comet segment) */}
           <Animated.View
             pointerEvents="none"
             style={[
@@ -153,11 +190,27 @@ export function GlobalEventsChip({
               {
                 borderColor: 'transparent',
                 borderTopColor: accent,
-                borderRightColor: `${accent}99`,
-                borderBottomColor: `${accent}33`,
-                transform: [{ rotate }],
+                borderRightColor: `${accent}CC`,
+                borderBottomColor: `${accent}22`,
               },
-              glow,
+              useCssSpin ? cssSpin : { transform: [{ rotate }] },
+            ]}
+          />
+          {/* Soft trailing tick on a second phase */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.tick,
+              {
+                borderColor: 'transparent',
+                borderLeftColor: `${accent}EE`,
+              },
+              useCssSpin
+                ? ({
+                    animation: 'lumoEventsOrbSpin 7.2s linear infinite',
+                    animationDelay: '-1.8s',
+                  } as object)
+                : { transform: [{ rotate }] },
             ]}
           />
           {/* Orb core */}
@@ -165,7 +218,7 @@ export function GlobalEventsChip({
             style={[
               styles.orb,
               {
-                borderColor: hasEvents ? accent : `${accent}99`,
+                borderColor: hasEvents ? accent : `${accent}BB`,
               },
               glow,
             ]}
@@ -194,55 +247,53 @@ export function GlobalEventsChip({
         </Text>
       </View>
 
-      <Modal
-        visible={open}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setOpen(false)}
-      >
-        <Pressable style={styles.scrim} onPress={() => setOpen(false)}>
-          <Pressable
-            style={styles.sheet}
-            onPress={(e) => e.stopPropagation?.()}
-          >
-            <Text style={styles.sheetTitle}>Upcoming events</Text>
-            <Text style={styles.sheetHint}>
-              Published from Mentors Portal → Add Signal Direction
-            </Text>
-            <ScrollView style={{ maxHeight: 360 }}>
-              {events.length === 0 ? (
-                <Text style={styles.empty}>
-                  No upcoming events yet. When a mentor publishes a direction,
-                  it appears here for everyone.
-                </Text>
-              ) : (
-                events.map((e) => (
-                  <View key={e.id} style={styles.row}>
-                    <Text style={styles.rowTitle}>{e.title}</Text>
-                    <Text style={styles.rowMeta}>
-                      {e.direction.toUpperCase()}
-                      {e.symbol ? ` · ${e.symbol}` : ''}
-                    </Text>
-                    <Text style={styles.rowMeta}>
-                      {new Date(e.startsAt).toLocaleString()}
-                    </Text>
-                    {e.note ? (
-                      <Text style={styles.rowNote}>{e.note}</Text>
-                    ) : null}
-                  </View>
-                ))
-              )}
-            </ScrollView>
+      {/* In-tree overlay (not RN Modal) so it stays inside phone chrome on web. */}
+      {open ? (
+        <View style={styles.overlayRoot} pointerEvents="box-none">
+          <Pressable style={styles.scrim} onPress={() => setOpen(false)}>
             <Pressable
-              style={[styles.close, { backgroundColor: accent }]}
-              onPress={() => setOpen(false)}
-              accessibilityRole="button"
+              style={[styles.sheet, { borderColor: `${accent}55` }]}
+              onPress={(e) => e.stopPropagation?.()}
             >
-              <Text style={styles.closeText}>Close</Text>
+              <Text style={styles.sheetTitle}>Upcoming events</Text>
+              <Text style={styles.sheetHint}>
+                Published from Mentors Portal → Add Signal Direction
+              </Text>
+              <ScrollView style={{ maxHeight: 320 }}>
+                {events.length === 0 ? (
+                  <Text style={styles.empty}>
+                    No upcoming events yet. When a mentor publishes a
+                    direction, it appears here for everyone.
+                  </Text>
+                ) : (
+                  events.map((e) => (
+                    <View key={e.id} style={styles.row}>
+                      <Text style={styles.rowTitle}>{e.title}</Text>
+                      <Text style={styles.rowMeta}>
+                        {e.direction.toUpperCase()}
+                        {e.symbol ? ` · ${e.symbol}` : ''}
+                      </Text>
+                      <Text style={styles.rowMeta}>
+                        {new Date(e.startsAt).toLocaleString()}
+                      </Text>
+                      {e.note ? (
+                        <Text style={styles.rowNote}>{e.note}</Text>
+                      ) : null}
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+              <Pressable
+                style={[styles.close, { backgroundColor: accent }]}
+                onPress={() => setOpen(false)}
+                accessibilityRole="button"
+              >
+                <Text style={styles.closeText}>Close</Text>
+              </Pressable>
             </Pressable>
           </Pressable>
-        </Pressable>
-      </Modal>
+        </View>
+      ) : null}
     </>
   );
 }
@@ -255,6 +306,7 @@ const styles = StyleSheet.create({
     elevation: 24,
     width: BELT,
     alignItems: 'center',
+    overflow: 'visible',
     ...( { pointerEvents: 'box-none' } as object),
   },
   hit: {
@@ -262,13 +314,14 @@ const styles = StyleSheet.create({
     height: BELT,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'visible',
   },
   belt: {
     position: 'absolute',
     width: BELT,
     height: BELT,
     borderRadius: BELT / 2,
-    borderWidth: 1.25,
+    borderWidth: 1.5,
     borderStyle: 'dashed',
   },
   ring: {
@@ -276,6 +329,13 @@ const styles = StyleSheet.create({
     width: RING,
     height: RING,
     borderRadius: RING / 2,
+    borderWidth: 2.5,
+  },
+  tick: {
+    position: 'absolute',
+    width: RING + 4,
+    height: RING + 4,
+    borderRadius: (RING + 4) / 2,
     borderWidth: 2,
   },
   orb: {
@@ -302,19 +362,25 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     textAlign: 'center',
   },
+  overlayRoot: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 400,
+    elevation: 40,
+  },
   scrim: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.72)',
     justifyContent: 'center',
-    padding: 20,
+    padding: 18,
   },
   sheet: {
     backgroundColor: '#12151C',
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#1F2937',
     padding: 16,
     gap: 10,
+    maxWidth: '100%',
+    alignSelf: 'stretch',
   },
   sheetTitle: { color: '#fff', fontWeight: '900', fontSize: 18 },
   sheetHint: { color: '#9CA3AF', fontSize: 12, marginTop: -4 },
