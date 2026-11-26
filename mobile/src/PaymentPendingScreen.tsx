@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Linking,
@@ -30,6 +30,7 @@ const CYAN = '#38BDF8';
  * Client payment-approval wait only (NOT mentor /portal/pending).
  * Pending = registered in Supabase; payment is verified manually by Super Admin.
  * No payment-site callbacks or auto-linking.
+ * Never render when subscription is already active/approved (AN-132).
  */
 export function PaymentPendingScreen() {
   const insets = useSafeAreaInsets();
@@ -47,8 +48,27 @@ export function PaymentPendingScreen() {
   const sub = clientSubscription as SubscriptionRow | null;
   const checkoutPending = isCapePulseCheckoutPending(sub);
   const status = String(sub?.status || 'pending').toLowerCase();
-  const declined = status === 'declined';
-  const expired = status === 'expired';
+  const usable = isSubscriptionUsable(status);
+  const declined = !usable && status === 'declined';
+  const expired = !usable && status === 'expired';
+
+  // If a refresh already flipped us to active/approved, leave this screen
+  // immediately — never keep showing Pending/Declined over usable access.
+  useEffect(() => {
+    if (usable) return;
+    void refreshClientSubscription();
+  }, [usable, refreshClientSubscription]);
+
+  if (usable) {
+    return (
+      <View style={[styles.root, { paddingTop: insets.top + 24 }]}>
+        <Text style={styles.title}>Approved — continuing…</Text>
+        <Text style={styles.body}>
+          Your subscription is active. Opening license access…
+        </Text>
+      </View>
+    );
+  }
 
   const title = declined
     ? 'Payment declined'

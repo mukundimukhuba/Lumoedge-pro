@@ -701,9 +701,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     clientSubscription?.status,
   );
 
+  // Active/approved must never route to PaymentPending/Declined screens.
   const isClientPaymentPending = Boolean(
     isGenuineClientSubscription(clientSubscription) &&
-      !canAccessLicenseSection,
+      !isSubscriptionUsable(clientSubscription?.status),
   );
 
   const beginClientCheckout: AppStateValue['beginClientCheckout'] = async ({

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useAppState } from '../../AppState';
 import { DEMO_MENTOR_EMAIL } from '../../auth/mentorAuth';
 import {
@@ -20,6 +20,15 @@ const RED = '#EF4444';
 
 type FilterTab = 'pending' | 'approved' | 'declined';
 
+function emailMatches(row: SubscriptionRow, query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return String(row.clientEmail || '')
+    .trim()
+    .toLowerCase()
+    .includes(q);
+}
+
 export function SubscriptionsPanel() {
   const { mentor } = useAppState();
   const [rows, setRows] = useState<SubscriptionRow[]>([]);
@@ -27,6 +36,7 @@ export function SubscriptionsPanel() {
   const [err, setErr] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterTab>('pending');
+  const [emailQuery, setEmailQuery] = useState('');
 
   const isAdmin =
     (mentor?.email || '').trim().toLowerCase() === DEMO_MENTOR_EMAIL;
@@ -55,11 +65,25 @@ export function SubscriptionsPanel() {
 
   const buckets = useMemo(() => partitionAdminSubscriptions(rows), [rows]);
 
+  const searching = Boolean(emailQuery.trim());
+
   const visible = useMemo(() => {
+    // Email search spans Pending / Approved / Declined so mentors can find a
+    // client without flipping tabs (e.g. already approved vs still pending).
+    if (searching) {
+      const pooled = [
+        ...buckets.pending,
+        ...buckets.approved,
+        ...buckets.declined,
+      ].filter((row) => emailMatches(row, emailQuery));
+      return pooled.sort((a, b) =>
+        String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
+      );
+    }
     if (filter === 'approved') return buckets.approved;
     if (filter === 'declined') return buckets.declined;
     return buckets.pending;
-  }, [buckets, filter]);
+  }, [buckets, filter, emailQuery, searching]);
 
   if (!isAdmin) {
     return (
@@ -109,8 +133,9 @@ export function SubscriptionsPanel() {
     await load();
   };
 
-  const emptyLabel =
-    filter === 'pending'
+  const emptyLabel = searching
+    ? `No clients match “${emailQuery.trim()}”.`
+    : filter === 'pending'
       ? 'No pending payment reviews.'
       : filter === 'approved'
         ? 'No approved or active subscriptions.'
@@ -124,10 +149,28 @@ export function SubscriptionsPanel() {
         access; decline blocks license generation for that client.
       </Text>
 
+      <TextInput
+        style={styles.search}
+        value={emailQuery}
+        onChangeText={setEmailQuery}
+        placeholder="Search by client email…"
+        placeholderTextColor="#6B7280"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="email-address"
+        accessibilityLabel="Search clients by email"
+      />
+
       <View style={styles.filterRow}>
         <Pressable
-          style={[styles.filterBtn, filter === 'pending' && styles.filterOn]}
-          onPress={() => setFilter('pending')}
+          style={[
+            styles.filterBtn,
+            !searching && filter === 'pending' && styles.filterOn,
+          ]}
+          onPress={() => {
+            setFilter('pending');
+            setEmailQuery('');
+          }}
           accessibilityRole="button"
           accessibilityLabel="Pending subscriptions"
         >
@@ -136,8 +179,14 @@ export function SubscriptionsPanel() {
           </Text>
         </Pressable>
         <Pressable
-          style={[styles.filterBtn, filter === 'approved' && styles.filterOn]}
-          onPress={() => setFilter('approved')}
+          style={[
+            styles.filterBtn,
+            !searching && filter === 'approved' && styles.filterOn,
+          ]}
+          onPress={() => {
+            setFilter('approved');
+            setEmailQuery('');
+          }}
           accessibilityRole="button"
           accessibilityLabel="Approved subscriptions"
         >
@@ -146,8 +195,14 @@ export function SubscriptionsPanel() {
           </Text>
         </Pressable>
         <Pressable
-          style={[styles.filterBtn, filter === 'declined' && styles.filterOn]}
-          onPress={() => setFilter('declined')}
+          style={[
+            styles.filterBtn,
+            !searching && filter === 'declined' && styles.filterOn,
+          ]}
+          onPress={() => {
+            setFilter('declined');
+            setEmailQuery('');
+          }}
           accessibilityRole="button"
           accessibilityLabel="Declined subscriptions"
         >
@@ -156,6 +211,13 @@ export function SubscriptionsPanel() {
           </Text>
         </Pressable>
       </View>
+
+      {searching ? (
+        <Text style={styles.searchMeta}>
+          Searching all tabs · {visible.length} match
+          {visible.length === 1 ? '' : 'es'}
+        </Text>
+      ) : null}
 
       {msg ? <Text style={styles.msg}>{msg}</Text> : null}
       {err ? <Text style={styles.err}>{err}</Text> : null}
@@ -169,6 +231,7 @@ export function SubscriptionsPanel() {
           const busy = busyId === row.id;
           const status = String(row.status || '').toLowerCase();
           const alreadyActive = isSubscriptionUsable(status);
+          const canReview = status === 'pending' && !alreadyActive;
           const statusLabel = displaySubscriptionStatus(row.status);
           return (
             <View key={row.id} style={styles.card}>
@@ -211,7 +274,7 @@ export function SubscriptionsPanel() {
                 </Text>
               ) : null}
 
-              {filter === 'pending' && !alreadyActive ? (
+              {canReview ? (
                 <View style={styles.actions}>
                   <Pressable
                     style={[styles.btn, styles.approve, busy && styles.disabled]}
@@ -244,6 +307,17 @@ export function SubscriptionsPanel() {
 const styles = StyleSheet.create({
   wrap: { gap: 10, marginTop: 6 },
   hint: { color: '#9CA3AF', fontSize: 13, lineHeight: 18 },
+  search: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#fff',
+    backgroundColor: '#0B0E14',
+    fontSize: 16, // iOS Safari zooms inputs under 16px
+  },
+  searchMeta: { color: '#9CA3AF', fontSize: 12 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   filterBtn: {
     borderRadius: 10,
