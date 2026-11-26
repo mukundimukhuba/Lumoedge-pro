@@ -305,6 +305,82 @@ export async function sendBrokerOrder(
   }
 }
 
+export type BrokerSymbol = {
+  symbol: string;
+  category: string;
+  description: string;
+  group?: string;
+};
+
+export type BrokerSymbolsResponse = {
+  ok: boolean;
+  symbols: BrokerSymbol[];
+  total?: number;
+  source?: string;
+  q?: string;
+  error?: string;
+};
+
+/**
+ * Live symbols for a connected MT5 session — proxies mt5rest SymbolList /
+ * SymbolParamsMany via `/api/brokers/symbols`. Never invents a broker list.
+ */
+export async function searchBrokerSymbols(
+  mt5Id: string,
+  query = '',
+  limit = 48,
+): Promise<BrokerSymbolsResponse> {
+  const root = getBrokersApiRoot();
+  const url = new URL('/api/brokers/symbols', root || 'http://127.0.0.1');
+  url.searchParams.set('id', mt5Id);
+  if (query.trim()) url.searchParams.set('q', query.trim());
+  url.searchParams.set('limit', String(limit));
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: ctrl.signal,
+    });
+    let data: BrokerSymbolsResponse = { ok: false, symbols: [] };
+    try {
+      data = (await res.json()) as BrokerSymbolsResponse;
+    } catch {
+      data = { ok: false, symbols: [], error: `Symbols failed (${res.status})` };
+    }
+    if (!res.ok || data.ok === false) {
+      return {
+        ok: false,
+        symbols: Array.isArray(data.symbols) ? data.symbols : [],
+        error:
+          String(data.error || '').trim() ||
+          `Symbols failed (${res.status})`,
+      };
+    }
+    return {
+      ok: true,
+      symbols: Array.isArray(data.symbols) ? data.symbols : [],
+      total: data.total,
+      source: data.source || 'mt5-live',
+      q: data.q,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      symbols: [],
+      error:
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Symbol search timed out'
+          : err instanceof Error
+            ? `Symbol search unreachable: ${err.message}`
+            : 'Symbol search unreachable',
+    };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 /**
  * Live account poll — uses connect token as `id` (MT5 session).
  * Always times out so restore/poll never hang forever.

@@ -15,6 +15,7 @@ const connectHandler = require(path.join(__dirname, 'brokers', 'connect.js'));
 const healthHandler = require(path.join(__dirname, 'brokers', 'health.js'));
 const accountHandler = require(path.join(__dirname, 'brokers', 'account.js'));
 const orderHandler = require(path.join(__dirname, 'brokers', 'order.js'));
+const symbolsHandler = require(path.join(__dirname, 'brokers', 'symbols.js'));
 
 const PORT = Number(process.env.BROKERS_DEV_PORT || 8787);
 
@@ -65,6 +66,14 @@ const server = http.createServer(async (req, res) => {
     ) {
       req.url = '/api/brokers/order';
       await orderHandler(req, fakeRes);
+      return;
+    }
+    if (
+      url.pathname === '/api/brokers/symbols' ||
+      url.pathname === '/brokers/symbols'
+    ) {
+      req.url = `/api/brokers/symbols${url.search}`;
+      await symbolsHandler(req, fakeRes);
       return;
     }
     if (url.pathname === '/health') {

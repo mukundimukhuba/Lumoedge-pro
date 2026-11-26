@@ -6,7 +6,8 @@
     "api/brokers/connect.js": { "maxDuration": 60 },
     "api/brokers/health.js": { "maxDuration": 15 },
     "api/brokers/account.js": { "maxDuration": 30 },
-    "api/brokers/order.js": { "maxDuration": 30 }
+    "api/brokers/order.js": { "maxDuration": 30 },
+    "api/brokers/symbols.js": { "maxDuration": 30 }
   },
   "rewrites": [
     { "source": "/portal", "destination": "/portal/index.html" },

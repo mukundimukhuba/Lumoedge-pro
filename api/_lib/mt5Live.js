@@ -746,9 +746,306 @@ async function sendLiveOrder({
   return { ok: true, status: res.status || 200, result: d };
 }
 
+/**
+ * Infer a short market category for UI cards when the broker group is empty.
+ */
+function inferSymbolCategory(name) {
+  const s = String(name || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (!s) return 'OTHER';
+  if (/^(XAU|XAG|XPT|XPD|GOLD|SILVER)/.test(s)) return 'METALS';
+  if (/^(BTC|ETH|XRP|LTC|SOL|DOGE|ADA|BNB|CRYPTO)/.test(s)) return 'CRYPTO';
+  if (
+    /^(USOIL|UKOIL|WTI|BRENT|NGAS|NATGAS|OIL|CL)/.test(s) ||
+    /OIL|BRENT|WTI|GAS/.test(s)
+  ) {
+    return 'ENERGIES';
+  }
+  if (
+    /^(NAS|US30|US500|SPX|SP500|UK100|GER|DE40|FRA|JP225|HK50|AUS200|DJ|DAX)/.test(
+      s,
+    ) ||
+    /\d{2,3}$/.test(s)
+  ) {
+    return 'INDICES';
+  }
+  if (/^[A-Z]{6}/.test(s) || /^[A-Z]{3}[A-Z]{3}/.test(s)) return 'FOREX';
+  return 'OTHER';
+}
+
+function inferSymbolDescription(name, infoDescription) {
+  const fromBroker = String(infoDescription || '').trim();
+  if (fromBroker) return fromBroker;
+  const raw = String(name || '').trim();
+  const base = raw.replace(/\.[A-Za-z0-9_]+$/, '').toUpperCase();
+  const MAP = {
+    EURUSD: 'Euro / USD',
+    GBPUSD: 'Pound / USD',
+    USDJPY: 'USD / Yen',
+    USDCHF: 'USD / Franc',
+    AUDUSD: 'Aussie / USD',
+    USDCAD: 'USD / Cad',
+    NZDUSD: 'Kiwi / USD',
+    EURGBP: 'Euro / Pound',
+    EURJPY: 'Euro / Yen',
+    GBPJPY: 'Pound / Yen',
+    XAUUSD: 'Gold / USD',
+    XAGUSD: 'Silver / USD',
+    BTCUSD: 'Bitcoin / USD',
+    ETHUSD: 'Ethereum / USD',
+    NAS100: 'Nasdaq 100',
+    US30: 'Dow Jones 30',
+    SPX500: 'S&P 500',
+    UK100: 'FTSE 100',
+    GER40: 'DAX 40',
+    USOIL: 'Crude Oil',
+  };
+  if (MAP[base]) return MAP[base];
+  if (/^[A-Z]{6}$/.test(base)) {
+    return `${base.slice(0, 3)} / ${base.slice(3)}`;
+  }
+  return raw;
+}
+
+function normalizeSymbolNameList(data) {
+  if (Array.isArray(data)) {
+    return data
+      .map((x) => {
+        if (typeof x === 'string') return x.trim();
+        if (x && typeof x === 'object') {
+          return String(
+            x.symbol || x.Symbol || x.name || x.Name || '',
+          ).trim();
+        }
+        return '';
+      })
+      .filter(Boolean);
+  }
+  if (data && typeof data === 'object') {
+    if (Array.isArray(data.names)) {
+      return data.names.map((x) => String(x || '').trim()).filter(Boolean);
+    }
+    if (Array.isArray(data.Symbols)) {
+      return normalizeSymbolNameList(data.Symbols);
+    }
+    // Dict of name → info
+    const keys = Object.keys(data).filter(
+      (k) =>
+        !/^(base|symGroups|sessions|groups|infos|infosById|hashPairs|maxUpdateTime|subIds|subMaxTime|symSetTimes|groupNames|comissions|code|message|error)$/i.test(
+          k,
+        ),
+    );
+    if (keys.length && keys.every((k) => typeof data[k] === 'object')) {
+      return keys;
+    }
+  }
+  return [];
+}
+
+function mapSymbolParamsRow(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const symbol = String(
+    raw.symbol ||
+      raw.Symbol ||
+      raw.name ||
+      raw.Name ||
+      (raw.symbolInfo && (raw.symbolInfo.name || raw.symbolInfo.Name)) ||
+      '',
+  ).trim();
+  if (!symbol) return null;
+  const info =
+    raw.symbolInfo || raw.SymbolInfo || raw.info || raw.Info || null;
+  const group =
+    raw.symbolGroup || raw.SymbolGroup || raw.group || raw.Group || null;
+  const description = String(
+    (info && (info.description || info.Description)) ||
+      raw.description ||
+      raw.Description ||
+      '',
+  ).trim();
+  const groupName = String(
+    (group && (group.groupName || group.GroupName || group.name)) ||
+      raw.groupName ||
+      raw.GroupName ||
+      '',
+  ).trim();
+  const category = groupName
+    ? groupName.toUpperCase().slice(0, 24)
+    : inferSymbolCategory(symbol);
+  return {
+    symbol,
+    category,
+    description: inferSymbolDescription(symbol, description),
+    group: groupName || undefined,
+  };
+}
+
+/**
+ * Live broker symbols for a connected MT5 session (`id` = connect token).
+ * Uses mt5rest `/SymbolList` (+ `/SymbolParamsMany` for descriptions) or
+ * legacy `/api/mt5/...` via the same mt5Get prefix.
+ * Never invents a fake broker catalog when the session is live.
+ */
+async function fetchLiveSymbols(id, { q = '', limit = 48 } = {}) {
+  const token = String(id || '').trim();
+  if (!token) {
+    return { ok: false, status: 400, error: 'id (MT5 token) is required' };
+  }
+  const lim = Math.max(1, Math.min(200, Number(limit) || 48));
+  const query = String(q || '')
+    .trim()
+    .replace(/\s+/g, '')
+    .toUpperCase();
+
+  const listRes = await mt5Get(
+    `/SymbolList?id=${encodeURIComponent(token)}`,
+  );
+  let names = [];
+  if (listRes.ok) {
+    names = normalizeSymbolNameList(listRes.data);
+  }
+
+  if (!names.length) {
+    const fullRes = await mt5Get(
+      `/Symbols?id=${encodeURIComponent(token)}`,
+    );
+    if (!fullRes.ok) {
+      const err =
+        (listRes.data &&
+          typeof listRes.data === 'object' &&
+          (listRes.data.error ||
+            listRes.data.message ||
+            listRes.data.code)) ||
+        (fullRes.data &&
+          typeof fullRes.data === 'object' &&
+          (fullRes.data.error ||
+            fullRes.data.message ||
+            fullRes.data.code)) ||
+        (typeof listRes.data === 'string' ? listRes.data : '') ||
+        (typeof fullRes.data === 'string' ? fullRes.data : '') ||
+        'SymbolList failed';
+      return {
+        ok: false,
+        status: fullRes.status || listRes.status || 502,
+        error: String(err),
+      };
+    }
+    names = normalizeSymbolNameList(fullRes.data);
+    // If Symbols returned a rich object, try mapping infos directly
+    if (
+      fullRes.data &&
+      typeof fullRes.data === 'object' &&
+      !Array.isArray(fullRes.data)
+    ) {
+      const infos = fullRes.data.infos || fullRes.data.Infos || null;
+      if (infos && typeof infos === 'object') {
+        const fromInfos = Object.keys(infos)
+          .map((sym) => {
+            const info = infos[sym];
+            return mapSymbolParamsRow({
+              symbol: sym,
+              symbolInfo: info,
+            });
+          })
+          .filter(Boolean);
+        if (fromInfos.length) {
+          let rows = fromInfos;
+          if (query) {
+            rows = rows.filter((r) =>
+              r.symbol.toUpperCase().includes(query),
+            );
+          }
+          rows.sort((a, b) => {
+            const au = a.symbol.toUpperCase();
+            const bu = b.symbol.toUpperCase();
+            const ap = query && au.startsWith(query) ? 0 : 1;
+            const bp = query && bu.startsWith(query) ? 0 : 1;
+            if (ap !== bp) return ap - bp;
+            return au.localeCompare(bu);
+          });
+          return {
+            ok: true,
+            symbols: rows.slice(0, lim),
+            total: fromInfos.length,
+            source: 'mt5-live',
+          };
+        }
+      }
+    }
+  }
+
+  if (!listRes.ok && !names.length) {
+    const err =
+      (listRes.data &&
+        typeof listRes.data === 'object' &&
+        (listRes.data.error ||
+          listRes.data.message ||
+          listRes.data.code)) ||
+      (typeof listRes.data === 'string' ? listRes.data : '') ||
+      'SymbolList failed';
+    return { ok: false, status: listRes.status || 502, error: String(err) };
+  }
+
+  const total = names.length;
+  let filtered = names;
+  if (query) {
+    filtered = names.filter((n) => n.toUpperCase().includes(query));
+  }
+  filtered = [...filtered].sort((a, b) => {
+    const au = a.toUpperCase();
+    const bu = b.toUpperCase();
+    const ap = query && au.startsWith(query) ? 0 : 1;
+    const bp = query && bu.startsWith(query) ? 0 : 1;
+    if (ap !== bp) return ap - bp;
+    return au.localeCompare(bu);
+  });
+  const page = filtered.slice(0, lim);
+
+  /** @type {Map<string, { symbol: string, category: string, description: string, group?: string }>} */
+  const enriched = new Map();
+  if (page.length) {
+    const qs = new URLSearchParams();
+    qs.set('id', token);
+    for (const sym of page) qs.append('symbol', sym);
+    qs.set('limit', String(Math.max(page.length, lim)));
+    const paramsRes = await mt5Get(`/SymbolParamsMany?${qs.toString()}`);
+    if (paramsRes.ok) {
+      const rows = Array.isArray(paramsRes.data)
+        ? paramsRes.data
+        : Array.isArray(paramsRes.data?.symbols)
+          ? paramsRes.data.symbols
+          : [];
+      for (const row of rows) {
+        const mapped = mapSymbolParamsRow(row);
+        if (mapped) enriched.set(mapped.symbol.toUpperCase(), mapped);
+      }
+    }
+  }
+
+  const symbols = page.map((sym) => {
+    const hit = enriched.get(sym.toUpperCase());
+    if (hit) return { ...hit, symbol: sym };
+    return {
+      symbol: sym,
+      category: inferSymbolCategory(sym),
+      description: inferSymbolDescription(sym, ''),
+    };
+  });
+
+  return {
+    ok: true,
+    symbols,
+    total,
+    source: 'mt5-live',
+  };
+}
+
 module.exports = {
   connectLiveMt5,
   fetchLiveAccount,
+  fetchLiveSymbols,
   sendLiveOrder,
   probeBridgeHealth,
   mt5Root,
@@ -757,4 +1054,8 @@ module.exports = {
   mapOrder,
   extractOrdersList,
   humanizeConnectError,
+  inferSymbolCategory,
+  inferSymbolDescription,
+  normalizeSymbolNameList,
+  mapSymbolParamsRow,
 };
