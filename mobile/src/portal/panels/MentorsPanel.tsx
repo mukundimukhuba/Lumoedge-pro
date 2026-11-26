@@ -32,14 +32,26 @@ export function MentorsPanel() {
   const [filter, setFilter] = useState<'all' | 'pending'>('pending');
 
   const load = useCallback(async () => {
-    const list = await listMentorProfiles();
-    setRows(list);
-    const drafts: Record<string, string> = {};
-    for (const r of list) {
-      drafts[r.email] = String(r.keyAllotment || 0);
+    if (!isSuperAdminEmail(actorEmail)) {
+      setRows([]);
+      return;
     }
-    setAllotDraft(drafts);
-  }, []);
+    setMsg('');
+    try {
+      // Shared DB only — pass actor so /api/mentors/list authorizes + never
+      // merges this device's AsyncStorage as pending source of truth.
+      const list = await listMentorProfiles(actorEmail);
+      setRows(list);
+      const drafts: Record<string, string> = {};
+      for (const r of list) {
+        drafts[r.email] = String(r.keyAllotment || 0);
+      }
+      setAllotDraft(drafts);
+    } catch (err) {
+      setRows([]);
+      setMsg(toSafeUserMessage(err, 'portal'));
+    }
+  }, [actorEmail]);
 
   useEffect(() => {
     void load();
