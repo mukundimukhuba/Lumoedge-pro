@@ -51,4 +51,21 @@ assert.strictEqual(
 );
 assert.strictEqual(pickPreferredClientSubscription([]), null);
 
+// Declined must never beat active (false-decline restore bug)
+assert.strictEqual(
+  pickPreferredClientSubscription([
+    {
+      id: 'new-declined',
+      status: 'declined',
+      createdAt: '2026-11-26T13:00:00.000Z',
+    },
+    {
+      id: 'old-active-2',
+      status: 'active',
+      createdAt: '2026-11-26T02:00:00.000Z',
+    },
+  ])?.id,
+  'old-active-2',
+);
+
 console.log('OK subscription preference unit checks');
