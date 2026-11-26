@@ -45,6 +45,11 @@ import {
   normalizeMentorEmail,
 } from './portal/mentorScope';
 import {
+  dedupeBrokerSymbols,
+  preserveBrokerSymbol,
+  symbolsMatch,
+} from './brokers/symbolMeta';
+import {
   listScopedLicenseKeys,
   listSubscriptions,
   submitSubscription,
@@ -104,10 +109,8 @@ export function normalizeQuoteSetup(input: {
   lotSize?: number;
   trades?: number;
 }): QuoteSetup | null {
-  const symbol = String(input.symbol || '')
-    .trim()
-    .replace(/\s+/g, '')
-    .toUpperCase();
+  // Preserve exact broker SymbolList spelling (e.g. XAUUSD.cent).
+  const symbol = preserveBrokerSymbol(input.symbol);
   if (!symbol) return null;
   let lot = Number(input.lotSize);
   if (!Number.isFinite(lot) || lot <= 0) lot = 0.01;
@@ -1209,24 +1212,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const setSelectedAndSyncSetups = useCallback(
     (syms: string[]) => {
-      const clean = [
-        ...new Set(
-          syms
-            .map((s) =>
-              String(s || '')
-                .trim()
-                .replace(/\s+/g, '')
-                .toUpperCase(),
-            )
-            .filter(Boolean),
-        ),
-      ];
+      const clean = dedupeBrokerSymbols(syms);
       setSelected(clean);
       setQuoteSetups((prev) => {
-        const bySym = new Map(prev.map((s) => [s.symbol, s] as const));
-        const next = clean.map(
-          (sym) => bySym.get(sym) || normalizeQuoteSetup({ symbol: sym })!,
-        );
+        const next = clean.map((sym) => {
+          const existing = prev.find((s) => symbolsMatch(s.symbol, sym));
+          if (existing) {
+            // Keep lot/trades; adopt exact broker spelling.
+            return existing.symbol === sym
+              ? existing
+              : { ...existing, symbol: sym };
+          }
+          return normalizeQuoteSetup({ symbol: sym })!;
+        });
         void persistQuoteSetups(next);
         return next;
       });
@@ -1240,43 +1238,38 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!normalized) return;
       setQuoteSetups((prev) => {
         const next = [
-          ...prev.filter((s) => s.symbol !== normalized.symbol),
+          ...prev.filter((s) => !symbolsMatch(s.symbol, normalized.symbol)),
           normalized,
         ];
         void persistQuoteSetups(next);
         return next;
       });
-      setSelected((prev) =>
-        prev.includes(normalized.symbol)
-          ? prev
-          : [...prev, normalized.symbol],
-      );
+      setSelected((prev) => {
+        const without = prev.filter(
+          (s) => !symbolsMatch(s, normalized.symbol),
+        );
+        return [...without, normalized.symbol];
+      });
     },
     [persistQuoteSetups],
   );
 
   const removeQuoteSetup = useCallback(
     (symbol: string) => {
-      const sym = String(symbol || '')
-        .trim()
-        .replace(/\s+/g, '')
-        .toUpperCase();
+      const sym = preserveBrokerSymbol(symbol);
       setQuoteSetups((prev) => {
-        const next = prev.filter((s) => s.symbol !== sym);
+        const next = prev.filter((s) => !symbolsMatch(s.symbol, sym));
         void persistQuoteSetups(next);
         return next;
       });
-      setSelected((prev) => prev.filter((s) => s !== sym));
+      setSelected((prev) => prev.filter((s) => !symbolsMatch(s, sym)));
     },
     [persistQuoteSetups],
   );
 
   const getQuoteSetup = useCallback((symbol: string) => {
-    const sym = String(symbol || '')
-      .trim()
-      .replace(/\s+/g, '')
-      .toUpperCase();
-    return quoteSetupsRef.current.find((s) => s.symbol === sym);
+    const sym = preserveBrokerSymbol(symbol);
+    return quoteSetupsRef.current.find((s) => symbolsMatch(s.symbol, sym));
   }, []);
 
   const activateLicenseKey: AppStateValue['activateLicenseKey'] = async (

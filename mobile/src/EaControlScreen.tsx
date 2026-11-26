@@ -33,6 +33,8 @@ import { loadMt5Token } from './brokers/mt5Token';
 import {
   cardForSymbol,
   filterFallbackSymbols,
+  rematchBrokerSpelling,
+  symbolsMatch,
 } from './brokers/symbolMeta';
 import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { eaPictureImageSource } from './eaPicture';
@@ -1106,6 +1108,17 @@ function QuotesPanel({
     return () => clearTimeout(handle);
   }, [connected, mt5Token, query]);
 
+  // Heal Selected spellings to match SymbolList exactly (e.g. .CENT → .cent).
+  useEffect(() => {
+    if (!brokerCards.length || !quoteSetups.length) return;
+    for (const setup of quoteSetups) {
+      const exact = rematchBrokerSpelling(setup.symbol, brokerCards);
+      if (exact && exact !== setup.symbol) {
+        upsertQuoteSetup({ ...setup, symbol: exact });
+      }
+    }
+  }, [brokerCards, quoteSetups, upsertQuoteSetup]);
+
   const allowedCards = useMemo(() => {
     // Connected session: only real broker symbols — never invent a fake catalog.
     if (connected) return brokerCards;
@@ -1130,14 +1143,10 @@ function QuotesPanel({
     if (!s) return;
     // Prefer exact broker casing when we have a live match.
     const live =
-      brokerCards.find((c) => c.symbol.toUpperCase() === s.toUpperCase())
-        ?.symbol || s;
+      brokerCards.find((c) => symbolsMatch(c.symbol, s))?.symbol || s;
     const existing =
       setupBySym.get(live) ||
-      setupBySym.get(live.toUpperCase()) ||
-      [...setupBySym.entries()].find(
-        ([k]) => k.toUpperCase() === live.toUpperCase(),
-      )?.[1];
+      [...setupBySym.entries()].find(([k]) => symbolsMatch(k, live))?.[1];
     setLotRaw(String(existing?.lotSize ?? 0.01));
     setTradesRaw(String(existing?.trades ?? 1));
     setPromptSym(live);
@@ -1164,7 +1173,7 @@ function QuotesPanel({
     if (!s) return;
     // Link the real broker symbol when autocomplete has an exact/prefix hit.
     const upper = s.toUpperCase();
-    const exact = brokerCards.find((c) => c.symbol.toUpperCase() === upper);
+    const exact = brokerCards.find((c) => symbolsMatch(c.symbol, s));
     const prefix = brokerCards.find((c) =>
       c.symbol.toUpperCase().startsWith(upper),
     );
@@ -1232,7 +1241,7 @@ function QuotesPanel({
           onChangeText={setQuery}
           placeholder="Type or edit a symbol, e.g. XAUUSD.mic"
           placeholderTextColor={BASE.muted}
-          autoCapitalize="characters"
+          autoCapitalize="none"
           autoCorrect={false}
           autoComplete="off"
           style={styles.searchInput}
@@ -1275,13 +1284,13 @@ function QuotesPanel({
           </Text>
         }
         renderItem={({ item }) => {
-          const isSelected = selected.some(
-            (s) => s.toUpperCase() === item.symbol.toUpperCase(),
+          const isSelected = selected.some((s) =>
+            symbolsMatch(s, item.symbol),
           );
           const setup =
             setupBySym.get(item.symbol) ||
-            [...setupBySym.entries()].find(
-              ([k]) => k.toUpperCase() === item.symbol.toUpperCase(),
+            [...setupBySym.entries()].find(([k]) =>
+              symbolsMatch(k, item.symbol),
             )?.[1];
           return (
             <Pressable

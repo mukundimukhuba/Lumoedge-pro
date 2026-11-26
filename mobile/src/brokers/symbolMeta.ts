@@ -1,5 +1,44 @@
 import type { BrokerSymbol } from './api';
 
+/**
+ * Trim / strip spaces only — never change letter case.
+ * Brokers (e.g. XAUUSD.cent) reject symbols when the suffix case is altered.
+ */
+export function preserveBrokerSymbol(symbol: string | null | undefined): string {
+  return String(symbol || '')
+    .trim()
+    .replace(/\s+/g, '');
+}
+
+/** Case-insensitive compare for UI matching; does not mutate either string. */
+export function symbolsMatch(
+  a: string | null | undefined,
+  b: string | null | undefined,
+): boolean {
+  const left = preserveBrokerSymbol(a);
+  const right = preserveBrokerSymbol(b);
+  if (!left || !right) return false;
+  return left.toUpperCase() === right.toUpperCase();
+}
+
+/**
+ * Deduplicate a symbol list case-insensitively while keeping the first
+ * exact spelling (broker SymbolList casing).
+ */
+export function dedupeBrokerSymbols(symbols: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of symbols) {
+    const sym = preserveBrokerSymbol(raw);
+    if (!sym) continue;
+    const key = sym.toUpperCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(sym);
+  }
+  return out;
+}
+
 /** Offline / disconnected preview cards — not used as a live broker catalog. */
 export const FALLBACK_SYMBOL_CARDS: BrokerSymbol[] = [
   { symbol: 'XAUUSD', category: 'METALS', description: 'Gold / USD' },
@@ -42,15 +81,12 @@ export function cardForSymbol(
   symbol: string,
   hint?: Partial<BrokerSymbol> | null,
 ): BrokerSymbol {
-  const sym = String(symbol || '')
-    .trim()
-    .replace(/\s+/g, '');
-  const upper = sym.toUpperCase();
-  const fromFallback = FALLBACK_SYMBOL_CARDS.find(
-    (s) => s.symbol.toUpperCase() === upper,
+  const sym = preserveBrokerSymbol(symbol);
+  const fromFallback = FALLBACK_SYMBOL_CARDS.find((s) =>
+    symbolsMatch(s.symbol, sym),
   );
   return {
-    symbol: sym || upper,
+    symbol: sym,
     category: String(
       hint?.category || fromFallback?.category || 'OTHER',
     ).toUpperCase(),
@@ -59,4 +95,18 @@ export function cardForSymbol(
       sym,
     group: hint?.group,
   };
+}
+
+/**
+ * Prefer exact SymbolList spelling when a case-insensitive match exists.
+ * Heals previously uppercased Selected rows (e.g. XAUUSD.CENT → XAUUSD.cent).
+ */
+export function rematchBrokerSpelling(
+  symbol: string,
+  brokerSymbols: Array<{ symbol: string }>,
+): string {
+  const sym = preserveBrokerSymbol(symbol);
+  if (!sym) return sym;
+  const hit = brokerSymbols.find((s) => symbolsMatch(s.symbol, sym));
+  return hit?.symbol || sym;
 }
