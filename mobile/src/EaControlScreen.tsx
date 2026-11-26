@@ -1940,8 +1940,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   quoteCard: {
-    flex: 1,
-    minWidth: '46%',
+    flexGrow: 1,
+    flexBasis: '47%',
+    maxWidth: '48.5%',
     borderWidth: 1,
     borderRadius: 14,
     paddingVertical: 12,
