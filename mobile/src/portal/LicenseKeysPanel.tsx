@@ -32,6 +32,34 @@ function isValidEmail(v: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim());
 }
 
+/** Match Subscriptions search UX: case-insensitive substring across key fields. */
+function keyMatches(
+  k: {
+    key?: string | null;
+    eaName?: string | null;
+    assigneeEmail?: string | null;
+    issuedByEmail?: string | null;
+    mentorId?: string | null;
+  },
+  query: string,
+) {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const haystacks = [
+    k.assigneeEmail,
+    k.key,
+    k.issuedByEmail,
+    k.mentorId,
+    k.eaName,
+  ];
+  return haystacks.some((v) =>
+    String(v || '')
+      .trim()
+      .toLowerCase()
+      .includes(q),
+  );
+}
+
 export function LicenseKeysPanel() {
   const {
     eas,
@@ -48,9 +76,18 @@ export function LicenseKeysPanel() {
   const myEas = scoped.eas;
   const myKeys = scoped.keys;
   const isAdmin = isSuperAdminEmail(mentor?.email);
+  const [keysQuery, setKeysQuery] = useState('');
+  const searchingKeys = Boolean(keysQuery.trim());
+  const filteredKeys = useMemo(
+    () =>
+      searchingKeys
+        ? myKeys.filter((k) => keyMatches(k, keysQuery))
+        : myKeys,
+    [myKeys, keysQuery, searchingKeys],
+  );
   const keysByIssuer = useMemo(
-    () => (isAdmin ? groupKeysByIssuer(myKeys) : []),
-    [isAdmin, myKeys],
+    () => (isAdmin ? groupKeysByIssuer(filteredKeys) : []),
+    [isAdmin, filteredKeys],
   );
   const [eaId, setEaId] = useState<string>(myEas[0]?.id ?? '');
   const [assigneeName, setAssigneeName] = useState('');
@@ -562,8 +599,29 @@ export function LicenseKeysPanel() {
         <Text style={styles.h2}>
           {isAdmin ? 'Keys by mentor / issuer' : 'Your issued keys'}
         </Text>
+        {/* Always visible like Subscriptions email search — do not hide when empty. */}
+        <TextInput
+          style={styles.search}
+          value={keysQuery}
+          onChangeText={setKeysQuery}
+          placeholder="Search by client email, key, mentor, or EA…"
+          placeholderTextColor="#6B7280"
+          autoCapitalize="none"
+          autoCorrect={false}
+          accessibilityLabel="Search license keys by client email, key code, mentor email, or EA name"
+        />
+        {searchingKeys ? (
+          <Text style={styles.searchMeta}>
+            {filteredKeys.length} match
+            {filteredKeys.length === 1 ? '' : 'es'}
+          </Text>
+        ) : null}
         {myKeys.length === 0 ? (
           <Text style={styles.hint}>No keys yet.</Text>
+        ) : searchingKeys && filteredKeys.length === 0 ? (
+          <Text style={styles.hint}>
+            No keys match “{keysQuery.trim()}”.
+          </Text>
         ) : isAdmin ? (
           keysByIssuer.map((group) => (
             <View key={group.issuer} style={styles.issuerGroup}>
@@ -610,7 +668,7 @@ export function LicenseKeysPanel() {
             </View>
           ))
         ) : (
-          myKeys.map((k) => (
+          filteredKeys.map((k) => (
             <View key={k.id} style={styles.keyRow}>
               <Text style={styles.keyEa}>{k.eaName}</Text>
               <Text style={styles.keyVal} selectable>
@@ -666,6 +724,17 @@ const styles = StyleSheet.create({
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
   meta: { color: '#E5E7EB', fontSize: 13, lineHeight: 18 },
   env: { color: '#93C5FD', fontSize: 11, lineHeight: 16 },
+  search: {
+    borderWidth: 1,
+    borderColor: '#374151',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: '#fff',
+    backgroundColor: '#0B0E14',
+    fontSize: 16, // iOS Safari zooms inputs under 16px
+  },
+  searchMeta: { color: '#9CA3AF', fontSize: 12 },
   issuerGroup: {
     gap: 6,
     paddingTop: 10,
