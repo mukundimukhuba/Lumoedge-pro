@@ -99,23 +99,53 @@ export async function fetchDashboardStats(opts: {
     const actor = (opts.mentorEmail || '').trim().toLowerCase();
     const scope = Boolean(actor && !isSuperAdminEmail(actor));
 
-    // Prefer enriched columns when migration 004/006 is applied; fall back to id-only.
+    // Mentors: prefer isolation RPC so counts never flash global→scoped.
+    if (scope) {
+      const [keysRpc, easRpc] = await Promise.all([
+        sb.rpc('list_mentor_license_keys', { actor_email: actor }),
+        sb.rpc('list_mentor_eas', { actor_email: actor }),
+      ]);
+      if (!keysRpc.error && !easRpc.error) {
+        const keyRows = (keysRpc.data || []) as Record<string, unknown>[];
+        const eaRows = (easRpc.data || []) as unknown[];
+        let active = 0;
+        let unused = 0;
+        let revoked = 0;
+        const assignees = new Set<string>();
+        for (const r of keyRows) {
+          const st = normalizeStatus(
+            r.status || r.license_status || (r.activated_at ? 'active' : 'unused'),
+          );
+          if (st === 'active') active += 1;
+          else if (st === 'revoked') revoked += 1;
+          else unused += 1;
+          const email = r.assignee_email;
+          if (email) assignees.add(String(email).toLowerCase());
+        }
+        return {
+          keysTotal: keyRows.length,
+          keysActive: active,
+          keysUnused: unused,
+          keysRevoked: revoked,
+          easCount: eaRows.length,
+          subscribers: assignees.size || active,
+          source: 'supabase',
+        };
+      }
+      // RPC unavailable — stay on already-scoped local stats (no global select).
+      return local;
+    }
+
+    // Super admin: enriched table read (RLS may deny; fall back to local).
     let keysRes = await sb
       .from('license_keys')
       .select('id, status, activated_at, assignee_email, issued_by_email');
     if (keysRes.error) {
       keysRes = await sb.from('license_keys').select('id');
     }
-    let easQuery = sb
+    const easRes = await sb
       .from('managed_eas')
       .select('id', { count: 'exact', head: true });
-    if (scope) {
-      easQuery = sb
-        .from('managed_eas')
-        .select('id', { count: 'exact', head: true })
-        .eq('owner_email', actor);
-    }
-    const easRes = await easQuery;
 
     if (keysRes.error) return local;
 
@@ -138,7 +168,7 @@ export async function fetchDashboardStats(opts: {
     if (!hasMeta) {
       return {
         ...local,
-        keysTotal: Math.max(local.keysTotal, scope ? local.keysTotal : rows.length),
+        keysTotal: Math.max(local.keysTotal, rows.length),
         easCount: easRes.count ?? local.easCount,
         source: 'supabase',
       };
@@ -148,15 +178,7 @@ export async function fetchDashboardStats(opts: {
     let unused = 0;
     let revoked = 0;
     const assignees = new Set<string>();
-    let counted = 0;
     for (const r of rows) {
-      const issued = String(
-        (r as { issued_by_email?: string }).issued_by_email || '',
-      ).toLowerCase();
-      if (scope) {
-        if (issued !== actor) continue;
-      }
-      counted += 1;
       const st = normalizeStatus(
         (r as { status?: string }).status ||
           ((r as { activated_at?: string }).activated_at ? 'active' : 'unused'),
@@ -169,7 +191,7 @@ export async function fetchDashboardStats(opts: {
     }
 
     return {
-      keysTotal: counted || local.keysTotal,
+      keysTotal: rows.length || local.keysTotal,
       keysActive: active,
       keysUnused: unused,
       keysRevoked: revoked,

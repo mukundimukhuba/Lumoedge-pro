@@ -16,6 +16,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAppState } from '../AppState';
 import { ManageEasPanel } from './ManageEasPanel';
 import { LicenseKeysPanel } from './LicenseKeysPanel';
+import { PendingApprovalScreen } from './PendingApprovalScreen';
 import { ProfilePanel } from './ProfilePanel';
 import { CommissionPanel } from './panels/CommissionPanel';
 import { DashboardPanel } from './panels/DashboardPanel';
@@ -46,7 +47,7 @@ export function PortalHomeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ section?: string }>();
   const { width } = useWindowDimensions();
-  const { mentor, setMentor, accent, setAccent } = useAppState();
+  const { mentor, mentorReady, setMentor, accent, setAccent } = useAppState();
   const [menuOpen, setMenuOpen] = useState(false);
   const [section, setSection] = useState<NavId>('dashboard');
 
@@ -62,6 +63,7 @@ export function PortalHomeScreen() {
   );
 
   useEffect(() => {
+    if (!mentorReady) return;
     if (!mentor) {
       router.replace('/portal');
       return;
@@ -69,7 +71,7 @@ export function PortalHomeScreen() {
     if (!isPortalUnlocked(mentor.status, mentor.email, mentor.role)) {
       router.replace('/portal/pending');
     }
-  }, [mentor, router]);
+  }, [mentor, mentorReady, router]);
 
   useEffect(() => {
     if (!mentor || !unlocked) return;
@@ -90,8 +92,15 @@ export function PortalHomeScreen() {
   }, [isDesktop]);
 
   // Hard stop: never render Menu / sections for pending mentors.
+  // Show wait UI (not blank black) while the gate redirects.
+  if (!mentorReady) {
+    return <View style={styles.root} accessibilityLabel="Loading portal" />;
+  }
+  if (mentor && !unlocked) {
+    return <PendingApprovalScreen mentor={mentor} />;
+  }
   if (!mentor || !unlocked) {
-    return <View style={styles.root} />;
+    return <View style={styles.root} accessibilityLabel="Returning to login" />;
   }
 
   const logout = () => {
