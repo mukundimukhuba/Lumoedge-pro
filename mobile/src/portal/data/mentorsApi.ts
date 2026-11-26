@@ -4,6 +4,7 @@
  * for Super Admin Pending.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getApiRoot } from '../../apiRoot';
 import { getSupabase } from '../../supabase/client';
 import type { MentorSession } from '../../auth/mentorAuth';
 import { safeMessageFromApiBody, toSafeUserMessage } from '../safeErrors';
@@ -35,10 +36,7 @@ type LocalStored = {
 };
 
 function apiBase() {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-  return '';
+  return getApiRoot();
 }
 
 function rowFromDb(r: Record<string, unknown>): MentorProfileRow {

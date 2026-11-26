@@ -97,6 +97,22 @@ for (const name of brandFiles) {
   fs.copyFileSync(from, path.join(dest, name));
 }
 
+/** Android APK download page + binary (phone browser install). */
+const downloadSrc = path.join(root, 'download');
+const downloadDest = path.join(dest, 'download');
+if (fs.existsSync(downloadSrc)) {
+  fs.mkdirSync(downloadDest, { recursive: true });
+  for (const ent of fs.readdirSync(downloadSrc, { withFileTypes: true })) {
+    if (!ent.isFile()) continue;
+    fs.copyFileSync(
+      path.join(downloadSrc, ent.name),
+      path.join(downloadDest, ent.name),
+    );
+  }
+  // Also mirror under repo root download/ already is source of truth.
+  console.log('Copied download/ (APK + page) into dist-web/download');
+}
+
 for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
   fs.mkdirSync(path.join(dest, p), { recursive: true });
   fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, p, 'index.html'));

@@ -1,21 +1,24 @@
 {
   "expo": {
-    "name": "Edges EA Control",
-    "slug": "edges-ea-control",
+    "name": "Lumo Edge Pro",
+    "slug": "lumo-edge-pro",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/splash-mascot.png",
       "resizeMode": "contain",
       "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.lumoedgepro.app",
       "infoPlist": {
         "UIStatusBarStyle": "UIStatusBarStyleLightContent",
-        "UIViewControllerBasedStatusBarAppearance": true
+        "UIViewControllerBasedStatusBarAppearance": true,
+        "NSCameraUsageDescription": "Allow Lumo Edge Pro to use your camera for chart scans and EA pictures.",
+        "NSPhotoLibraryUsageDescription": "Allow Lumo Edge Pro to access your photos for chart scans and EA pictures."
       }
     },
     "androidStatusBar": {
@@ -24,18 +27,27 @@
       "translucent": true
     },
     "android": {
+      "package": "com.lumoedgepro.app",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ],
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "name": "Edges EA Control",
-      "shortName": "Edges",
+      "name": "Lumo Edge Pro",
+      "shortName": "Lumo Edge",
       "themeColor": "#000000",
       "backgroundColor": "#000000",
       "display": "standalone"
@@ -45,17 +57,41 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow Edges Mentors Portal to use your photos for EA pictures.",
-          "cameraPermission": "Allow Edges Mentors Portal to use your camera for EA pictures."
+          "photosPermission": "Allow Lumo Edge Pro to use your photos for chart scans and EA pictures.",
+          "cameraPermission": "Allow Lumo Edge Pro to use your camera for chart scans and EA pictures."
         }
-      ]
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-mascot.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableMinifyInReleaseBuilds": false,
+            "enableShrinkResourcesInReleaseBuilds": false,
+            "useLegacyPackaging": true,
+            "buildArchs": ["armeabi-v7a", "arm64-v8a"],
+            "gifEnabled": false,
+            "webpEnabled": false
+          }
+        }
+      ],
+      "./plugins/withAndroidCrashHardening.js"
     ],
-    "scheme": "edges-ea",
+    "scheme": "lumoedgepro",
     "experiments": {
       "baseUrl": ""
     },
     "extra": {
-      "publicWebPath": "/ea-control"
+      "publicWebPath": "/ea-control",
+      "productionApiRoot": "https://lumoedgepro.vercel.app"
     }
   }
 }

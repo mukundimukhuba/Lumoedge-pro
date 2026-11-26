@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { apiUrl } from '../apiRoot';
 import {
   getSupabaseConfig,
   setRuntimeSupabaseConfig,
@@ -33,8 +34,9 @@ export function isSupabaseConfigured() {
 }
 
 /**
- * On web, if build-time extra lacks the anon key, load it from `/api/public-config`
- * (anon keys are public by design). Call before mentor login / register cloud sync.
+ * If build-time extra lacks the anon key, load it from `/api/public-config`
+ * (anon keys are public by design). On native this hits production Vercel via
+ * getApiRoot(); on web it uses same-origin. Call before mentor login / register.
  */
 export function hydrateSupabaseConfig(): Promise<boolean> {
   if (hydratePromise) return hydratePromise;
@@ -42,7 +44,7 @@ export function hydrateSupabaseConfig(): Promise<boolean> {
     if (getSupabaseConfig().configured) return true;
     if (typeof fetch === 'undefined') return false;
     try {
-      const res = await fetch('/api/public-config', {
+      const res = await fetch(apiUrl('/api/public-config'), {
         method: 'GET',
         headers: { Accept: 'application/json' },
       });
