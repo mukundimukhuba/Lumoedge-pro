@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useAppState } from '../../AppState';
 import { DEMO_MENTOR_EMAIL } from '../../auth/mentorAuth';
@@ -8,6 +8,8 @@ import {
 } from '../../subscriptions/remoteApi';
 import {
   displaySubscriptionStatus,
+  isSubscriptionUsable,
+  partitionAdminSubscriptions,
   type SubscriptionRow,
 } from '../../subscriptions/types';
 import { toSafeUserMessage } from '../safeErrors';
@@ -16,12 +18,15 @@ import { CYAN, glassCard } from '../portalTheme';
 const GREEN = '#22C55E';
 const RED = '#EF4444';
 
+type FilterTab = 'pending' | 'approved' | 'declined';
+
 export function SubscriptionsPanel() {
   const { mentor } = useAppState();
   const [rows, setRows] = useState<SubscriptionRow[]>([]);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<FilterTab>('pending');
 
   const isAdmin =
     (mentor?.email || '').trim().toLowerCase() === DEMO_MENTOR_EMAIL;
@@ -48,6 +53,14 @@ export function SubscriptionsPanel() {
     void load();
   }, [load]);
 
+  const buckets = useMemo(() => partitionAdminSubscriptions(rows), [rows]);
+
+  const visible = useMemo(() => {
+    if (filter === 'approved') return buckets.approved;
+    if (filter === 'declined') return buckets.declined;
+    return buckets.pending;
+  }, [buckets, filter]);
+
   if (!isAdmin) {
     return (
       <View style={styles.wrap}>
@@ -73,6 +86,7 @@ export function SubscriptionsPanel() {
       return;
     }
     setMsg(`Approved ${row.clientEmail} — subscription active`);
+    setFilter('approved');
     await load();
   };
 
@@ -91,28 +105,70 @@ export function SubscriptionsPanel() {
       return;
     }
     setMsg(`Declined ${row.clientEmail}`);
+    setFilter('declined');
     await load();
   };
+
+  const emptyLabel =
+    filter === 'pending'
+      ? 'No pending payment reviews.'
+      : filter === 'approved'
+        ? 'No approved or active subscriptions.'
+        : 'No declined or expired subscriptions.';
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.hint}>
-        Review client payment submissions. Approve to activate access; decline
-        blocks license generation for that client.
+        Review client payment submissions. Pending never lists emails that
+        already have an active or approved subscription. Approve to activate
+        access; decline blocks license generation for that client.
       </Text>
+
+      <View style={styles.filterRow}>
+        <Pressable
+          style={[styles.filterBtn, filter === 'pending' && styles.filterOn]}
+          onPress={() => setFilter('pending')}
+          accessibilityRole="button"
+          accessibilityLabel="Pending subscriptions"
+        >
+          <Text style={styles.filterText}>
+            Pending ({buckets.pending.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.filterBtn, filter === 'approved' && styles.filterOn]}
+          onPress={() => setFilter('approved')}
+          accessibilityRole="button"
+          accessibilityLabel="Approved subscriptions"
+        >
+          <Text style={styles.filterText}>
+            Approved ({buckets.approved.length})
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.filterBtn, filter === 'declined' && styles.filterOn]}
+          onPress={() => setFilter('declined')}
+          accessibilityRole="button"
+          accessibilityLabel="Declined subscriptions"
+        >
+          <Text style={styles.filterText}>
+            Declined ({buckets.declined.length})
+          </Text>
+        </Pressable>
+      </View>
+
       {msg ? <Text style={styles.msg}>{msg}</Text> : null}
       {err ? <Text style={styles.err}>{err}</Text> : null}
 
-      {rows.length === 0 ? (
+      {visible.length === 0 ? (
         <View style={styles.card}>
-          <Text style={styles.empty}>No subscriptions yet.</Text>
+          <Text style={styles.empty}>{emptyLabel}</Text>
         </View>
       ) : (
-        rows.map((row) => {
+        visible.map((row) => {
           const busy = busyId === row.id;
           const status = String(row.status || '').toLowerCase();
-          // Approve maps to Active in SQL — hide both once already Active/Approved.
-          const alreadyActive = status === 'active' || status === 'approved';
+          const alreadyActive = isSubscriptionUsable(status);
           const statusLabel = displaySubscriptionStatus(row.status);
           return (
             <View key={row.id} style={styles.card}>
@@ -125,7 +181,7 @@ export function SubscriptionsPanel() {
                     styles.badge,
                     alreadyActive
                       ? styles.badgeOk
-                      : status === 'declined'
+                      : status === 'declined' || status === 'expired'
                         ? styles.badgeBad
                         : styles.badgePending,
                   ]}
@@ -155,7 +211,7 @@ export function SubscriptionsPanel() {
                 </Text>
               ) : null}
 
-              {!alreadyActive ? (
+              {filter === 'pending' && !alreadyActive ? (
                 <View style={styles.actions}>
                   <Pressable
                     style={[styles.btn, styles.approve, busy && styles.disabled]}
@@ -188,6 +244,20 @@ export function SubscriptionsPanel() {
 const styles = StyleSheet.create({
   wrap: { gap: 10, marginTop: 6 },
   hint: { color: '#9CA3AF', fontSize: 13, lineHeight: 18 },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterBtn: {
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  filterOn: {
+    borderColor: CYAN,
+    backgroundColor: 'rgba(94,200,255,0.12)',
+  },
+  filterText: { color: '#E5E7EB', fontWeight: '700', fontSize: 12 },
   msg: { color: '#86EFAC', fontSize: 13 },
   err: { color: '#FCA5A5', fontSize: 13 },
   card: {
