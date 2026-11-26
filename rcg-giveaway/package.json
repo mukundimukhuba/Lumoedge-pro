@@ -1,0 +1,14 @@
+{
+  "name": "rcg-giveaway-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated invite-only RCG giveaway host (not the main Lumo Edge Pro app)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --check server.js && node --check api/verify.js && node --check api/claim.js && node --check lib/giveaway.js"
+  }
+}
