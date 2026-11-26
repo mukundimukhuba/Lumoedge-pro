@@ -6,6 +6,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AppStateProvider, useAppState } from '../src/AppState';
 import { DarkEdgeChrome } from '../src/DarkEdgeChrome';
 import { EaBlurWallpaper } from '../src/EaBlurWallpaper';
+import { WelcomeSplash } from '../src/WelcomeSplash';
 import { hydrateSupabaseConfig } from '../src/supabase/client';
 
 /** Keep initial route stable — avoid remount loops / blank first frame. */
@@ -65,32 +66,34 @@ export default function RootLayout() {
         <ThemeProvider value={EdgesDark}>
           <DarkEdgeChrome>
             <SplashGate>
-              {/* Persistent black + wallpaper under stack — never a white card. */}
-              <View style={styles.shell} pointerEvents="box-none">
-                <EaBlurWallpaper />
-                <Stack screenOptions={SLIDE}>
-                  <Stack.Screen
-                    name="index"
-                    options={{
-                      ...SLIDE,
-                      // Returning home: soft fade keeps wallpaper; no blank card.
-                      animation: 'fade',
-                      animationDuration: 180,
-                    }}
-                  />
-                  <Stack.Screen name="quotes" options={SLIDE} />
-                  <Stack.Screen name="chart-scanner" options={SLIDE} />
-                  <Stack.Screen name="connect-broker" options={SLIDE} />
-                  <Stack.Screen
-                    name="portal"
-                    options={{
-                      headerShown: false,
-                      animation: 'slide_from_right',
-                      contentStyle: { backgroundColor: '#05070D' },
-                    }}
-                  />
-                </Stack>
-              </View>
+              <WelcomeSplash>
+                {/* Persistent black + wallpaper under stack — never a white card. */}
+                <View style={styles.shell} pointerEvents="box-none">
+                  <EaBlurWallpaper />
+                  <Stack screenOptions={SLIDE}>
+                    <Stack.Screen
+                      name="index"
+                      options={{
+                        ...SLIDE,
+                        // Returning home: soft fade keeps wallpaper; no blank card.
+                        animation: 'fade',
+                        animationDuration: 180,
+                      }}
+                    />
+                    <Stack.Screen name="quotes" options={SLIDE} />
+                    <Stack.Screen name="chart-scanner" options={SLIDE} />
+                    <Stack.Screen name="connect-broker" options={SLIDE} />
+                    <Stack.Screen
+                      name="portal"
+                      options={{
+                        headerShown: false,
+                        animation: 'slide_from_right',
+                        contentStyle: { backgroundColor: '#05070D' },
+                      }}
+                    />
+                  </Stack>
+                </View>
+              </WelcomeSplash>
             </SplashGate>
           </DarkEdgeChrome>
         </ThemeProvider>

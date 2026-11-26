@@ -25,7 +25,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#C01018",
+        "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -34,8 +34,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
+      "name": "Edges EA Control",
+      "shortName": "Edges",
       "themeColor": "#000000",
-      "backgroundColor": "#000000"
+      "backgroundColor": "#000000",
+      "display": "standalone"
     },
     "plugins": [
       "expo-router",
