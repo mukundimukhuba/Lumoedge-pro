@@ -64,6 +64,26 @@ module.exports = async function handler(req, res) {
     });
   }
 
+  // If this email already has an active/approved subscription, return it.
+  // Creating another pending row masks access ("Approval pending" incident).
+  try {
+    const existing = await sbFetch(
+      `/rest/v1/subscriptions?client_email=ilike.${encodeURIComponent(
+        clientEmail,
+      )}&status=in.(active,approved)&select=*&order=created_at.desc&limit=1`,
+    );
+    if (existing.ok && Array.isArray(existing.json) && existing.json[0]) {
+      return json(res, 200, {
+        ok: true,
+        via: 'existing',
+        reused: true,
+        subscription: mapSub(existing.json[0]),
+      });
+    }
+  } catch {
+    /* continue to create */
+  }
+
   // Prefer RPC (enforces validation + unique id)
   try {
     const rpc = await sbFetch('/rest/v1/rpc/submit_subscription', {

@@ -41,6 +41,31 @@ export function isSubscriptionUsable(status: string | null | undefined) {
   return s === 'approved' || s === 'active';
 }
 
+/**
+ * Prefer a usable (active/approved) subscription over a newer pending row.
+ * Incident: re-checkout created pending rows that masked existing active access.
+ */
+export function pickPreferredClientSubscription(
+  rows: SubscriptionRow[] | null | undefined,
+): SubscriptionRow | null {
+  if (!rows?.length) return null;
+  const rank = (status: string | null | undefined) => {
+    const s = String(status || '').toLowerCase();
+    if (s === 'active') return 0;
+    if (s === 'approved') return 1;
+    if (s === 'pending') return 2;
+    if (s === 'expired') return 3;
+    if (s === 'declined') return 4;
+    return 5;
+  };
+  const sorted = [...rows].sort((a, b) => {
+    const byRank = rank(a.status) - rank(b.status);
+    if (byRank !== 0) return byRank;
+    return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+  });
+  return sorted[0] || null;
+}
+
 export function displaySubscriptionStatus(status: string | null | undefined) {
   const s = String(status || 'pending').toLowerCase();
   switch (s) {
