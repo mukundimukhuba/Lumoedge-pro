@@ -140,7 +140,7 @@ export function normalizeScanResult(raw: ScanApiResponse) {
     ok: Boolean(raw.ok),
     demo: Boolean(raw.demo),
     accuracy: Math.round(Number(raw.accuracy) || 0),
-    symbol: raw.symbol ? String(raw.symbol).replace(/\s+/g, '').toUpperCase() : '',
+    symbol: raw.symbol ? String(raw.symbol).replace(/\s+/g, '') : '',
     timeframe:
       raw.timeframe && !/null|unknown|n\/a|none/i.test(String(raw.timeframe))
         ? String(raw.timeframe).trim().toUpperCase()

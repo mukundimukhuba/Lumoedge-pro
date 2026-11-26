@@ -7,11 +7,29 @@ const {
   inferSymbolDescription,
   normalizeSymbolNameList,
   mapSymbolParamsRow,
+  preserveBrokerSymbol,
 } = require('../api/_lib/mt5Live');
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }
+
+assert(
+  preserveBrokerSymbol('  XAUUSD.cent  ') === 'XAUUSD.cent',
+  'preserve trims only',
+);
+assert(
+  preserveBrokerSymbol('XAUUSD.cent') === 'XAUUSD.cent',
+  'preserve keeps lower suffix',
+);
+assert(
+  preserveBrokerSymbol('XAUUSD.CENT') === 'XAUUSD.CENT',
+  'preserve keeps upper suffix as given',
+);
+assert(
+  preserveBrokerSymbol('XAU USD.cent') === 'XAUUSD.cent',
+  'preserve strips spaces',
+);
 
 assert(inferSymbolCategory('XAUUSD.mic') === 'METALS', 'XAU metals');
 assert(inferSymbolCategory('EURUSD') === 'FOREX', 'EURUSD forex');

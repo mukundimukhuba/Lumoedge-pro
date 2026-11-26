@@ -40,7 +40,7 @@ export async function pushAutoTradeHistory(
     at: entry.at || new Date().toISOString(),
     symbol: String(entry.symbol || '')
       .trim()
-      .toUpperCase(),
+      .replace(/\s+/g, ''),
     direction: String(entry.direction || '').toLowerCase(),
     trades: Math.max(0, Math.round(Number(entry.trades) || 0)),
     lotSize:

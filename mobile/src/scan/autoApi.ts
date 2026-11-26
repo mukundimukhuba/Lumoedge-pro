@@ -57,10 +57,10 @@ export async function postAutoScan(
   body: AutoScanRequest,
   signal?: AbortSignal,
 ): Promise<AutoScanSignal> {
+  // Preserve exact broker spelling — never toUpperCase (suffix case matters).
   const symbol = String(body.symbol || '')
     .trim()
-    .replace(/\s+/g, '')
-    .toUpperCase();
+    .replace(/\s+/g, '');
   const id = String(body.id || '').trim();
 
   if (!symbol) {

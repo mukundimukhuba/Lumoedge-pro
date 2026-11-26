@@ -662,10 +662,8 @@ async function sendLiveOrder({
   slippage,
 }) {
   const token = String(id || '').trim();
-  const sym = String(symbol || '')
-    .trim()
-    .replace(/\s+/g, '')
-    .toUpperCase();
+  // Preserve exact broker spelling (e.g. XAUUSD.cent) — never toUpperCase.
+  const sym = preserveBrokerSymbol(symbol);
   const op = Number(operation);
   const vol = Number(volume);
   if (!token) {
@@ -744,6 +742,17 @@ async function sendLiveOrder({
   }
 
   return { ok: true, status: res.status || 200, result: d };
+}
+
+/**
+ * Trim / strip spaces only — never change letter case.
+ * Brokers reject OrderSend when suffix case differs from SymbolList
+ * (e.g. XAUUSD.cent vs XAUUSD.CENT).
+ */
+function preserveBrokerSymbol(symbol) {
+  return String(symbol || '')
+    .trim()
+    .replace(/\s+/g, '');
 }
 
 /**
@@ -1054,6 +1063,7 @@ module.exports = {
   mapOrder,
   extractOrdersList,
   humanizeConnectError,
+  preserveBrokerSymbol,
   inferSymbolCategory,
   inferSymbolDescription,
   normalizeSymbolNameList,

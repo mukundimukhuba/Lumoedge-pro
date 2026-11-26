@@ -121,8 +121,9 @@ export function AutoTradeEngineOverlay({
         // Walk Quotes-selected symbols only; server tries TFs M15→H1→M5→M1.
         // Body locked to curl: { symbol, id }
         const token = String(mt5Token || '').trim();
+        // Keep exact broker SymbolList spelling (e.g. XAUUSD.cent).
         const markets = (symbols || [])
-          .map((s) => String(s || '').trim().toUpperCase())
+          .map((s) => String(s || '').trim().replace(/\s+/g, ''))
           .filter(Boolean);
         setScanMarkets(markets);
         if (markets.length === 0) {
@@ -229,7 +230,11 @@ export function AutoTradeEngineOverlay({
         setStatus('Sending order to MT5…');
 
         const setup =
-          (quoteSetups || []).find((s) => s.symbol === chosenSymbol) ||
+          (quoteSetups || []).find(
+            (s) =>
+              String(s.symbol || '').toUpperCase() ===
+              String(chosenSymbol || '').toUpperCase(),
+          ) ||
           normalizeQuoteSetup({
             symbol: chosenSymbol,
             lotSize,
