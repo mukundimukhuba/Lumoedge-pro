@@ -43,14 +43,22 @@ Optional build-time secrets (otherwise runtime `/api/public-config`):
 ```bash
 cd mobile
 npx expo prebuild --platform android --no-install
-cd android && ./gradlew assembleRelease   # APK
+cd android && ./gradlew assembleRelease   # APK (arm64-v8a only)
 # or: ./gradlew bundleRelease            # AAB
 ```
+
+Release size knobs (via `expo-build-properties` → `gradle.properties`):
+
+- R8 minify + `shrinkResources`
+- `reactNativeArchitectures=arm64-v8a` only (no x86 / armeabi-v7a)
+- `expo.useLegacyPackaging=true` (compress `.so` inside the APK)
+- Hermes on; GIF/WebP RN image decoders off (app uses JPG/PNG)
 
 APK path: `android/app/build/outputs/apk/release/app-release.apk`  
 AAB path: `android/app/build/outputs/bundle/release/app-release.aab`
 
-> `android/` is gitignored (Continuous Native Generation). Regenerate with `npx expo prebuild`.
+> `android/` is gitignored (Continuous Native Generation). Regenerate with `npx expo prebuild`.  
+> Sideload APK is **arm64-only** — covers modern phones; emulators needing x86 must use a multi-ABI or EAS build override.
 
 ## Screens / flows (full parity)
 
