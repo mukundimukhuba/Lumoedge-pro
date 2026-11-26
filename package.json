@@ -10,6 +10,7 @@
     "supabase:verify": "node scripts/verify-supabase-tables.mjs",
     "supabase:status": "node -e \"import('./scripts/supabase-env.mjs').then(m=>console.log(JSON.stringify(m.secretStatus())))\"",
     "brokers:dev": "node api/dev-server.mjs",
-    "test:scanner-quality": "node scripts/test-scanner-quality.js"
+    "test:scanner-quality": "node scripts/test-scanner-quality.js",
+    "test:scanner-execute": "node scripts/test-scanner-execute.js"
   }
 }

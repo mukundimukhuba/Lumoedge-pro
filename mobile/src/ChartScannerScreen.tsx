@@ -10,6 +10,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   useWindowDimensions,
@@ -23,10 +24,26 @@ import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { popToHome } from './navPush';
 import { loadMt5Token } from './brokers/mt5Token';
+import { preserveBrokerSymbol } from './brokers/symbolMeta';
 import {
   normalizeScanResult,
   postChartScan,
 } from './scan/api';
+import {
+  executeChartTrades,
+  hintSymbolsFromQuotes,
+  resolveOrderSymbol,
+} from './scan/executeChartTrades';
+import {
+  DEFAULT_SCANS_PER_DAY,
+  MAX_SCAN_HISTORY,
+  emptyScannerState,
+  johannesburgDayKey,
+  loadScannerState,
+  msUntilJohannesburgMidnight,
+  saveScannerState,
+  type PersistedHistoryEntry,
+} from './scan/scannerPersist';
 import {
   AUTO_TRADE_MIN_ACCURACY,
   SKIP_REASON,
@@ -63,20 +80,7 @@ type RadarStatus =
   | 'DETECTING'
   | 'SIGNAL DETECTED';
 
-type HistoryEntry = {
-  id: string;
-  symbol: string;
-  timeframe: string;
-  bias: string;
-  confidence: number;
-  message: string;
-  lotSize: number;
-  trades: number;
-  tp: string;
-  sl: string;
-  chartUri: string | null;
-  at: string;
-};
+type HistoryEntry = PersistedHistoryEntry;
 
 type OcrResult = {
   symbol: string | null;
@@ -93,12 +97,17 @@ type ScanOutcome = {
   sl: string;
   entry?: string;
   tps?: string[];
+  side?: Side | null;
+  entryNum?: number | null;
+  stopNum?: number | null;
+  tpNums?: number[];
   autoTradeAllowed?: boolean;
   autoTradeReasons?: string[];
   skipReason?: string | null;
   demo?: boolean;
   source?: 'api' | 'local';
   mt5Live?: boolean;
+  executeNote?: string | null;
 };
 
 const ENGINE_STAGES: {
@@ -212,22 +221,24 @@ function hexToRgba(hex: string, alpha: number) {
 }
 
 export function parseMt5Labels(raw: string): OcrResult {
-  const text = (raw || '').toUpperCase().replace(/[|,]/g, ' ');
-  const tfMatch = text.match(TF_PATTERN);
+  // Keep original ticker casing (e.g. XAUUSD.cent); only normalize TF to upper.
+  const text = (raw || '').replace(/[|,]/g, ' ');
+  const upper = text.toUpperCase();
+  const tfMatch = upper.match(TF_PATTERN);
   SYM_PATTERN.lastIndex = 0;
   const symMatch = SYM_PATTERN.exec(text);
   return {
-    symbol: symMatch ? symMatch[1].toUpperCase() : null,
+    symbol: symMatch ? preserveBrokerSymbol(symMatch[0]) : null,
     timeframe: tfMatch ? tfMatch[1].toUpperCase() : null,
     raw: raw || '',
   };
 }
 
 async function ocrChartImage(uri: string): Promise<OcrResult> {
-  const harness = uri.match(/[#&]edgesocr=([A-Z0-9]+)\|([A-Z0-9]+)/i);
+  const harness = uri.match(/[#&]edgesocr=([A-Za-z0-9.+_]+)\|([A-Za-z0-9]+)/i);
   if (harness) {
     return {
-      symbol: harness[1].toUpperCase(),
+      symbol: preserveBrokerSymbol(harness[1]),
       timeframe: harness[2].toUpperCase(),
       raw: `${harness[1]} ${harness[2]}`,
     };
@@ -855,14 +866,21 @@ function LotTradesFields({
 }
 
 export function ChartScannerScreen() {
-  const params = useLocalSearchParams<{ proof?: string; demo?: string }>();
+  const params = useLocalSearchParams<{
+    proof?: string;
+    demo?: string;
+    execPopup?: string;
+  }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
-  const { accent } = useAppState();
+  const { accent, selected, quoteSetups, activeEa, getQuoteSetup } =
+    useAppState();
   const picking = useRef(false);
   const proofStarted = useRef(false);
   const ocrGen = useRef(0);
   const scanTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const persistReady = useRef(false);
+  const dayKeyRef = useRef(johannesburgDayKey());
 
   const [mt5Token, setMt5Token] = useState<string | null>(null);
   const liveEngine = useLiveTradeEngineAvailable(mt5Token);
@@ -870,16 +888,28 @@ export function ChartScannerScreen() {
   const [timeframe, setTimeframe] = useState<string | null>(null);
   const [lotRaw, setLotRaw] = useState('0.01');
   const [tradesRaw, setTradesRaw] = useState('1');
-  const [scansLeft, setScansLeft] = useState(12);
+  const [scansLeft, setScansLeft] = useState(DEFAULT_SCANS_PER_DAY);
+  const [autoOpenTrades, setAutoOpenTrades] = useState(false);
   const [chartUri, setChartUri] = useState<string | null>(null);
   const [detectError, setDetectError] = useState<string | null>(null);
   const [scanPromptOpen, setScanPromptOpen] = useState(false);
+  const [executePromptOpen, setExecutePromptOpen] = useState(false);
+  const [executeTradesRaw, setExecuteTradesRaw] = useState('1');
+  const [executeBusy, setExecuteBusy] = useState(false);
   const scanAbort = useRef<AbortController | null>(null);
   const [radarStatus, setRadarStatus] =
     useState<RadarStatus>('INITIALISING');
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [detail, setDetail] = useState<HistoryEntry | null>(null);
+
+  const brokerHints = useMemo(
+    () => hintSymbolsFromQuotes(selected, quoteSetups),
+    [selected, quoteSetups],
+  );
+
+  const resolveSymbol = (raw: string | null | undefined) =>
+    resolveOrderSymbol(String(raw || ''), brokerHints);
 
   useEffect(() => {
     let cancelled = false;
@@ -890,6 +920,32 @@ export function ChartScannerScreen() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadScannerState().then((st) => {
+      if (cancelled) return;
+      dayKeyRef.current = st.dayKey;
+      setAutoOpenTrades(st.autoOpenTrades);
+      setScansLeft(st.scansLeft);
+      setHistory(st.history);
+      persistReady.current = true;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist toggle / history / quota whenever they change after hydrate.
+  useEffect(() => {
+    if (!persistReady.current) return;
+    void saveScannerState({
+      dayKey: dayKeyRef.current || johannesburgDayKey(),
+      autoOpenTrades,
+      scansLeft,
+      history,
+    });
+  }, [autoOpenTrades, scansLeft, history]);
 
   const [stage2, setStage2] = useState<StageState>('idle');
   const [stage3, setStage3] = useState<StageState>('idle');
@@ -936,6 +992,7 @@ export function ChartScannerScreen() {
     setTimeframe(null);
     setDetectError(null);
     setOutcome(null);
+    setExecutePromptOpen(false);
     setStage2('idle');
     setStage3('idle');
     setStage4('idle');
@@ -943,6 +1000,49 @@ export function ChartScannerScreen() {
     setStage6(liveEngine ? 'idle' : 'blocked');
     setScanPromptOpen(false);
   };
+
+  const runDailyReset = () => {
+    const today = johannesburgDayKey();
+    if (dayKeyRef.current === today) return;
+    dayKeyRef.current = today;
+    setHistory([]);
+    setScansLeft(DEFAULT_SCANS_PER_DAY);
+    setDetail(null);
+    ocrGen.current += 1;
+    setChartUri(null);
+    resetSoft();
+    setRadarStatus('INITIALISING');
+    void saveScannerState({
+      ...emptyScannerState(today),
+      autoOpenTrades,
+    });
+  };
+
+  // Midnight Africa/Johannesburg — reset scanner + clear history.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const arm = () => {
+      const ms = msUntilJohannesburgMidnight();
+      timer = setTimeout(() => {
+        runDailyReset();
+        arm();
+      }, ms);
+    };
+    arm();
+    const onFocus = () => {
+      if (dayKeyRef.current !== johannesburgDayKey()) runDailyReset();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onFocus);
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onFocus);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpenTrades, liveEngine]);
 
   const applyChart = async (uri: string | null) => {
     if (!uri) return;
@@ -973,7 +1073,7 @@ export function ChartScannerScreen() {
         return;
       }
 
-      setSymbol(detected.symbol);
+      setSymbol(resolveSymbol(detected.symbol));
       setTimeframe(detected.timeframe);
       setStage2('done');
       setRadarStatus('ANALYSING');
@@ -991,6 +1091,63 @@ export function ChartScannerScreen() {
     // Accept legacy ?demo=1 as an alias for internal proof charts only.
     if (params.proof !== '1' && params.demo !== '1') return;
     proofStarted.current = true;
+    // ?execPopup=1 — UI harness for Execute trades now? (gate-passed mock).
+    if (params.execPopup === '1') {
+      const t = setTimeout(() => {
+        const sym = resolveSymbol('XAUUSD.cent');
+        setSymbol(sym);
+        setTimeframe('H1');
+        setLotRaw('0.01');
+        setTradesRaw('1');
+        setExecuteTradesRaw('2');
+        setChartUri(null);
+        setRadarStatus('SIGNAL DETECTED');
+        setStage2('done');
+        setStage3('done');
+        setStage4('done');
+        setStage5('done');
+        setStage6('idle');
+        setAutoOpenTrades(false);
+        setOutcome({
+          bias: 'Buy',
+          confidence: 90,
+          timeframe: 'H1',
+          tp: '—',
+          sl: '—',
+          entry: '2650.00',
+          side: 'buy',
+          entryNum: 2650,
+          stopNum: 2640,
+          tpNums: [2660, 2670, 2680],
+          explanation:
+            'Proof harness: gate-passed Buy for Execute trades now? UI.',
+          autoTradeAllowed: true,
+          autoTradeReasons: [],
+          skipReason: null,
+          demo: false,
+          source: 'local',
+          mt5Live: true,
+        });
+        setHistory([
+          {
+            id: 'proof_hist_1',
+            symbol: sym,
+            timeframe: 'H1',
+            bias: 'Buy',
+            confidence: 90,
+            message: 'Proof history row',
+            lotSize: 0.01,
+            trades: 1,
+            tp: '2660 / 2670 / 2680',
+            sl: '2640',
+            chartUri: null,
+            at: new Date().toISOString(),
+          },
+        ]);
+        setExecutePromptOpen(true);
+      }, 250);
+      return () => clearTimeout(t);
+    }
     const t = setTimeout(() => {
       void (async () => {
         const uri = await buildProofChartUri('XAUUSD', 'H1');
@@ -998,7 +1155,7 @@ export function ChartScannerScreen() {
       })();
     }, 200);
     return () => clearTimeout(t);
-  }, [params.proof, params.demo]);
+  }, [params.proof, params.demo, params.execPopup]);
 
   const beginPick = async (mode: 'library' | 'camera') => {
     // Never block on radar INITIALISING / sweep — picker is always available.
@@ -1087,6 +1244,92 @@ export function ChartScannerScreen() {
     setRadarStatus('INITIALISING');
   };
 
+  const pushHistory = (row: HistoryEntry) => {
+    setHistory((prev) => [row, ...prev].slice(0, MAX_SCAN_HISTORY));
+  };
+
+  const sendTradesForOutcome = async (
+    next: ScanOutcome,
+    sym: string,
+    lotSize: number,
+    tradeCount: number,
+    token: string,
+  ) => {
+    if (!next.side || !next.autoTradeAllowed) {
+      return {
+        ok: false,
+        note: next.skipReason || SKIP_REASON.LOW_ACCURACY,
+      };
+    }
+    setExecuteBusy(true);
+    setStage5('active');
+    setStage6('idle');
+    try {
+      const result = await executeChartTrades({
+        mt5Id: token,
+        symbol: sym,
+        side: next.side,
+        accuracy: next.confidence,
+        entryPrice: next.entryNum,
+        stopLoss: next.stopNum,
+        takeProfits: next.tpNums,
+        lotSize,
+        trades: tradeCount,
+        demo: next.demo,
+        botName: activeEa?.name,
+        brokerHints,
+      });
+      if (result.status === 'skipped') {
+        setStage5('blocked');
+        setStage6('blocked');
+        setOutcome({ ...next, executeNote: result.note || null });
+        return { ok: false, note: result.note };
+      }
+      if (!result.ok) {
+        setStage5('error');
+        setStage6('error');
+        setOutcome({
+          ...next,
+          executeNote: result.note || 'OrderSend failed',
+        });
+        setDetectError(result.note || 'OrderSend failed');
+        return { ok: false, note: result.note };
+      }
+      setStage5('done');
+      setStage6('done');
+      const note =
+        result.status === 'partial'
+          ? `Opened ${result.opened}/${result.requested} · ${result.symbol}`
+          : `Opened ${result.opened} trade${result.opened === 1 ? '' : 's'} · ${result.symbol}`;
+      setOutcome({ ...next, executeNote: note });
+      setDetectError(null);
+      return { ok: true, note };
+    } finally {
+      setExecuteBusy(false);
+    }
+  };
+
+  const confirmExecuteTrades = () => {
+    if (!outcome?.autoTradeAllowed || !outcome.side || !symbol) {
+      setExecutePromptOpen(false);
+      return;
+    }
+    const tradeCount = clampTrades(parsePositive(executeTradesRaw, 1, 3));
+    setExecuteTradesRaw(String(tradeCount));
+    setExecutePromptOpen(false);
+    const lotSize = clampLot(parsePositive(lotRaw, 0.01, 1));
+    void (async () => {
+      const token = String(mt5Token || '').trim() || (await loadMt5Token());
+      await sendTradesForOutcome(
+        outcome,
+        symbol,
+        lotSize,
+        tradeCount,
+        String(token || ''),
+      );
+    })();
+  };
+
   const runScan = () => {
     if (stage3 === 'active' || stage4 === 'active') return;
     if (!chartUri || stage2 !== 'done') {
@@ -1094,14 +1337,23 @@ export function ChartScannerScreen() {
       return;
     }
     setScanPromptOpen(false);
-    const lotSize = clampLot(parsePositive(lotRaw, 0.01, 1));
-    const trades = clampTrades(parsePositive(tradesRaw, 1, 3));
+    setExecutePromptOpen(false);
+    const quote = symbol ? getQuoteSetup(symbol) : undefined;
+    const lotSize = clampLot(
+      parsePositive(lotRaw, quote?.lotSize ?? 0.01, 1),
+    );
+    const trades = clampTrades(
+      parsePositive(tradesRaw, quote?.trades ?? 1, 3),
+    );
     setLotRaw(String(lotSize));
     setTradesRaw(String(trades));
+    setExecuteTradesRaw(String(trades));
 
     if (scansLeft <= 0) {
       setStage3('error');
-      setDetectError('No scans left today. Resets overnight.');
+      setDetectError(
+        'No scans left today. Resets at 00:00 Africa/Johannesburg.',
+      );
       return;
     }
 
@@ -1120,6 +1372,7 @@ export function ChartScannerScreen() {
     const uriSnap = chartUri;
     const ocrSym = symbol;
     const ocrTf = timeframe || '—';
+    const autoOpenSnap = autoOpenTrades;
 
     const t1 = setTimeout(() => {
       setStage3('done');
@@ -1155,25 +1408,41 @@ export function ChartScannerScreen() {
         setStage5('blocked');
         setStage6('blocked');
         setRadarStatus('SIGNAL DETECTED');
-        const skipLine =
-          norm.skipReason ||
-          SKIP_REASON.API_UNCLEAR;
+        const skipLine = norm.skipReason || SKIP_REASON.API_UNCLEAR;
+        const sym = resolveSymbol(norm.symbol || ocrSym || '—');
+        const tf = norm.timeframe || ocrTf || '—';
+        const explanation =
+          norm.summary ||
+          skipLine ||
+          'Scanner preferred SKIP — no clear trade.';
         setOutcome({
           bias: 'Skip',
           confidence: norm.accuracy || 0,
-          timeframe: norm.timeframe || ocrTf || '—',
+          timeframe: tf,
           tp: '—',
           sl: '—',
-          explanation:
-            norm.summary ||
-            skipLine ||
-            'Scanner preferred SKIP — no clear trade.',
+          side: null,
+          explanation,
           autoTradeAllowed: false,
           autoTradeReasons: [skipLine],
           skipReason: skipLine,
           demo: norm.demo,
           source: 'api',
           mt5Live,
+        });
+        pushHistory({
+          id: `scan_${Date.now()}`,
+          symbol: sym,
+          timeframe: tf,
+          bias: 'Skip',
+          confidence: norm.accuracy || 0,
+          message: explanation,
+          lotSize,
+          trades,
+          tp: '—',
+          sl: '—',
+          chartUri: uriSnap,
+          at: new Date().toISOString(),
         });
         setDetectError(null);
         return;
@@ -1194,14 +1463,14 @@ export function ChartScannerScreen() {
       const side = norm.direction;
       const bias = side === 'sell' ? 'Sell' : 'Buy';
       const confidence = norm.accuracy || 0;
-      const sym = norm.symbol || ocrSym || '—';
+      const sym = resolveSymbol(norm.symbol || ocrSym || '—');
       const tf = norm.timeframe || ocrTf;
       setSymbol(sym);
       if (norm.timeframe) setTimeframe(norm.timeframe);
 
       // Never invent prices — missing scale → SKIP (prefer no trade).
-      let entry = norm.entryPrice;
-      let stop = norm.stopLoss;
+      const entry = norm.entryPrice;
+      const stop = norm.stopLoss;
       let tps: number[] = [];
       const hasLiveLevels = entry != null && stop != null;
       if (hasLiveLevels) {
@@ -1238,7 +1507,7 @@ export function ChartScannerScreen() {
       const slStr = hasLiveLevels ? formatPrice(stop!, entry!) : '—';
       const entryStr = hasLiveLevels ? formatPrice(entry!) : '—';
 
-      setOutcome({
+      const nextOutcome: ScanOutcome = {
         bias,
         confidence,
         timeframe: tf || '—',
@@ -1248,6 +1517,10 @@ export function ChartScannerScreen() {
         tps: hasLiveLevels
           ? tps.map((t) => formatPrice(t, entry!))
           : undefined,
+        side,
+        entryNum: entry,
+        stopNum: stop,
+        tpNums: hasLiveLevels ? tps : undefined,
         explanation,
         autoTradeAllowed: gate.allowed,
         autoTradeReasons: gate.reasons,
@@ -1255,32 +1528,41 @@ export function ChartScannerScreen() {
         demo: norm.demo,
         source: 'api',
         mt5Live,
-      });
+      };
+
+      setOutcome(nextOutcome);
       setStage4('done');
       setRadarStatus('SIGNAL DETECTED');
-      setHistory((prev) =>
-        [
-          {
-            id: `scan_${Date.now()}`,
-            symbol: sym,
-            timeframe: tf || '—',
-            bias: gate.allowed ? bias : `Skip/${bias}`,
-            confidence,
-            message: explanation,
-            lotSize,
-            trades,
-            tp: tpStr,
-            sl: slStr,
-            chartUri: uriSnap,
-            at: new Date().toISOString(),
-          },
-          ...prev,
-        ].slice(0, 24),
-      );
+      pushHistory({
+        id: `scan_${Date.now()}`,
+        symbol: sym,
+        timeframe: tf || '—',
+        bias: gate.allowed ? bias : `Skip/${bias}`,
+        confidence,
+        message: explanation,
+        lotSize,
+        trades,
+        tp: tpStr,
+        sl: slStr,
+        chartUri: uriSnap,
+        at: new Date().toISOString(),
+      });
 
       if (gate.allowed) {
         setStage5('done');
         setStage6('idle');
+        if (autoOpenSnap) {
+          await sendTradesForOutcome(
+            nextOutcome,
+            sym,
+            lotSize,
+            trades,
+            String(token || ''),
+          );
+        } else {
+          setExecuteTradesRaw(String(trades));
+          setExecutePromptOpen(true);
+        }
       } else {
         setStage5('blocked');
         setStage6('blocked');
@@ -1459,6 +1741,34 @@ export function ChartScannerScreen() {
           </Pressable>
         </View>
 
+        <View
+          style={[
+            styles.autoOpenRow,
+            { borderColor: hexToRgba(accent, 0.4) },
+          ]}
+          accessibilityLabel="Auto Open Trades"
+        >
+          <View style={styles.autoOpenCopy}>
+            <Text style={styles.autoOpenTitle}>Auto Open Trades</Text>
+            <Text style={styles.autoOpenSub}>
+              {autoOpenTrades
+                ? `ON — opens when gate ≥${AUTO_TRADE_MIN_ACCURACY}%`
+                : `OFF — ask before opening (≥${AUTO_TRADE_MIN_ACCURACY}% gate)`}
+            </Text>
+          </View>
+          <Switch
+            value={autoOpenTrades}
+            onValueChange={setAutoOpenTrades}
+            trackColor={{
+              false: 'rgba(255,255,255,0.18)',
+              true: hexToRgba(accent, 0.65),
+            }}
+            thumbColor={autoOpenTrades ? accent : '#f4f4f4'}
+            accessibilityLabel="Toggle Auto Open Trades"
+            testID="scanner-auto-open"
+          />
+        </View>
+
         {outcome && symbol ? (
           <View
             style={[
@@ -1558,13 +1868,44 @@ export function ChartScannerScreen() {
                         ],
                   )}
             </Text>
+            {outcome.executeNote ? (
+              <Text style={[styles.gateNote, { color: BASE.green }]}>
+                {outcome.executeNote}
+              </Text>
+            ) : null}
+            {!autoOpenTrades &&
+            outcome.autoTradeAllowed &&
+            !executeBusy &&
+            !outcome.executeNote ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Execute trades now"
+                onPress={() => {
+                  setExecuteTradesRaw(tradesRaw);
+                  setExecutePromptOpen(true);
+                }}
+                style={({ pressed }) => [
+                  styles.executeAgainBtn,
+                  {
+                    borderColor: hexToRgba(BASE.green, 0.55),
+                    opacity: pressed ? 0.88 : 1,
+                  },
+                ]}
+              >
+                <Text style={styles.executeAgainText}>Execute trades now?</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
-        {history.length > 0 ? (
-          <View style={styles.historyBlock}>
-            <Text style={styles.sectionLabel}>History</Text>
-            {history.map((row) => (
+        <View style={styles.historyBlock}>
+          <Text style={styles.sectionLabel}>History</Text>
+          {history.length === 0 ? (
+            <Text style={styles.historyEmpty}>
+              No scans yet today · clears at 00:00 Africa/Johannesburg
+            </Text>
+          ) : (
+            history.map((row) => (
               <Pressable
                 key={row.id}
                 accessibilityRole="button"
@@ -1618,9 +1959,9 @@ export function ChartScannerScreen() {
                   <Text style={styles.historyConf}>{row.confidence}%</Text>
                 </View>
               </Pressable>
-            ))}
-          </View>
-        ) : null}
+            ))
+          )}
+        </View>
 
         {/* Trade Engine only when ready for detecting / mid-pipeline — at end */}
         {stage2 === 'done' ||
@@ -1654,8 +1995,8 @@ export function ChartScannerScreen() {
             </Text>
             <Text style={styles.promptBody}>
               Chart is locked in the radar. Set lot size and trades, then tap
-              Scan now for a ~5s analyzing pass. Execute/Confirm stay blocked
-              without a live trade engine.
+              Scan now for a ~5s analyzing pass. Auto Open uses the same ≥
+              {AUTO_TRADE_MIN_ACCURACY}% gate.
             </Text>
             <LotTradesFields
               accent={accent}
@@ -1695,6 +2036,89 @@ export function ChartScannerScreen() {
               accessibilityRole="button"
               accessibilityLabel="Not now"
               onPress={() => setScanPromptOpen(false)}
+              style={styles.promptSecondary}
+            >
+              <Text style={styles.promptSecondaryText}>Not now</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={executePromptOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setExecutePromptOpen(false)}
+      >
+        <View style={styles.centerBackdrop}>
+          <View
+            style={[styles.promptCard, { borderColor: BASE.green }]}
+            testID="scanner-execute-popup"
+          >
+            <Text style={styles.promptEyebrow}>Signal ready</Text>
+            <Text style={styles.promptTitle}>Execute trades now?</Text>
+            <Text style={styles.promptBody}>
+              {symbol}
+              {outcome?.timeframe && outcome.timeframe !== '—'
+                ? ` · ${outcome.timeframe}`
+                : ''}
+              {outcome?.bias ? ` · ${outcome.bias}` : ''} ·{' '}
+              {outcome?.confidence ?? '—'}% · lot {lotRaw}. Gate ≥
+              {AUTO_TRADE_MIN_ACCURACY}% still applies.
+            </Text>
+            <View style={styles.paramField}>
+              <Text style={styles.paramLabel}>Number of trades</Text>
+              <View
+                style={[
+                  styles.paramInputWrap,
+                  { borderColor: hexToRgba(BASE.green, 0.55) },
+                ]}
+              >
+                <TextInput
+                  value={executeTradesRaw}
+                  onChangeText={setExecuteTradesRaw}
+                  keyboardType="number-pad"
+                  placeholder="1"
+                  placeholderTextColor={BASE.dim}
+                  style={styles.paramInput}
+                  accessibilityLabel="Number of trades to execute"
+                  testID="scanner-execute-trades-input"
+                />
+              </View>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Confirm execute trades"
+              disabled={executeBusy}
+              onPress={confirmExecuteTrades}
+              style={({ pressed }) => [
+                styles.promptPrimary,
+                {
+                  borderColor: BASE.green,
+                  opacity: pressed || executeBusy ? 0.85 : 1,
+                },
+              ]}
+            >
+              <LinearGradient
+                colors={[
+                  hexToRgba(BASE.green, 0.65),
+                  hexToRgba(BASE.green, 0.2),
+                  '#0A0000',
+                ]}
+                start={{ x: 0.2, y: 0 }}
+                end={{ x: 0.9, y: 1 }}
+                style={styles.promptPrimaryGrad}
+              >
+                <Ionicons name="flash" size={18} color={BASE.white} />
+                <Text style={styles.promptPrimaryText}>
+                  {executeBusy ? 'Sending…' : 'Execute'}
+                </Text>
+              </LinearGradient>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel execute"
+              onPress={() => setExecutePromptOpen(false)}
               style={styles.promptSecondary}
             >
               <Text style={styles.promptSecondaryText}>Not now</Text>
@@ -2117,7 +2541,40 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   tpChipVal: { color: BASE.white, fontSize: 13, fontWeight: '800' },
+  autoOpenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderWidth: 1.5,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: BASE.panel,
+  },
+  autoOpenCopy: { flex: 1, gap: 2 },
+  autoOpenTitle: { color: BASE.white, fontSize: 14, fontWeight: '800' },
+  autoOpenSub: { color: BASE.muted, fontSize: 11, lineHeight: 15 },
+  executeAgainBtn: {
+    marginTop: 8,
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,200,83,0.1)',
+  },
+  executeAgainText: {
+    color: BASE.green,
+    fontSize: 13,
+    fontWeight: '800',
+  },
   historyBlock: { gap: 8 },
+  historyEmpty: {
+    color: BASE.dim,
+    fontSize: 12,
+    lineHeight: 17,
+    paddingVertical: 4,
+  },
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
