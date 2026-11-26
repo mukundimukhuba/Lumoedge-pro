@@ -463,10 +463,15 @@ export function EaControlScreen() {
             source={eaPicture}
             style={[
               styles.heroCoverImg,
+              // RN-web Image paints via background-image; set both object-* and
+              // background* so cover + face bias apply across engines.
               Platform.OS === 'web'
                 ? ({
                     objectFit: 'cover',
                     objectPosition: 'center 22%',
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center 22%',
+                    backgroundRepeat: 'no-repeat',
                   } as object)
                 : null,
             ]}
