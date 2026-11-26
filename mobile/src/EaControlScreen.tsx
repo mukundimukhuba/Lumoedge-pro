@@ -25,7 +25,15 @@ import { AccessGateScreen } from './AccessGateScreen';
 import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { pushAutoTradeHistory } from './autoTradeHistory';
 import { BotTradeFloat } from './BotTradeFloat';
+import {
+  searchBrokerSymbols,
+  type BrokerSymbol,
+} from './brokers/api';
 import { loadMt5Token } from './brokers/mt5Token';
+import {
+  cardForSymbol,
+  filterFallbackSymbols,
+} from './brokers/symbolMeta';
 import { eaPictureImageSource } from './eaPicture';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
@@ -35,7 +43,6 @@ import { MirrorSignalListener } from './portal/MirrorSignalListener';
 import {
   useAppState,
   ACCENTS,
-  SYMBOLS,
   normalizeQuoteSetup,
   type QuoteSetup,
 } from './AppState';
@@ -159,7 +166,6 @@ export function EaControlScreen() {
     ? activeEa.pictureUri
     : null;
   const [sheet, setSheet] = useState<Sheet>('none');
-  const [query, setQuery] = useState('');
   const [calMonth] = useState(() => new Date());
   const [pickedDay, setPickedDay] = useState<number | null>(12);
   const [brokerConnected, setBrokerConnected] = useState(false);
@@ -241,12 +247,6 @@ export function EaControlScreen() {
       ? BASE.muted
       : accent;
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toUpperCase();
-    if (!q) return [...SYMBOLS];
-    return SYMBOLS.filter((s) => s.includes(q));
-  }, [query]);
-
   const monthLabel = calMonth.toLocaleString('en', {
     month: 'long',
     year: 'numeric',
@@ -319,7 +319,6 @@ export function EaControlScreen() {
       } else {
         Alert.alert('Quotes required', msg);
       }
-      setQuery('');
       setSheet('quotes');
       return;
     }
@@ -546,7 +545,6 @@ export function EaControlScreen() {
                 label="quotes"
                 size={ringSm}
                 onPress={() => {
-                  setQuery('');
                   setSheet('quotes');
                 }}
                 icon={
@@ -788,9 +786,7 @@ export function EaControlScreen() {
             {sheet === 'quotes' ? (
               <QuotesPanel
                 accent={accent}
-                query={query}
-                setQuery={setQuery}
-                filtered={filtered}
+                mt5Token={mt5Token}
                 selected={selected}
                 quoteSetups={quoteSetups}
                 upsertQuoteSetup={upsertQuoteSetup}
@@ -1027,11 +1023,11 @@ export function EaControlScreen() {
   );
 }
 
+type QuotesTab = 'allowed' | 'selected';
+
 function QuotesPanel({
   accent,
-  query,
-  setQuery,
-  filtered,
+  mt5Token,
   selected,
   quoteSetups,
   upsertQuoteSetup,
@@ -1039,36 +1035,107 @@ function QuotesPanel({
   onDone,
 }: {
   accent: string;
-  query: string;
-  setQuery: (v: string) => void;
-  filtered: string[];
+  mt5Token: string | null;
   selected: string[];
   quoteSetups: QuoteSetup[];
   upsertQuoteSetup: (setup: QuoteSetup) => void;
   removeQuoteSetup: (symbol: string) => void;
   onDone: () => void;
 }) {
-  const [custom, setCustom] = useState('');
+  const [tab, setTab] = useState<QuotesTab>('allowed');
+  const [query, setQuery] = useState('');
+  const [brokerCards, setBrokerCards] = useState<BrokerSymbol[]>([]);
+  const [brokerLoading, setBrokerLoading] = useState(false);
+  const [brokerError, setBrokerError] = useState<string | null>(null);
+  const [brokerTotal, setBrokerTotal] = useState(0);
+  const [metaBySym, setMetaBySym] = useState<Record<string, BrokerSymbol>>(
+    {},
+  );
   const [promptSym, setPromptSym] = useState<string | null>(null);
   const [lotRaw, setLotRaw] = useState('0.01');
   const [tradesRaw, setTradesRaw] = useState('1');
-  const catalog = filtered.filter((s) => !selected.includes(s));
+  const searchGen = useRef(0);
+
+  const connected = Boolean(String(mt5Token || '').trim());
+
   const setupBySym = useMemo(() => {
     const m = new Map<string, QuoteSetup>();
     for (const s of quoteSetups) m.set(s.symbol, s);
     return m;
   }, [quoteSetups]);
 
+  useEffect(() => {
+    if (!connected) {
+      setBrokerCards([]);
+      setBrokerError(null);
+      setBrokerTotal(0);
+      setBrokerLoading(false);
+      return;
+    }
+    const token = String(mt5Token || '').trim();
+    const gen = ++searchGen.current;
+    const handle = setTimeout(() => {
+      void (async () => {
+        setBrokerLoading(true);
+        setBrokerError(null);
+        const res = await searchBrokerSymbols(token, query, 48);
+        if (searchGen.current !== gen) return;
+        setBrokerLoading(false);
+        if (!res.ok) {
+          setBrokerCards([]);
+          setBrokerTotal(0);
+          setBrokerError(res.error || 'Could not load broker symbols');
+          return;
+        }
+        setBrokerCards(res.symbols);
+        setBrokerTotal(res.total ?? res.symbols.length);
+        setMetaBySym((prev) => {
+          const next = { ...prev };
+          for (const s of res.symbols) {
+            next[s.symbol.toUpperCase()] = s;
+          }
+          return next;
+        });
+      })();
+    }, 220);
+    return () => clearTimeout(handle);
+  }, [connected, mt5Token, query]);
+
+  const allowedCards = useMemo(() => {
+    // Connected session: only real broker symbols — never invent a fake catalog.
+    if (connected) return brokerCards;
+    return filterFallbackSymbols(query);
+  }, [connected, brokerCards, query]);
+
+  const selectedCards = useMemo(() => {
+    const q = query.trim().replace(/\s+/g, '').toUpperCase();
+    return selected
+      .filter((sym) => !q || sym.toUpperCase().includes(q))
+      .map((sym) =>
+        cardForSymbol(sym, metaBySym[sym.toUpperCase()] || null),
+      );
+  }, [selected, query, metaBySym]);
+
+  const gridCards = tab === 'allowed' ? allowedCards : selectedCards;
+
   const openPrompt = (sym: string) => {
     const s = String(sym || '')
       .trim()
-      .replace(/\s+/g, '')
-      .toUpperCase();
+      .replace(/\s+/g, '');
     if (!s) return;
-    const existing = setupBySym.get(s);
+    // Prefer exact broker casing when we have a live match.
+    const live =
+      brokerCards.find((c) => c.symbol.toUpperCase() === s.toUpperCase())
+        ?.symbol || s;
+    const existing =
+      setupBySym.get(live) ||
+      setupBySym.get(live.toUpperCase()) ||
+      [...setupBySym.entries()].find(
+        ([k]) => k.toUpperCase() === live.toUpperCase(),
+      )?.[1];
     setLotRaw(String(existing?.lotSize ?? 0.01));
     setTradesRaw(String(existing?.trades ?? 1));
-    setPromptSym(s);
+    setPromptSym(live);
   };
 
   const confirmPrompt = () => {
@@ -1083,138 +1150,179 @@ function QuotesPanel({
     if (!setup) return;
     upsertQuoteSetup(setup);
     setPromptSym(null);
-    setCustom('');
     setQuery('');
+    setTab('selected');
   };
 
-  const submitCustom = () => {
-    const s = custom.trim().replace(/\s+/g, '').toUpperCase();
+  const submitTyped = () => {
+    const s = query.trim().replace(/\s+/g, '');
     if (!s) return;
-    openPrompt(s);
+    // Link the real broker symbol when autocomplete has an exact/prefix hit.
+    const upper = s.toUpperCase();
+    const exact = brokerCards.find((c) => c.symbol.toUpperCase() === upper);
+    const prefix = brokerCards.find((c) =>
+      c.symbol.toUpperCase().startsWith(upper),
+    );
+    openPrompt(exact?.symbol || prefix?.symbol || s);
   };
+
+  const hint = connected
+    ? brokerLoading
+      ? 'Loading symbols from your connected broker…'
+      : brokerError
+        ? `${brokerError} — you can still type a symbol.`
+        : brokerTotal
+          ? `${brokerTotal} symbols from this broker session.`
+          : 'Broker connected — type to search its symbols.'
+    : 'Connect MetaTrader to load this broker. You can still type a symbol.';
 
   return (
     <>
-      <Text style={styles.quotesSectionLabel}>Selected symbols</Text>
-      {selected.length === 0 ? (
-        <Text style={styles.empty}>
-          None selected — add from the catalog or type a custom MT5 symbol.
-          Nothing is auto-added; picks stay until you remove them.
-        </Text>
-      ) : (
-        <View style={styles.selectedWrap}>
-          {selected.map((sym) => {
-            const setup = setupBySym.get(sym);
+      <View style={styles.quotesTabRow}>
+        <View style={styles.quotesTabPill}>
+          {(
+            [
+              { id: 'allowed', label: 'Allowed Symbols' },
+              { id: 'selected', label: 'Selected Symbols' },
+            ] as const
+          ).map((t) => {
+            const on = tab === t.id;
             return (
               <Pressable
-                key={sym}
+                key={t.id}
                 accessibilityRole="button"
-                accessibilityLabel={`Edit or remove ${sym}`}
-                onPress={() => openPrompt(sym)}
-                onLongPress={() => removeQuoteSetup(sym)}
+                accessibilityState={{ selected: on }}
+                accessibilityLabel={t.label}
+                onPress={() => setTab(t.id)}
                 style={[
-                  styles.selectedChip,
-                  { borderColor: hexToRgba(accent, 0.55) },
+                  styles.quotesTabBtn,
+                  on && {
+                    backgroundColor: accent,
+                  },
                 ]}
               >
-                <View>
-                  <Text style={styles.selectedChipText}>{sym}</Text>
-                  <Text style={styles.selectedChipMeta}>
-                    {setup
-                      ? `${setup.lotSize} lot · ${setup.trades} trade${
-                          setup.trades === 1 ? '' : 's'
-                        }`
-                      : 'tap to set lot / trades'}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Remove ${sym}`}
-                  onPress={() => removeQuoteSetup(sym)}
-                  hitSlop={8}
+                <Text
+                  style={[
+                    styles.quotesTabText,
+                    on && styles.quotesTabTextOn,
+                  ]}
                 >
-                  <Ionicons name="close-circle" size={16} color={accent} />
-                </Pressable>
+                  {t.label}
+                </Text>
               </Pressable>
             );
           })}
         </View>
-      )}
-
-      <Text style={[styles.quotesSectionLabel, { marginTop: 10 }]}>
-        Add custom MT5 symbol
-      </Text>
-      <View style={[styles.searchBox, { borderColor: accent }]}>
-        <Ionicons name="create-outline" size={16} color={accent} />
-        <TextInput
-          value={custom}
-          onChangeText={setCustom}
-          placeholder="e.g. XAUUSD.r · NAS100 · BTCUSD"
-          placeholderTextColor={BASE.muted}
-          autoCapitalize="characters"
-          autoCorrect={false}
-          autoComplete="off"
-          style={styles.searchInput}
-          onSubmitEditing={submitCustom}
-          returnKeyType="done"
-          accessibilityLabel="Custom MT5 symbol"
-        />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Add custom symbol"
-          onPress={submitCustom}
-          hitSlop={8}
-          disabled={!custom.trim()}
-        >
-          <Ionicons
-            name="add-circle"
-            size={22}
-            color={custom.trim() ? accent : BASE.muted}
-          />
-        </Pressable>
       </View>
 
-      <Text style={[styles.quotesSectionLabel, { marginTop: 10 }]}>
-        Symbols
-      </Text>
-      <View style={[styles.searchBox, { borderColor: accent }]}>
-        <Ionicons name="search" size={16} color={BASE.muted} />
+      <View
+        style={[
+          styles.searchBox,
+          styles.quotesSearchBox,
+          { borderColor: 'rgba(255,255,255,0.18)' },
+        ]}
+      >
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="search catalog"
+          placeholder="Type or edit a symbol, e.g. XAUUSD.mic"
           placeholderTextColor={BASE.muted}
           autoCapitalize="characters"
           autoCorrect={false}
           autoComplete="off"
           style={styles.searchInput}
+          onSubmitEditing={submitTyped}
+          returnKeyType="done"
+          accessibilityLabel="Type or edit a symbol"
         />
+        {query.trim() ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Allow typed symbol"
+            onPress={submitTyped}
+            hitSlop={8}
+          >
+            <Ionicons name="add-circle" size={22} color={accent} />
+          </Pressable>
+        ) : null}
       </View>
+      <Text style={styles.quotesHint}>{hint}</Text>
+
       <FlatList
-        data={catalog}
-        keyExtractor={(item) => item}
-        style={styles.symbolList}
+        data={gridCards}
+        keyExtractor={(item) => item.symbol}
+        numColumns={2}
+        columnWrapperStyle={styles.quotesGridRow}
+        style={styles.quotesGrid}
+        contentContainerStyle={styles.quotesGridContent}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
           <Text style={styles.empty}>
-            {query.trim()
-              ? 'No catalog match — use Add custom above'
-              : 'All catalog symbols are selected'}
+            {tab === 'selected'
+              ? query.trim()
+                ? 'No selected match'
+                : 'None selected — pick from Allowed Symbols or type one.'
+              : brokerLoading
+                ? 'Loading…'
+                : query.trim()
+                  ? 'No symbol match — press + to use what you typed'
+                  : 'No symbols yet'}
           </Text>
         }
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() => openPrompt(item)}
-            style={({ pressed }) => [
-              styles.symbolRow,
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Text style={styles.symbolCode}>{item}</Text>
-            <Ionicons name="add-circle-outline" size={20} color={accent} />
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const isSelected = selected.some(
+            (s) => s.toUpperCase() === item.symbol.toUpperCase(),
+          );
+          const setup =
+            setupBySym.get(item.symbol) ||
+            [...setupBySym.entries()].find(
+              ([k]) => k.toUpperCase() === item.symbol.toUpperCase(),
+            )?.[1];
+          return (
+            <Pressable
+              onPress={() => openPrompt(item.symbol)}
+              onLongPress={
+                tab === 'selected'
+                  ? () => removeQuoteSetup(item.symbol)
+                  : undefined
+              }
+              style={({ pressed }) => [
+                styles.quoteCard,
+                {
+                  borderColor: isSelected
+                    ? hexToRgba(accent, 0.65)
+                    : 'rgba(120,160,220,0.35)',
+                },
+                pressed && { opacity: 0.85 },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.category} ${item.symbol}`}
+            >
+              <Text style={styles.quoteCardCategory}>{item.category}</Text>
+              <Text style={styles.quoteCardTicker} numberOfLines={1}>
+                {item.symbol}
+              </Text>
+              <Text style={styles.quoteCardDesc} numberOfLines={2}>
+                {tab === 'selected' && setup
+                  ? `${item.description} · ${setup.lotSize} lot · ${setup.trades}t`
+                  : item.description}
+              </Text>
+              {tab === 'selected' ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${item.symbol}`}
+                  onPress={() => removeQuoteSetup(item.symbol)}
+                  hitSlop={8}
+                  style={styles.quoteCardRemove}
+                >
+                  <Ionicons name="close-circle" size={16} color={accent} />
+                </Pressable>
+              ) : null}
+            </Pressable>
+          );
+        }}
       />
+
       <Pressable
         style={[
           styles.doneBtn,
@@ -1245,7 +1353,9 @@ function QuotesPanel({
           >
             <Text style={styles.setupTitle}>{promptSym}</Text>
             <Text style={styles.setupHint}>
-              Set lot size and how many trades for Auto Trade on this symbol.
+              {connected
+                ? 'Link this broker symbol for Auto Trade — set lot size and trade count.'
+                : 'Set lot size and how many trades for Auto Trade on this symbol.'}
             </Text>
             <Text style={styles.setupLabel}>Lot size</Text>
             <TextInput
@@ -1780,41 +1890,91 @@ const styles = StyleSheet.create({
       ? ({ outlineStyle: 'none', outlineWidth: 0 } as object)
       : null),
   },
-  quotesSectionLabel: {
-    color: BASE.muted,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 6,
-  },
-  selectedWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  quotesTabRow: {
+    alignItems: 'center',
     marginBottom: 4,
   },
-  selectedChip: {
+  quotesTabPill: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1.5,
-    borderRadius: 14,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 999,
+    backgroundColor: 'rgba(20,20,20,0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    padding: 3,
+    gap: 2,
   },
-  selectedChipText: {
-    color: BASE.white,
-    fontSize: 13,
+  quotesTabBtn: {
+    borderRadius: 999,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+  },
+  quotesTabText: {
+    color: BASE.muted,
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 0.4,
   },
-  selectedChipMeta: {
+  quotesTabTextOn: {
+    color: BASE.black,
+  },
+  quotesSearchBox: {
+    borderRadius: 16,
+    paddingVertical: Platform.OS === 'web' ? 12 : 10,
+    marginTop: 4,
+  },
+  quotesHint: {
     color: BASE.muted,
     fontSize: 11,
-    fontWeight: '600',
+    lineHeight: 15,
     marginTop: 2,
+    marginBottom: 4,
+  },
+  quotesGrid: {
+    maxHeight: 340,
+    flexGrow: 0,
+  },
+  quotesGridContent: {
+    paddingBottom: 4,
+    gap: 8,
+  },
+  quotesGridRow: {
+    gap: 8,
+  },
+  quoteCard: {
+    flexGrow: 1,
+    flexBasis: '47%',
+    maxWidth: '48.5%',
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(8,10,14,0.82)',
+    minHeight: 88,
+  },
+  quoteCardCategory: {
+    color: BASE.muted,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  quoteCardTicker: {
+    color: BASE.white,
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  quoteCardDesc: {
+    color: BASE.muted,
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 4,
+    lineHeight: 16,
+  },
+  quoteCardRemove: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
   },
   setupBackdrop: {
     flex: 1,
@@ -1883,22 +2043,6 @@ const styles = StyleSheet.create({
   setupConfirmText: {
     color: BASE.white,
     fontWeight: '800',
-  },
-  symbolList: { maxHeight: 220 },
-  symbolRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.12)',
-  },
-  symbolCode: {
-    color: BASE.white,
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.5,
   },
   empty: {
     color: BASE.muted,
