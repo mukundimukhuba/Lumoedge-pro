@@ -116,6 +116,12 @@ export async function verifyDemoMentor(
   email: string,
   password: string,
 ): Promise<MentorSession | null> {
+  try {
+    const { hydrateSupabaseConfig } = await import('../supabase/client');
+    await hydrateSupabaseConfig();
+  } catch {
+    /* local login still possible */
+  }
   const normalized = email.trim().toLowerCase();
   const digest = await hashPassword(password);
 
@@ -211,6 +217,12 @@ export async function verifyDemoMentor(
 export async function refreshMentorApproval(
   email: string,
 ): Promise<MentorSession | null> {
+  try {
+    const { hydrateSupabaseConfig } = await import('../supabase/client');
+    await hydrateSupabaseConfig();
+  } catch {
+    /* local refresh still possible */
+  }
   const key = email.trim().toLowerCase();
   const map = await loadProfiles();
   const stored = map[key];
@@ -287,6 +299,12 @@ export async function registerMentor(fields: {
   const map = await loadProfiles();
   map[email] = { ...session, passwordHash };
   await saveProfiles(map);
+  try {
+    const { hydrateSupabaseConfig } = await import('../supabase/client');
+    await hydrateSupabaseConfig();
+  } catch {
+    /* local signup still valid */
+  }
   // Prefer security-definer RPC so password_hash lands even when direct
   // upsert fails (e.g. missing portal_role column). Local signup still wins.
   try {
