@@ -1542,7 +1542,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     letterSpacing: 0.3,
-    textTransform: 'lowercase',
+    // Preserve exact EA display-name casing as stored/typed (no force lower/title-case).
     textShadowColor: 'rgba(0,0,0,0.9)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 14,
@@ -1716,7 +1716,7 @@ const styles = StyleSheet.create({
     color: BASE.white,
     fontSize: 15,
     fontWeight: '700',
-    textTransform: 'lowercase',
+    // Preserve exact EA display-name casing as stored/typed.
   },
   statusState: {
     marginTop: 2,
