@@ -1,12 +1,17 @@
 /**
- * Compress EA pictures so localStorage can keep key + image without QuotaExceeded.
- * Target: ~256px JPEG data URL (typically 20–60KB).
+ * Compress EA pictures for vault / remote upload without crushing hero sharpness.
+ * Target: ~1280px longest edge JPEG (retina phone hero ≈ 390×3 CSS px).
+ * Metadata localStorage still strips data-URLs; IndexedDB + Supabase hold the bytes.
  */
 
-const MAX_EDGE = 256;
-const JPEG_QUALITY = 0.62;
-/** Soft cap — re-encode harder if still over this. */
-const MAX_DATA_URL_CHARS = 90_000;
+import { PixelRatio, type ImageSourcePropType } from 'react-native';
+
+/** Longest edge for stored EA pictures — enough for 3× phone-width heroes. */
+export const EA_PICTURE_MAX_EDGE = 1280;
+const JPEG_QUALITY = 0.85;
+/** Soft cap — re-encode harder if still over this (~260KB binary). */
+const MAX_DATA_URL_CHARS = 350_000;
+const FALLBACK_EDGES = [960, 720] as const;
 
 function isDataUrl(uri: string | null | undefined): uri is string {
   return !!uri && uri.startsWith('data:');
@@ -21,15 +26,39 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function canvasToJpeg(
-  canvas: HTMLCanvasElement,
-  quality: number,
-): string {
+function canvasToJpeg(canvas: HTMLCanvasElement, quality: number): string {
   return canvas.toDataURL('image/jpeg', quality);
+}
+
+function drawScaled(
+  img: HTMLImageElement,
+  edge: number,
+): HTMLCanvasElement | null {
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  if (!w || !h) return null;
+
+  const scale = Math.min(1, edge / Math.max(w, h));
+  const tw = Math.max(1, Math.round(w * scale));
+  const th = Math.max(1, Math.round(h * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = tw;
+  canvas.height = th;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  // Prefer high-quality downscale when the browser supports it.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.fillStyle = '#0a0a0a';
+  ctx.fillRect(0, 0, tw, th);
+  ctx.drawImage(img, 0, 0, tw, th);
+  return canvas;
 }
 
 /**
  * Resize + JPEG-encode a data URL (web). Non-data URIs and native paths pass through.
+ * Never upscales — only shrinks oversized uploads.
  */
 export async function compressEaPicture(
   uri: string | null,
@@ -37,14 +66,8 @@ export async function compressEaPicture(
   if (!uri) return null;
   if (!uri.startsWith('data:')) return uri;
 
-  // Already small enough — keep.
-  if (uri.length <= MAX_DATA_URL_CHARS && uri.startsWith('data:image/jpeg')) {
-    return uri;
-  }
-
   if (typeof document === 'undefined') {
-    // Native / no DOM: trim only if absurdly large PNG/JPEG data URL by leaving as-is;
-    // native AsyncStorage has higher limits than browser localStorage.
+    // Native / no DOM: leave as-is; AsyncStorage + vault tolerate larger payloads.
     return uri;
   }
 
@@ -54,34 +77,79 @@ export async function compressEaPicture(
     const h = img.naturalHeight || img.height;
     if (!w || !h) return uri;
 
-    const scale = Math.min(1, MAX_EDGE / Math.max(w, h));
-    const tw = Math.max(1, Math.round(w * scale));
-    const th = Math.max(1, Math.round(h * scale));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = tw;
-    canvas.height = th;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return uri;
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0, 0, tw, th);
-    ctx.drawImage(img, 0, 0, tw, th);
-
-    let out = canvasToJpeg(canvas, JPEG_QUALITY);
-    if (out.length > MAX_DATA_URL_CHARS) {
-      out = canvasToJpeg(canvas, 0.45);
+    // Already within the hero budget and a compact JPEG — keep (no re-crush).
+    if (
+      Math.max(w, h) <= EA_PICTURE_MAX_EDGE &&
+      uri.startsWith('data:image/jpeg') &&
+      uri.length <= MAX_DATA_URL_CHARS
+    ) {
+      return uri;
     }
-    if (out.length > MAX_DATA_URL_CHARS) {
-      // Smaller edge
-      const s2 = Math.min(1, 160 / Math.max(w, h));
-      canvas.width = Math.max(1, Math.round(w * s2));
-      canvas.height = Math.max(1, Math.round(h * s2));
-      ctx.fillStyle = '#0a0a0a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      out = canvasToJpeg(canvas, 0.4);
+
+    const edges = [EA_PICTURE_MAX_EDGE, ...FALLBACK_EDGES];
+    const qualities = [JPEG_QUALITY, 0.75, 0.62];
+
+    for (const edge of edges) {
+      const canvas = drawScaled(img, edge);
+      if (!canvas) return uri;
+      for (const q of qualities) {
+        const out = canvasToJpeg(canvas, q);
+        if (out && out.length <= MAX_DATA_URL_CHARS) return out;
+      }
     }
-    return out || uri;
+
+    // Last resort: smallest edge + lowest quality we tried.
+    const last = drawScaled(img, FALLBACK_EDGES[FALLBACK_EDGES.length - 1]);
+    if (!last) return uri;
+    return canvasToJpeg(last, 0.55) || uri;
+  } catch {
+    return uri;
+  }
+}
+
+/**
+ * Build an Image source sized for the device pixel ratio so RN/web
+ * does not stretch a low logical size across a retina canvas.
+ */
+export function eaPictureImageSource(
+  uri: string,
+  layout: { width: number; height: number },
+): ImageSourcePropType {
+  const dpr = Math.max(1, PixelRatio.get());
+  const width = Math.max(1, Math.round(layout.width * dpr));
+  const height = Math.max(1, Math.round(layout.height * dpr));
+  return { uri, width, height };
+}
+
+/**
+ * Prefer Supabase image render transforms when the URI is a public object URL,
+ * so the CDN can serve a display-sized derivative instead of a tiny original.
+ * Falls back to the original URI when the path is not a Supabase public object.
+ */
+export function eaPictureDisplayUri(
+  uri: string | null | undefined,
+  layout: { width: number; height: number },
+): string | null {
+  if (!uri) return null;
+  if (!uri.startsWith('http')) return uri;
+
+  const dpr = Math.max(1, PixelRatio.get());
+  const w = Math.max(64, Math.round(layout.width * dpr));
+  const h = Math.max(64, Math.round(layout.height * dpr));
+
+  try {
+    const u = new URL(uri);
+    const marker = '/storage/v1/object/public/';
+    const idx = u.pathname.indexOf(marker);
+    if (idx === -1) return uri;
+
+    const publicPath = u.pathname.slice(idx + marker.length);
+    u.pathname = `/storage/v1/render/image/public/${publicPath}`;
+    u.searchParams.set('width', String(w));
+    u.searchParams.set('height', String(h));
+    u.searchParams.set('resize', 'cover');
+    u.searchParams.set('quality', '85');
+    return u.toString();
   } catch {
     return uri;
   }
