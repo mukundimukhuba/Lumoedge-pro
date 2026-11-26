@@ -21,6 +21,7 @@ import {
 } from '../subscriptions/types';
 import { toSafeUserMessage } from './safeErrors';
 import {
+  groupKeysByIssuer,
   isSuperAdminEmail,
   scopeCatalogForMentor,
 } from './mentorScope';
@@ -45,6 +46,11 @@ export function LicenseKeysPanel() {
   );
   const myEas = scoped.eas;
   const myKeys = scoped.keys;
+  const isAdmin = isSuperAdminEmail(mentor?.email);
+  const keysByIssuer = useMemo(
+    () => (isAdmin ? groupKeysByIssuer(myKeys) : []),
+    [isAdmin, myKeys],
+  );
   const [eaId, setEaId] = useState<string>(myEas[0]?.id ?? '');
   const [assigneeName, setAssigneeName] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
@@ -335,23 +341,32 @@ export function LicenseKeysPanel() {
   return (
     <View style={styles.wrap}>
       <View style={styles.card}>
-        <Text style={styles.h2}>Generate license keys</Text>
+        <Text style={styles.h2}>
+          {isAdmin ? 'License keys oversight' : 'Generate license keys'}
+        </Text>
         <Text style={styles.hint}>
-          Select your EA, enter the client’s registered email, choose duration,
-          confirm you’re not a robot, then generate. Keys are linked to you + EA
-          + client email. Other mentors’ EAs never appear here.
+          {isAdmin
+            ? 'Super Admin can review keys issued by mentors (grouped below). Other mentors’ EA catalogs stay private — only your own EAs appear for generate.'
+            : 'Select your EA, enter the client’s registered email, choose duration, confirm you’re not a robot, then generate. Keys are linked to you + EA + client email. Other mentors’ EAs never appear here.'}
         </Text>
         <Text style={styles.env}>{envLine}</Text>
-        {mentor?.email && !isSuperAdminEmail(mentor.email) ? (
+        {mentor?.email ? (
           <Text style={styles.env}>
-            Scoped to {mentor.email} · {myEas.length} EA
-            {myEas.length === 1 ? '' : 's'}
+            {isAdmin
+              ? `Keys oversight · your EAs: ${myEas.length}`
+              : `Scoped to ${mentor.email} · ${myEas.length} EA${
+                  myEas.length === 1 ? '' : 's'
+                }`}
           </Text>
         ) : null}
 
         <Text style={styles.label}>1 · SELECT YOUR EA</Text>
         {myEas.length === 0 ? (
-          <Text style={styles.hint}>No robots yet — save one under Manage EAs.</Text>
+          <Text style={styles.hint}>
+            {isAdmin
+              ? 'No EAs owned by Super Admin — mentors generate keys from their own robots.'
+              : 'No robots yet — save one under Manage EAs.'}
+          </Text>
         ) : (
           <View style={styles.eaList}>
             {myEas.map((ea) => {
@@ -520,9 +535,40 @@ export function LicenseKeysPanel() {
       ) : null}
 
       <View style={styles.card}>
-        <Text style={styles.h2}>Your issued keys</Text>
+        <Text style={styles.h2}>
+          {isAdmin ? 'Keys by mentor / issuer' : 'Your issued keys'}
+        </Text>
         {myKeys.length === 0 ? (
           <Text style={styles.hint}>No keys yet.</Text>
+        ) : isAdmin ? (
+          keysByIssuer.map((group) => (
+            <View key={group.issuer} style={styles.issuerGroup}>
+              <Text style={styles.issuerTitle}>{group.issuer}</Text>
+              <Text style={styles.hint}>
+                {group.keys.length} key{group.keys.length === 1 ? '' : 's'}
+              </Text>
+              {group.keys.map((k) => (
+                <View key={k.id} style={styles.keyRow}>
+                  <Text style={styles.keyEa}>{k.eaName}</Text>
+                  <Text style={styles.keyVal} selectable>
+                    {k.key}
+                  </Text>
+                  <Text style={styles.hint}>
+                    For {k.assigneeName || '—'}
+                    {k.assigneeEmail ? ` · ${k.assigneeEmail}` : ''}
+                  </Text>
+                  <Text style={styles.hint}>
+                    {k.licenseDuration || '—'} ·{' '}
+                    {k.licenseStatus || k.status || 'unused'} ·{' '}
+                    {new Date(k.createdAt).toLocaleString()}
+                  </Text>
+                  {k.subscriptionId ? (
+                    <Text style={styles.hint}>Sub: {k.subscriptionId}</Text>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ))
         ) : (
           myKeys.map((k) => (
             <View key={k.id} style={styles.keyRow}>
@@ -564,6 +610,13 @@ const styles = StyleSheet.create({
   hint: { color: '#9CA3AF', fontSize: 12, lineHeight: 17 },
   meta: { color: '#E5E7EB', fontSize: 13, lineHeight: 18 },
   env: { color: '#93C5FD', fontSize: 11, lineHeight: 16 },
+  issuerGroup: {
+    gap: 6,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#1F2937',
+  },
+  issuerTitle: { color: '#93C5FD', fontWeight: '800', fontSize: 13 },
   label: {
     color: '#9CA3AF',
     fontSize: 11,

@@ -1,5 +1,8 @@
 /**
  * Per-mentor catalog isolation helpers for the Mentors Portal.
+ *
+ * EAs: always owner-scoped (including super admin — no other mentors' catalogs).
+ * Keys: mentors see own/issued; super admin may see all keys for oversight.
  */
 import { DEMO_MENTOR_EMAIL } from '../auth/mentorAuth';
 
@@ -28,8 +31,8 @@ export type IssuedKey = {
 
 /**
  * Scope EAs + keys for a portal actor.
- * Super admin sees everything (including legacy unowned rows).
- * Mentors only see EAs they own and keys they issued (or keys under their EAs).
+ * - EAs: only rows owned by the actor (super admin included — privacy).
+ * - Keys: mentors → issued by them or under their EAs; SA → all keys.
  */
 export function scopeCatalogForMentor<
   E extends OwnedEa,
@@ -40,14 +43,20 @@ export function scopeCatalogForMentor<
   actorEmail: string | null | undefined,
 ): { eas: E[]; keys: K[] } {
   const actor = normalizeMentorEmail(actorEmail);
-  if (!actor || isSuperAdminEmail(actor)) {
-    return { eas, keys };
+  if (!actor) {
+    return { eas: [], keys: [] };
   }
 
   const myEas = eas.filter(
     (e) => normalizeMentorEmail(e.ownerEmail) === actor,
   );
   const myEaIds = new Set(myEas.map((e) => e.id));
+
+  if (isSuperAdminEmail(actor)) {
+    // SA may oversee all license keys; never other mentors' EA rows.
+    return { eas: myEas, keys };
+  }
+
   const myKeys = keys.filter((k) => {
     const issuer = normalizeMentorEmail(k.issuedByEmail);
     if (issuer === actor) return true;
@@ -63,11 +72,10 @@ export function canManageEa(
 ): boolean {
   const actor = normalizeMentorEmail(actorEmail);
   if (!actor) return false;
-  if (isSuperAdminEmail(actor)) return true;
   if (!ea) return true; // new create — stamp ownership on write
   const owner = normalizeMentorEmail(ea.ownerEmail);
   // Legacy unowned rows: mentors must not claim/edit; admin only.
-  if (!owner) return false;
+  if (!owner) return isSuperAdminEmail(actor);
   return owner === actor;
 }
 
@@ -77,4 +85,20 @@ export function canUseEaForKeys(
   actorEmail: string | null | undefined,
 ): boolean {
   return canManageEa(ea, actorEmail);
+}
+
+/** Group keys by issuer email for Super Admin oversight UI. */
+export function groupKeysByIssuer<K extends IssuedKey>(
+  keys: K[],
+): { issuer: string; keys: K[] }[] {
+  const map = new Map<string, K[]>();
+  for (const k of keys) {
+    const issuer = normalizeMentorEmail(k.issuedByEmail) || '(unknown issuer)';
+    const list = map.get(issuer) || [];
+    list.push(k);
+    map.set(issuer, list);
+  }
+  return [...map.entries()]
+    .map(([issuer, group]) => ({ issuer, keys: group }))
+    .sort((a, b) => a.issuer.localeCompare(b.issuer));
 }

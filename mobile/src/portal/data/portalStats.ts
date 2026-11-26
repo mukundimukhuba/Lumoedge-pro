@@ -36,26 +36,29 @@ export function statsFromLocal(
   mentorEmail?: string | null,
 ): DashboardStats {
   const actor = (mentorEmail || '').trim().toLowerCase();
-  const scope = actor && !isSuperAdminEmail(actor);
-  const myEas = scope
+  const isAdmin = Boolean(actor && isSuperAdminEmail(actor));
+  // EAs always owner-scoped (including SA). Keys: mentors own; SA all.
+  const myEas = actor
     ? eas.filter(
         (e) =>
           ((e as ManagedEa & { ownerEmail?: string | null }).ownerEmail || '')
             .trim()
             .toLowerCase() === actor,
       )
-    : eas;
+    : [];
   const myEaIds = new Set(myEas.map((e) => e.id));
-  const mine = scope
-    ? keys.filter((k) => {
-        const issued = (
-          (k as LicenseKey & { issuedByEmail?: string }).issuedByEmail || ''
-        )
-          .trim()
-          .toLowerCase();
-        return issued === actor || myEaIds.has(k.eaId);
-      })
-    : keys;
+  const mine = !actor
+    ? keys
+    : isAdmin
+      ? keys
+      : keys.filter((k) => {
+          const issued = (
+            (k as LicenseKey & { issuedByEmail?: string }).issuedByEmail || ''
+          )
+            .trim()
+            .toLowerCase();
+          return issued === actor || myEaIds.has(k.eaId);
+        });
 
   let active = 0;
   let unused = 0;
@@ -80,7 +83,7 @@ export function statsFromLocal(
     keysActive: active,
     keysUnused: unused,
     keysRevoked: revoked,
-    easCount: scope ? myEas.length : eas.length,
+    easCount: myEas.length,
     subscribers: assignees.size || active,
     source: 'local',
   };
@@ -97,108 +100,43 @@ export async function fetchDashboardStats(opts: {
 
   try {
     const actor = (opts.mentorEmail || '').trim().toLowerCase();
-    const scope = Boolean(actor && !isSuperAdminEmail(actor));
+    if (!actor) return local;
 
-    // Mentors: prefer isolation RPC so counts never flash global→scoped.
-    if (scope) {
-      const [keysRpc, easRpc] = await Promise.all([
-        sb.rpc('list_mentor_license_keys', { actor_email: actor }),
-        sb.rpc('list_mentor_eas', { actor_email: actor }),
-      ]);
-      if (!keysRpc.error && !easRpc.error) {
-        const keyRows = (keysRpc.data || []) as Record<string, unknown>[];
-        const eaRows = (easRpc.data || []) as unknown[];
-        let active = 0;
-        let unused = 0;
-        let revoked = 0;
-        const assignees = new Set<string>();
-        for (const r of keyRows) {
-          const st = normalizeStatus(
-            r.status || r.license_status || (r.activated_at ? 'active' : 'unused'),
-          );
-          if (st === 'active') active += 1;
-          else if (st === 'revoked') revoked += 1;
-          else unused += 1;
-          const email = r.assignee_email;
-          if (email) assignees.add(String(email).toLowerCase());
-        }
-        return {
-          keysTotal: keyRows.length,
-          keysActive: active,
-          keysUnused: unused,
-          keysRevoked: revoked,
-          easCount: eaRows.length,
-          subscribers: assignees.size || active,
-          source: 'supabase',
-        };
+    // Prefer isolation RPCs: EAs always owner-scoped; keys RPC still returns
+    // all for SA and scoped for mentors (migration 006/009).
+    const [keysRpc, easRpc] = await Promise.all([
+      sb.rpc('list_mentor_license_keys', { actor_email: actor }),
+      sb.rpc('list_mentor_eas', { actor_email: actor }),
+    ]);
+    if (!keysRpc.error && !easRpc.error) {
+      const keyRows = (keysRpc.data || []) as Record<string, unknown>[];
+      const eaRows = (easRpc.data || []) as unknown[];
+      let active = 0;
+      let unused = 0;
+      let revoked = 0;
+      const assignees = new Set<string>();
+      for (const r of keyRows) {
+        const st = normalizeStatus(
+          r.status || r.license_status || (r.activated_at ? 'active' : 'unused'),
+        );
+        if (st === 'active') active += 1;
+        else if (st === 'revoked') revoked += 1;
+        else unused += 1;
+        const email = r.assignee_email;
+        if (email) assignees.add(String(email).toLowerCase());
       }
-      // RPC unavailable — stay on already-scoped local stats (no global select).
-      return local;
-    }
-
-    // Super admin: enriched table read (RLS may deny; fall back to local).
-    let keysRes = await sb
-      .from('license_keys')
-      .select('id, status, activated_at, assignee_email, issued_by_email');
-    if (keysRes.error) {
-      keysRes = await sb.from('license_keys').select('id');
-    }
-    const easRes = await sb
-      .from('managed_eas')
-      .select('id', { count: 'exact', head: true });
-
-    if (keysRes.error) return local;
-
-    const rows = keysRes.data || [];
-    if (!rows.length && !local.keysTotal) {
       return {
-        ...local,
-        easCount: easRes.count ?? local.easCount,
+        keysTotal: keyRows.length,
+        keysActive: active,
+        keysUnused: unused,
+        keysRevoked: revoked,
+        easCount: eaRows.length,
+        subscribers: assignees.size || active,
         source: 'supabase',
       };
     }
-
-    // If enriched fields missing (id-only rows), keep local active/unused math.
-    const hasMeta = rows.some(
-      (r) =>
-        (r as { status?: string }).status != null ||
-        (r as { assignee_email?: string }).assignee_email != null ||
-        (r as { activated_at?: string }).activated_at != null,
-    );
-    if (!hasMeta) {
-      return {
-        ...local,
-        keysTotal: Math.max(local.keysTotal, rows.length),
-        easCount: easRes.count ?? local.easCount,
-        source: 'supabase',
-      };
-    }
-
-    let active = 0;
-    let unused = 0;
-    let revoked = 0;
-    const assignees = new Set<string>();
-    for (const r of rows) {
-      const st = normalizeStatus(
-        (r as { status?: string }).status ||
-          ((r as { activated_at?: string }).activated_at ? 'active' : 'unused'),
-      );
-      if (st === 'active') active += 1;
-      else if (st === 'revoked') revoked += 1;
-      else unused += 1;
-      const email = (r as { assignee_email?: string }).assignee_email;
-      if (email) assignees.add(String(email).toLowerCase());
-    }
-
-    return {
-      keysTotal: rows.length || local.keysTotal,
-      keysActive: active,
-      keysUnused: unused,
-      keysRevoked: revoked,
-      easCount: easRes.count ?? local.easCount,
-      subscribers: assignees.size || active,
-      source: 'supabase',
-    };
+    // RPC unavailable — stay on already-scoped local stats (no global EA select).
+    return local;
   } catch {
     return local;
   }
