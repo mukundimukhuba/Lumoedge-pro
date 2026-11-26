@@ -76,6 +76,45 @@ On the Vercel project that owns Production set:
 
 `/api/*` is served by Vercel functions and excluded from the SPA rewrite. After changing env vars, trigger a new deployment.
 
+### One Production project (required)
+
+Production for https://lumoedgepro.vercel.app must be the project under account/path **`mukundimukhuba`**:
+
+- Project: https://vercel.com/mukundimukhuba/lumoedgepro  
+- Env: https://vercel.com/mukundimukhuba/lumoedgepro/settings/environment-variables  
+
+`vercel.json` **cannot** choose which Vercel team receives GitHub deploys. That is controlled only by **Vercel ↔ GitHub** linking (dashboard). If a GitHub commit’s **Vercel** status opens a different team URL (e.g. a `…-projects/lumoedgepro/…` path), Production is deploying to the **wrong** project — env on `mukundimukhuba/lumoedgepro` will never reach `/api/licenses/*`.
+
+**Do not** copy Supabase secrets onto any other Vercel team/project.
+
+#### Fix Git + domain (click these — agents cannot do this without your Vercel login)
+
+**1) Disconnect the wrong project (remove link/domain only — do not add secrets there)**
+
+1. Open the latest commit on GitHub → click the **Vercel** check → note the team/project URL.  
+2. On **that** project: **Settings → Domains** → if `lumoedgepro.vercel.app` is listed, **Remove** it.  
+3. Same project: **Settings → Git** → **Disconnect** repository `mukundimukhuba/Lumoedge-pro`.
+
+**2) Attach Production to the correct project**
+
+1. Open https://vercel.com/mukundimukhuba/lumoedgepro  
+2. Confirm **Settings → Environment Variables** still has `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` for **Production**.  
+3. **Settings → Git** → connect GitHub repo **`mukundimukhuba/Lumoedge-pro`** (GitHub user `mukundimukhuba`), Production branch **`main`**.  
+4. **Settings → Domains** → add / assign **`lumoedgepro.vercel.app`** to this project’s Production.  
+5. **Deployments** → **Redeploy** the current Production deployment (or push any commit to `main` after Git is connected).
+
+**3) If two Vercel installs still fight over the repo**
+
+GitHub (as `mukundimukhuba`) → **Settings → Applications → Installed GitHub Apps → Vercel** → configure repository access so only the Vercel account that owns **`mukundimukhuba/lumoedgepro`** can deploy this repo.
+
+**4) Verify (no secrets printed)**
+
+```bash
+curl -s https://lumoedgepro.vercel.app/api/licenses/status
+```
+
+Expect `serviceRoleConfigured: true` and `missingEnvNames` empty (or only unrelated names). Then Mentors **Generate Key** can sync remotely.
+
 Local static: `npx serve -s . -l 8099` → `http://127.0.0.1:8099/`
 
 ## Rebuild from source
