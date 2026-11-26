@@ -482,9 +482,9 @@ grant execute on function public.register_mentor_pending(text, text, text, text,
   to anon, authenticated;
 
 
--- Per-mentor EA + license isolation
+-- Per-mentor EA + license isolation (+ 009 SA EA privacy)
 -- Apply after 001–004 (and 005 if present). Safe to paste alone if columns already exist.
--- Super admin: mukundimukhuba8@gmail.com (portal UI + API allow full catalog)
+-- Super admin may oversee license keys; managed_eas listing is always owner-scoped.
 
 alter table public.managed_eas
   add column if not exists owner_email text;
@@ -515,7 +515,7 @@ alter table public.license_keys
 create index if not exists license_keys_issued_by_email_idx
   on public.license_keys (issued_by_email);
 
--- List EAs for one mentor (or all when actor is super admin)
+-- List EAs owned by actor only (super admin is not exempt — privacy)
 create or replace function public.list_mentor_eas(actor_email text)
 returns setof public.managed_eas
 language plpgsql
@@ -524,15 +524,9 @@ security definer
 set search_path = public
 as $$
 declare
-  admin constant text := 'mukundimukhuba8@gmail.com';
   actor text := lower(trim(coalesce(actor_email, '')));
 begin
   if actor = '' then
-    return;
-  end if;
-
-  if actor = admin then
-    return query select * from public.managed_eas order by created_at desc;
     return;
   end if;
 
@@ -546,6 +540,9 @@ $$;
 
 revoke all on function public.list_mentor_eas(text) from public;
 grant execute on function public.list_mentor_eas(text) to anon, authenticated;
+
+comment on function public.list_mentor_eas(text) is
+  'Returns managed_eas owned by actor_email only. Super admin is not exempt (privacy).';
 
 -- List license keys for one mentor (or all when super admin)
 create or replace function public.list_mentor_license_keys(actor_email text)

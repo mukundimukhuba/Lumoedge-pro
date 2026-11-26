@@ -378,8 +378,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const email = normalizeMentorEmail(mentor?.email);
     if (!email) return undefined;
     const admin = isSuperAdminEmail(email);
+    // Always pass scopeOwnerEmail so EAs stay owner-scoped (SA included).
+    // isSuperAdmin only expands license-key oversight, never EA catalogs.
     return {
-      scopeOwnerEmail: admin ? null : email,
+      scopeOwnerEmail: email,
       isSuperAdmin: admin,
     };
   }, [mentor?.email]);
@@ -393,14 +395,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const catalog = await loadLicenseCatalog(opts);
     if (epoch !== catalogEpochRef.current) return;
     applyCatalog(catalog.eas, catalog.keys);
-    // Mentor-scoped: always persist (allow empty) so other mentors' disk rows
+    // Portal-scoped: always persist (allow empty) so other mentors' disk rows
     // from a prior unscoped hydrate are purged.
-    const scopedMentor = Boolean(opts?.scopeOwnerEmail && !opts?.isSuperAdmin);
-    if (catalog.eas.length || catalog.keys.length || scopedMentor) {
+    const scopedPortal = Boolean(opts?.scopeOwnerEmail);
+    if (catalog.eas.length || catalog.keys.length || scopedPortal) {
       await saveLicenseCatalog(catalog.eas, catalog.keys, {
         broadcast: false,
         skipRemote: true,
-        allowEmpty: scopedMentor,
+        allowEmpty: scopedPortal,
       });
     }
   }, [catalogLoadOpts]);
@@ -439,14 +441,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           }
         }
         applyCatalog(catalog.eas, catalog.keys);
-        const scopedMentor = Boolean(
-          catalogLoadOpts()?.scopeOwnerEmail && !catalogLoadOpts()?.isSuperAdmin,
-        );
-        if (catalog.eas.length || catalog.keys.length || scopedMentor) {
+        const scopedPortal = Boolean(catalogLoadOpts()?.scopeOwnerEmail);
+        if (catalog.eas.length || catalog.keys.length || scopedPortal) {
           await saveLicenseCatalog(catalog.eas, catalog.keys, {
             broadcast: false,
             skipRemote: true,
-            allowEmpty: scopedMentor,
+            allowEmpty: scopedPortal,
           });
         }
         let loadedSetups: QuoteSetup[] = [];
@@ -862,7 +862,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (role === 'mentor') {
         const admin = isSuperAdminEmail(normalized);
         const catalog = await loadLicenseCatalog({
-          scopeOwnerEmail: admin ? null : normalized,
+          scopeOwnerEmail: normalized,
           isSuperAdmin: admin,
         });
         const nextEas = catalog.eas;
@@ -871,7 +871,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         await saveLicenseCatalog(nextEas, nextKeys, {
           skipRemote: true,
           broadcast: false,
-          allowEmpty: !admin,
+          allowEmpty: true,
         });
       } else {
         const mine = mapped.filter(

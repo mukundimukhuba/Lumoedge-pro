@@ -12,7 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { SYMBOLS as PRESET_SYMBOLS, useAppState } from '../AppState';
 import { compressEaPicture } from '../eaPicture';
-import { scopeCatalogForMentor } from './mentorScope';
+import { isSuperAdminEmail, scopeCatalogForMentor } from './mentorScope';
 
 const ACCENT = '#7C5CFF';
 const fallbackMascot = require('../../assets/mascot.jpg');
@@ -70,6 +70,7 @@ export function ManageEasPanel() {
     () => scopeCatalogForMentor(eas, [], mentor?.email).eas,
     [eas, mentor?.email],
   );
+  const isAdmin = isSuperAdminEmail(mentor?.email);
   const [name, setName] = useState('');
   const [pictureDataUrl, setPictureDataUrl] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -234,9 +235,9 @@ export function ManageEasPanel() {
       <View style={styles.card}>
         <Text style={styles.h2}>Create a robot</Text>
         <Text style={styles.hint}>
-          Upload your own EA picture from camera, gallery, or a file — then name
-          it, pick symbols, and save. Robots you create stay private to your
-          mentor account (other mentors will not see them).
+          {isAdmin
+            ? 'Super Admin only manages EAs owned by this account. Other mentors’ robots (names, pictures, symbols) stay private and never appear here.'
+            : 'Upload your own EA picture from camera, gallery, or a file — then name it, pick symbols, and save. Robots you create stay private to your mentor account (other mentors will not see them).'}
         </Text>
 
         <Text style={styles.label}>EA NAME</Text>

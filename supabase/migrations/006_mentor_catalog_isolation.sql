@@ -1,6 +1,6 @@
 -- Per-mentor EA + license isolation
 -- Apply after 001–004 (and 005 if present). Safe to paste alone if columns already exist.
--- Super admin: mukundimukhuba8@gmail.com (portal UI + API allow full catalog)
+-- Note: 009_sa_ea_privacy.sql removes the SA full-EA-catalog bypass; keys oversight remains.
 
 alter table public.managed_eas
   add column if not exists owner_email text;

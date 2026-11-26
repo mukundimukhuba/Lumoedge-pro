@@ -1,4 +1,4 @@
-/** Super admin who may see / mutate every mentor's catalog. */
+/** Super admin identity (keys oversight only — not other mentors' EA catalogs). */
 const SUPER_ADMIN_EMAIL = 'mukundimukhuba8@gmail.com';
 
 function normalizeEmail(email) {
@@ -12,15 +12,14 @@ function isSuperAdmin(email) {
 }
 
 /**
- * Reject cross-mentor writes.
+ * Reject cross-mentor writes — including super admin for other mentors' owned rows.
+ * SA may still touch legacy unowned rows (no owner_email) to prevent claim-jacking.
  * @returns {{ ok: true } | { ok: false, status: number, error: string }}
  */
 function assertCanWriteOwnedRow(opts) {
   const actor = normalizeEmail(opts.actorEmail);
   const owner = normalizeEmail(opts.ownerEmail);
   const claimed = normalizeEmail(opts.claimedOwnerEmail);
-
-  if (isSuperAdmin(actor)) return { ok: true };
 
   if (!actor) {
     return {
@@ -30,7 +29,7 @@ function assertCanWriteOwnedRow(opts) {
     };
   }
 
-  // Existing row owned by someone else
+  // Existing row owned by someone else — mentors and SA alike cannot modify.
   if (owner && owner !== actor) {
     return {
       ok: false,
@@ -50,11 +49,14 @@ function assertCanWriteOwnedRow(opts) {
 
   // Legacy unowned row: only super admin may touch (prevents claim-jacking)
   if (opts.rowExists && !owner) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Legacy unowned catalog row — only super admin can modify',
-    };
+    if (!isSuperAdmin(actor)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'Legacy unowned catalog row — only super admin can modify',
+      };
+    }
+    return { ok: true };
   }
 
   return { ok: true };

@@ -325,11 +325,14 @@ type RemoteFetch =
 
 export type CatalogLoadOpts = {
   /**
-   * When set (non–super-admin mentor portal session), only that mentor’s
-   * EAs/keys are fetched/merged so other mentors never appear in the portal.
+   * When set (portal mentor/SA session), only that actor’s owned EAs are
+   * fetched/merged so other mentors never appear in Manage EAs.
    */
   scopeOwnerEmail?: string | null;
-  /** Super admin bypasses scope and loads the full catalog. */
+  /**
+   * Super admin: still owner-scopes EAs, but may load all license keys
+   * for oversight (grouped by issuer in the UI). Never dumps others' EAs.
+   */
   isSuperAdmin?: boolean;
 };
 
@@ -345,13 +348,14 @@ async function fetchRemoteCatalog(
   if (!sb) {
     return { ok: false, eas: [], keys: [], error: 'supabase not configured' };
   }
-  const scope =
-    opts?.scopeOwnerEmail && !opts?.isSuperAdmin
-      ? String(opts.scopeOwnerEmail).trim().toLowerCase()
-      : '';
+  const scope = opts?.scopeOwnerEmail
+    ? String(opts.scopeOwnerEmail).trim().toLowerCase()
+    : '';
+  const isAdmin = Boolean(opts?.isSuperAdmin);
   try {
     if (scope) {
-      // Prefer isolation RPCs (migration 006); fall back to filtered selects.
+      // Prefer isolation RPCs (006/009); EAs always owner-scoped.
+      // SA keys: pass actor to list_mentor_license_keys (still returns all).
       const [easRpc, keysRpc] = await Promise.all([
         sb.rpc('list_mentor_eas', { actor_email: scope }),
         sb.rpc('list_mentor_license_keys', { actor_email: scope }),
@@ -366,36 +370,20 @@ async function fetchRemoteCatalog(
         };
       }
 
-      const [easRes, keysRes] = await Promise.all([
-        sb.from('managed_eas').select('*').eq('owner_email', scope),
-        sb.from('license_keys').select('*').eq('issued_by_email', scope),
-      ]);
+      const easRes = await sb
+        .from('managed_eas')
+        .select('*')
+        .eq('owner_email', scope);
+      const keysRes = isAdmin
+        ? await sb.from('license_keys').select('*')
+        : await sb
+            .from('license_keys')
+            .select('*')
+            .eq('issued_by_email', scope);
       if (easRes.error || keysRes.error) {
         const msg =
           easRes.error?.message || keysRes.error?.message || 'fetch failed';
         console.warn('[edges] supabase scoped catalog fetch failed');
-        return { ok: false, eas: [], keys: [], error: msg };
-      }
-      return {
-        ok: true,
-        eas: (easRes.data || []).map((r) =>
-          rowToEa(r as Record<string, unknown>),
-        ),
-        keys: (keysRes.data || []).map((r) =>
-          rowToKey(r as Record<string, unknown>),
-        ),
-      };
-    }
-
-    if (opts?.isSuperAdmin) {
-      const [easRes, keysRes] = await Promise.all([
-        sb.from('managed_eas').select('*'),
-        sb.from('license_keys').select('*'),
-      ]);
-      if (easRes.error || keysRes.error) {
-        const msg =
-          easRes.error?.message || keysRes.error?.message || 'fetch failed';
-        console.warn('[edges] supabase catalog fetch failed');
         return { ok: false, eas: [], keys: [], error: msg };
       }
       return {
@@ -737,13 +725,12 @@ export async function loadLicenseCatalog(
   let diskEas = disk.eas;
   let diskKeys = disk.keys;
 
-  const scopedMentor =
-    opts?.scopeOwnerEmail && !opts?.isSuperAdmin
-      ? String(opts.scopeOwnerEmail).trim().toLowerCase()
-      : '';
+  const scopedMentor = opts?.scopeOwnerEmail
+    ? String(opts.scopeOwnerEmail).trim().toLowerCase()
+    : '';
 
-  // Portal mentor session: filter disk/memory BEFORE merge so a prior
-  // unscoped hydrate (client path / race) cannot leak other mentors' EAs.
+  // Portal session (mentor or SA): filter disk/memory BEFORE merge so a prior
+  // unscoped hydrate cannot leak other mentors' EAs. SA keeps all keys.
   if (scopedMentor) {
     const { scopeCatalogForMentor } = await import('./portal/mentorScope');
     const diskScoped = scopeCatalogForMentor(diskEas, diskKeys, scopedMentor);

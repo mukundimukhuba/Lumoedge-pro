@@ -1,5 +1,5 @@
 const { applyCors, json, readJsonBody } = require('../_lib/cors');
-const { safeFailPayload, sanitizePublicBody } = require('../_lib/safeErrors');
+const { safeFailPayload } = require('../_lib/safeErrors');
 const { getSupabaseAdmin, sbFetch } = require('../_lib/supabaseAdmin');
 const {
   normalizeEmail,
@@ -9,7 +9,8 @@ const {
 /**
  * GET/POST /api/eas/list
  * Body/query: { actorEmail }
- * Returns managed EAs owned by the actor (or all for super admin).
+ * Returns managed EAs owned by the actor only.
+ * Super admin is NOT exempt — never dumps other mentors' EA catalogs.
  */
 module.exports = async function handler(req, res) {
   applyCors(res);
@@ -61,25 +62,30 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    // Prefer RPC when migration 006 is applied
+    // Prefer RPC when migration 006/009 is applied.
+    // Always re-filter by owner so a pre-009 RPC that still dumps all for SA
+    // cannot leak other mentors' catalogs through this endpoint.
     const rpc = await sbFetch('/rest/v1/rpc/list_mentor_eas', {
       method: 'POST',
       body: { actor_email: actorEmail },
     });
     if (rpc.ok && Array.isArray(rpc.json)) {
+      const eas = rpc.json
+        .map(mapEa)
+        .filter((e) => normalizeEmail(e.ownerEmail) === actorEmail);
       return json(res, 200, {
         ok: true,
         via: 'rpc',
         configured: true,
         superAdmin: isSuperAdmin(actorEmail),
-        eas: rpc.json.map(mapEa),
+        eas,
       });
     }
 
-    let path = '/rest/v1/managed_eas?select=*&order=created_at.desc';
-    if (!isSuperAdmin(actorEmail)) {
-      path += `&owner_email=eq.${encodeURIComponent(actorEmail)}`;
-    }
+    // Table fallback: always filter by owner — never return the full catalog.
+    const path =
+      `/rest/v1/managed_eas?select=*&order=created_at.desc` +
+      `&owner_email=eq.${encodeURIComponent(actorEmail)}`;
     const sel = await sbFetch(path);
     if (!sel.ok) {
       return json(
@@ -96,7 +102,9 @@ module.exports = async function handler(req, res) {
       via: 'table',
       configured: true,
       superAdmin: isSuperAdmin(actorEmail),
-      eas: (sel.json || []).map(mapEa),
+      eas: (sel.json || [])
+        .map(mapEa)
+        .filter((e) => normalizeEmail(e.ownerEmail) === actorEmail),
     });
   } catch (err) {
     return json(res, 502, {
