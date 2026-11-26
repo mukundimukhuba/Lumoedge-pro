@@ -18,6 +18,7 @@
     "expo-linear-gradient": "~58.0.4",
     "expo-linking": "~58.0.17",
     "expo-router": "~58.0.32",
+    "expo-splash-screen": "~58.0.14",
     "expo-status-bar": "~58.0.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
@@ -34,9 +35,13 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "web": "expo start --web",
+    "prebuild:android": "expo prebuild --platform android",
+    "smoke:android": "node scripts/android-smoke.mjs",
+    "build:android:apk": "cd android && ./gradlew assembleRelease",
+    "build:android:aab": "cd android && ./gradlew bundleRelease"
   },
   "private": true
 }

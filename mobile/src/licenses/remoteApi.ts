@@ -1,3 +1,4 @@
+import { getApiRoot } from '../apiRoot';
 import { safeMessageFromApiBody, toSafeUserMessage } from '../portal/safeErrors';
 import type { StoredEa, StoredLicenseKey } from '../licenseStorage';
 
@@ -34,10 +35,7 @@ export type RemoteLookupResult = {
 };
 
 function apiBase() {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-  return '';
+  return getApiRoot();
 }
 
 export async function fetchLicenseStatus(): Promise<{

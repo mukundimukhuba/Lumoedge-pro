@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { getApiRoot } from '../apiRoot';
 
 export type BrokersSearchResponse = {
   brokers: string[];
@@ -57,23 +57,11 @@ export type BrokerConnectResponse = {
 /**
  * Resolve API root. Production (Vercel) uses same origin `/api/...`.
  * Local Expo web (:8081) talks to the brokers dev server on :8787.
+ * Native Android/iOS use https://lumoedgepro.vercel.app (see apiRoot.ts).
  * Never embeds credentials in the client.
  */
 export function getBrokersApiRoot(): string {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    const { hostname, port, origin } = window.location;
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '[::1]'
-    ) {
-      if (port === '8081' || port === '19006' || port === '8082') {
-        return 'http://127.0.0.1:8787';
-      }
-    }
-    return origin;
-  }
-  return '';
+  return getApiRoot();
 }
 
 export async function searchBrokersApi(

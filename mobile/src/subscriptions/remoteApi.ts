@@ -1,10 +1,8 @@
+import { getApiRoot } from '../apiRoot';
 import type { SubscriptionRow, SubscriptionStatus } from './types';
 
 function apiBase() {
-  if (typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-  return '';
+  return getApiRoot();
 }
 
 function mapSub(raw: Record<string, unknown>): SubscriptionRow {

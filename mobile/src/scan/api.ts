@@ -5,35 +5,22 @@
  * Never embeds API keys in the client. Prefer SKIP over guessing.
  */
 
-import { Platform } from 'react-native';
+import { getApiRoot, PRODUCTION_API_ROOT } from '../apiRoot';
 import {
   AUTO_TRADE_MIN_ACCURACY,
   SCAN_SIGNAL_MIN_ACCURACY,
   SKIP_REASON,
 } from './strategy';
 
-/** Vision upstream (production host). */
+/** Legacy vision upstream host (kept for callers / docs). */
 export const LUMOEDGE_VISION_HOST = 'https://lumoedge.com';
 
 /**
  * Prefer same-origin /api/scan on Vercel / static host, brokers-dev on Expo web,
- * otherwise vision host. Matches brokers API root resolution.
+ * native → production Vercel (lumoedgepro.vercel.app). Matches getApiRoot().
  */
 export function getScanApiRoot(): string {
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    const { hostname, port, origin } = window.location;
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '[::1]'
-    ) {
-      if (port === '8081' || port === '19006' || port === '8082') {
-        return 'http://127.0.0.1:8787';
-      }
-    }
-    return origin;
-  }
-  return LUMOEDGE_VISION_HOST;
+  return getApiRoot() || PRODUCTION_API_ROOT;
 }
 
 /** @deprecated use getScanApiRoot() — kept for callers expecting a constant. */
