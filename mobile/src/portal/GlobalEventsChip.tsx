@@ -20,10 +20,7 @@ const RING = 58;
 const BELT = 70;
 const NEON = '#FF2A2A';
 
-/** Web CSS keyframes for a smoother orbital spin than JS Animated. */
-const WEB_SPIN_CSS =
-  Platform.OS === 'web'
-    ? `
+const WEB_SPIN_CSS = `
 @keyframes lumoEventsOrbSpin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -32,8 +29,23 @@ const WEB_SPIN_CSS =
   from { transform: rotate(360deg); }
   to { transform: rotate(0deg); }
 }
-`.trim()
-    : '';
+.lumo-events-orb-spin {
+  animation: lumoEventsOrbSpin 7.2s linear infinite !important;
+}
+.lumo-events-orb-spin-rev {
+  animation: lumoEventsOrbSpinRev 14s linear infinite !important;
+}
+.lumo-events-orb-spin-lag {
+  animation: lumoEventsOrbSpin 7.2s linear infinite !important;
+  animation-delay: -1.8s !important;
+}
+`.trim();
+
+function asDom(node: unknown): HTMLElement | null {
+  if (!node || Platform.OS !== 'web') return null;
+  // RN-web host refs resolve to the DOM element.
+  return node as HTMLElement;
+}
 
 /**
  * Floating global events signal orb on EA Home.
@@ -55,8 +67,11 @@ export function GlobalEventsChip({
 
   const spin = useRef(new Animated.Value(0)).current;
   const spinSlow = useRef(new Animated.Value(0)).current;
+  const beltRef = useRef<unknown>(null);
+  const ringRef = useRef<unknown>(null);
+  const tickRef = useRef<unknown>(null);
+  // Web: native driver can stall; match ChartScanner pattern.
   const nativeAnim = Platform.OS !== 'web';
-  const useCssSpin = Platform.OS === 'web';
 
   const load = useCallback(async () => {
     try {
@@ -74,19 +89,32 @@ export function GlobalEventsChip({
     return () => clearInterval(t);
   }, [load]);
 
-  // Inject CSS keyframes once on web for premium continuous spin.
+  // Web: inject class-based keyframes (RN style.animation is stripped).
   useEffect(() => {
-    if (!useCssSpin || typeof document === 'undefined') return;
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     const id = 'lumo-events-orb-spin-css';
     if (document.getElementById(id)) return;
     const el = document.createElement('style');
     el.id = id;
     el.textContent = WEB_SPIN_CSS;
     document.head.appendChild(el);
-  }, [useCssSpin]);
+  }, []);
 
+  // Web: force CSS classes onto host nodes after mount (className prop is flaky).
   useEffect(() => {
-    if (useCssSpin) return;
+    if (Platform.OS !== 'web') return;
+    const belt = asDom(beltRef.current);
+    const ring = asDom(ringRef.current);
+    const tick = asDom(tickRef.current);
+    if (belt) belt.classList.add('lumo-events-orb-spin-rev');
+    if (ring) ring.classList.add('lumo-events-orb-spin');
+    if (tick) tick.classList.add('lumo-events-orb-spin-lag');
+  }, [ready]);
+
+  // Native (+ web Animated fallback): continuous JS/native spin loop.
+  useEffect(() => {
+    spin.setValue(0);
+    spinSlow.setValue(0);
     const belt = Animated.loop(
       Animated.timing(spin, {
         toValue: 1,
@@ -109,7 +137,34 @@ export function GlobalEventsChip({
       belt.stop();
       reverse.stop();
     };
-  }, [spin, spinSlow, nativeAnim, useCssSpin]);
+  }, [spin, spinSlow, nativeAnim]);
+
+  // Web RAF backup: write transform directly if CSS class didn't stick.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    let raf = 0;
+    const started = performance.now();
+    const tick = (now: number) => {
+      const t = now - started;
+      const belt = asDom(beltRef.current);
+      const ring = asDom(ringRef.current);
+      const tip = asDom(tickRef.current);
+      // Only drive via RAF when CSS animation isn't active on the node.
+      const cssAlive = (el: HTMLElement | null) =>
+        !!el && getComputedStyle(el).animationName !== 'none';
+      if (!cssAlive(ring)) {
+        const deg = ((t / 7200) * 360) % 360;
+        const degRev = 360 - (((t / 14000) * 360) % 360);
+        const degLag = ((t / 7200) * 360 + 90) % 360;
+        if (belt) belt.style.transform = `rotate(${degRev}deg)`;
+        if (ring) ring.style.transform = `rotate(${deg}deg)`;
+        if (tip) tip.style.transform = `rotate(${degLag}deg)`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   const rotate = spin.interpolate({
     inputRange: [0, 1],
@@ -139,17 +194,6 @@ export function GlobalEventsChip({
     [accent],
   );
 
-  const cssSpin = useCssSpin
-    ? ({
-        animation: 'lumoEventsOrbSpin 7.2s linear infinite',
-      } as object)
-    : null;
-  const cssSpinRev = useCssSpin
-    ? ({
-        animation: 'lumoEventsOrbSpinRev 14s linear infinite',
-      } as object)
-    : null;
-
   return (
     <>
       <View
@@ -171,19 +215,19 @@ export function GlobalEventsChip({
         >
           {/* Outer dashed counter-rotating belt */}
           <Animated.View
+            ref={beltRef as never}
             pointerEvents="none"
             style={[
               styles.belt,
               {
                 borderColor: `${accent}AA`,
+                transform: [{ rotate: rotateRev }],
               },
-              useCssSpin
-                ? cssSpinRev
-                : { transform: [{ rotate: rotateRev }] },
             ]}
           />
           {/* Bright orbital arc (comet segment) */}
           <Animated.View
+            ref={ringRef as never}
             pointerEvents="none"
             style={[
               styles.ring,
@@ -192,25 +236,21 @@ export function GlobalEventsChip({
                 borderTopColor: accent,
                 borderRightColor: `${accent}CC`,
                 borderBottomColor: `${accent}22`,
+                transform: [{ rotate }],
               },
-              useCssSpin ? cssSpin : { transform: [{ rotate }] },
             ]}
           />
           {/* Soft trailing tick on a second phase */}
           <Animated.View
+            ref={tickRef as never}
             pointerEvents="none"
             style={[
               styles.tick,
               {
                 borderColor: 'transparent',
                 borderLeftColor: `${accent}EE`,
+                transform: [{ rotate }],
               },
-              useCssSpin
-                ? ({
-                    animation: 'lumoEventsOrbSpin 7.2s linear infinite',
-                    animationDelay: '-1.8s',
-                  } as object)
-                : { transform: [{ rotate }] },
             ]}
           />
           {/* Orb core */}
