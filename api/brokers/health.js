@@ -16,11 +16,12 @@ module.exports = async function handler(req, res) {
   }
 
   const configured = Boolean(
-    (process.env.LUMOEDGE_MT5_URL || process.env.BROKER_API_URL || '').trim(),
+    (process.env.BROKER_API_URL || process.env.LUMOEDGE_MT5_URL || '').trim(),
   );
-  const health = await probeBridgeHealth({ timeoutMs: 4000 });
+  const health = await probeBridgeHealth({ timeoutMs: 8000 });
 
-  // Do not echo the raw host URL (may be private). Only say whether configured.
+  // Hostname only (no credentials). Lets ops confirm Production is not still
+  // pinned to a hung IP after BROKER_API_URL was updated.
   return json(res, health.ok ? 200 : 503, {
     ok: health.ok,
     configured,
@@ -29,6 +30,9 @@ module.exports = async function handler(req, res) {
     path: health.path || undefined,
     detail: health.detail,
     error: health.ok ? undefined : health.error || 'MT5 bridge unhealthy',
+    upstreamHost: health.upstreamHost || undefined,
+    sourceEnv: health.sourceEnv || undefined,
+    envConflict: health.envConflict === true ? true : undefined,
     // Soft hint for ops — mode only, never credentials
     mode: /lumoedge\.com/i.test(mt5Root()) ? 'lumoedge-bridge' : 'mt5rest',
   });
