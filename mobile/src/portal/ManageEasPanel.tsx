@@ -246,6 +246,7 @@ export function ManageEasPanel() {
           placeholder="e.g. Edges Scalper XAU"
           placeholderTextColor="#6B7280"
           style={styles.input}
+          autoCapitalize="none"
           autoCorrect={false}
           accessibilityLabel="EA NAME"
         />
@@ -403,6 +404,7 @@ export function ManageEasPanel() {
                         value={editName}
                         onChangeText={setEditName}
                         style={styles.input}
+                        autoCapitalize="none"
                         autoCorrect={false}
                         accessibilityLabel={`Edit name for ${ea.name}`}
                       />
