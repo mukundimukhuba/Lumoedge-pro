@@ -84,6 +84,14 @@ export default function RootLayout() {
                     <Stack.Screen name="chart-scanner" options={SLIDE} />
                     <Stack.Screen name="connect-broker" options={SLIDE} />
                     <Stack.Screen
+                      name="giveaway/rcg"
+                      options={{
+                        ...SLIDE,
+                        animation: 'fade',
+                        contentStyle: { backgroundColor: '#05070D' },
+                      }}
+                    />
+                    <Stack.Screen
                       name="portal"
                       options={{
                         headerShown: false,

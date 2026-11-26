@@ -73,6 +73,16 @@ function ensureDarkEdgeHtml(file) {
       html = html.replace(/<body([^>]*)>/i, `<body$1>${bootDiv}`);
     }
   }
+  // Giveaway deep links + hard timeout — never leave the HTML boot bounce stuck.
+  if (!/lumo-boot-splash-guard/i.test(html)) {
+    const guard =
+      '<script id="lumo-boot-splash-guard">(function(){try{var p=(location&&location.pathname)||\'\';var el=document.getElementById(\'lumo-boot-splash\');if(!el)return;if(/^\\/giveaway(\\/|$)/i.test(p)){el.remove();return;}setTimeout(function(){var n=document.getElementById(\'lumo-boot-splash\');if(n)n.remove();},5000);}catch(e){}})();</script>';
+    if (/<\/body>/i.test(html)) {
+      html = html.replace(/<\/body>/i, `${guard}</body>`);
+    } else if (/<body[^>]*>/i.test(html)) {
+      html = html.replace(/<body([^>]*)>/i, `<body$1>${guard}`);
+    }
+  }
   fs.writeFileSync(file, html);
 }
 
@@ -112,7 +122,11 @@ for (const p of ['portal', 'portal/dashboard', 'portal/pending']) {
   fs.copyFileSync(path.join(dest, 'index.html'), path.join(dest, p, 'index.html'));
 }
 
-/** Standalone public giveaway pages (not the Expo SPA shell). */
+/**
+ * Standalone public giveaway pages (not the Expo SPA shell).
+ * Must overwrite any Expo-exported giveaway/*.html so WhatsApp / deep links
+ * never land on the bouncing Welcome splash.
+ */
 const giveawaySrc = path.join(publicDir, 'giveaway');
 if (fs.existsSync(giveawaySrc)) {
   copyDir(giveawaySrc, path.join(dest, 'giveaway'));

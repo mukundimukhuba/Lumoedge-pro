@@ -148,6 +148,11 @@ export default function Root({ children }: PropsWithChildren) {
           <img src="/splash-mascot.png" alt="" width={168} height={168} />
           <p>Welcome to Lumo Edge Pro</p>
         </div>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var p=(location&&location.pathname)||'';var el=document.getElementById('lumo-boot-splash');if(!el)return;if(/^\\/giveaway(\\/|$)/i.test(p)){el.remove();return;}setTimeout(function(){var n=document.getElementById('lumo-boot-splash');if(n)n.remove();},5000);}catch(e){}})();`,
+          }}
+        />
         {children}
       </body>
     </html>
