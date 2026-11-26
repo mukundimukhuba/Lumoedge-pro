@@ -89,6 +89,8 @@ export function EaBlurWallpaper({
       pointerEvents="none"
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
+      // @ts-expect-error web-only proof marker
+      dataSet={{ wallpaper: '1' }}
       style={[styles.root, style]}
     >
       {Platform.OS === 'web' && rawUri ? (
@@ -111,10 +113,12 @@ export function EaBlurWallpaper({
             filter: `blur(${BLUR_RADIUS}px) saturate(${WEB_SATURATE})`,
             WebkitFilter: `blur(${BLUR_RADIUS}px) saturate(${WEB_SATURATE})`,
             pointerEvents: 'none',
+            userSelect: 'none',
           }}
         />
       ) : (
         <Image
+          pointerEvents="none"
           source={imgSource}
           resizeMode="cover"
           blurRadius={Platform.OS === 'web' ? 0 : BLUR_RADIUS}
@@ -126,6 +130,7 @@ export function EaBlurWallpaper({
                   // RN-web Image → background-image; CSS filter still applies.
                   filter: `blur(${BLUR_RADIUS}px) saturate(${WEB_SATURATE})`,
                   WebkitFilter: `blur(${BLUR_RADIUS}px) saturate(${WEB_SATURATE})`,
+                  pointerEvents: 'none',
                 } as object)
               : null,
           ]}
@@ -161,7 +166,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     overflow: 'hidden',
     backgroundColor: '#000000',
+    // Stay under UI + dock; never compete for hits (pointerEvents none above).
     zIndex: 0,
+    elevation: 0,
   },
   img: {
     ...StyleSheet.absoluteFill,
