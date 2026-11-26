@@ -36,7 +36,9 @@ import {
 } from './brokers/data';
 import {
   clearMt5Token,
+  loadMt5AccountCache,
   loadMt5Link,
+  saveMt5AccountCache,
   saveMt5Link,
 } from './brokers/mt5Token';
 
@@ -389,6 +391,8 @@ export function ConnectBrokerScreen() {
   const searchGen = useRef(0);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bridgePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** Active MT5 token for in-flight fetches — cleared on disconnect */
+  const activeTokenRef = useRef<string | null>(null);
 
   const servers = useMemo(
     () => (selected ? getBrokerServers(selected) : []),
@@ -401,7 +405,7 @@ export function ConnectBrokerScreen() {
   const showSuggest =
     !selected && (searchFocused || query.trim().length > 0);
 
-  // Restore MT5 link silently — no Linking animation when already Connected
+  // Restore MT5 link + cached account instantly; refresh live data in background
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -412,21 +416,31 @@ export function ConnectBrokerScreen() {
           setRestoring(false);
           return;
         }
+        const cached = await loadMt5AccountCache(link.token);
+        if (cancelled) return;
         setSelected(link.broker);
         setQuery(link.broker);
         if (link.server) setServer(link.server);
         if (link.login) setLogin(link.login);
+        activeTokenRef.current = link.token;
         setSessionId(link.token);
         setConnected(true);
         setError(null);
-        // Hydrate account before ending restore so UI never flashes Linking…
+        if (cached) setAccount(cached);
+        // End restore immediately — never block on network / hang forever
+        setRestoring(false);
+        // Quiet background hydrate; poll continues afterward
         try {
-          const next = await fetchBrokerAccount(link.token);
-          if (!cancelled) setAccount(next);
+          const next = await fetchBrokerAccount(link.token, {
+            timeoutMs: 10000,
+          });
+          if (cancelled || activeTokenRef.current !== link.token) return;
+          setAccount(next);
+          void saveMt5AccountCache(next, link.token);
         } catch {
-          // Poll will retry; still leave Connected UI without Linking pulse
+          // Keep cached snapshot; live poll will retry quietly
         }
-      } finally {
+      } catch {
         if (!cancelled) setRestoring(false);
       }
     })();
@@ -464,19 +478,28 @@ export function ConnectBrokerScreen() {
     }
     if (!sessionId || !connected) return;
 
+    let cancelled = false;
+    const activeToken = sessionId;
+    activeTokenRef.current = activeToken;
     const tick = () => {
       void (async () => {
         try {
-          const next = await fetchBrokerAccount(sessionId);
+          const next = await fetchBrokerAccount(activeToken, {
+            timeoutMs: 10000,
+          });
+          // Drop late responses after disconnect / session change
+          if (cancelled || activeTokenRef.current !== activeToken) return;
           setAccount(next);
+          void saveMt5AccountCache(next, activeToken);
         } catch {
-          // keep last snapshot
+          // keep last snapshot (cached or prior live)
         }
       })();
     };
     tick();
     pollRef.current = setInterval(tick, 1500);
     return () => {
+      cancelled = true;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -511,6 +534,7 @@ export function ConnectBrokerScreen() {
   }, [connected, restoring]);
 
   const pickBroker = (name: string) => {
+    activeTokenRef.current = null;
     setSelected(name);
     setQuery(name);
     setSearchFocused(false);
@@ -527,6 +551,7 @@ export function ConnectBrokerScreen() {
   };
 
   const clearBroker = () => {
+    activeTokenRef.current = null;
     setSelected(null);
     setQuery('');
     setConnected(false);
@@ -542,6 +567,7 @@ export function ConnectBrokerScreen() {
   };
 
   const onDisconnect = () => {
+    activeTokenRef.current = null;
     setConnected(false);
     setSessionId(null);
     setAccount(null);
@@ -605,6 +631,7 @@ export function ConnectBrokerScreen() {
           return;
         }
         setPassword('');
+        activeTokenRef.current = mt5Id;
         setConnected(true);
         setSessionId(mt5Id);
         void saveMt5Link({
@@ -720,15 +747,7 @@ export function ConnectBrokerScreen() {
           </Text>
         ) : null}
 
-        {restoring ? (
-          <Text
-            style={styles.silentRestore}
-            accessibilityLabel="Restoring connected session"
-          >
-            Restoring live session…
-          </Text>
-        ) : null}
-
+        {/* Restore never blocks on network — local cache paints Connected UI instantly */}
         {!restoring && connected && selected ? (
           <View style={styles.formBlock}>
             <View
@@ -742,7 +761,11 @@ export function ConnectBrokerScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.pickedName}>{selected}</Text>
                   <Text style={styles.suggestHint}>
-                    {account?.login ? `Login ${account.login} · ` : ''}
+                    {account?.login
+                      ? `Login ${account.login} · `
+                      : login
+                        ? `Login ${login} · `
+                        : ''}
                     Live MT5
                     {account?.currency ? ` · ${account.currency}` : ''}
                   </Text>
@@ -764,12 +787,15 @@ export function ConnectBrokerScreen() {
             {account ? (
               <LiveAccountPanel account={account} accent={accent} />
             ) : (
-              <Text
-                style={styles.silentRestore}
-                accessibilityLabel="Refreshing live account"
+              <View
+                style={styles.livePending}
+                accessibilityLabel="Updating live account in background"
               >
-                Refreshing live account…
-              </Text>
+                <View style={styles.liveDot} />
+                <Text style={styles.livePendingText}>
+                  Updating balance in background…
+                </Text>
+              </View>
             )}
 
             <Pressable
@@ -808,6 +834,7 @@ export function ConnectBrokerScreen() {
           <TextInput
             value={query}
             onChangeText={(t) => {
+              activeTokenRef.current = null;
               setQuery(t);
               setSelected(null);
               setConnected(false);
@@ -1408,12 +1435,17 @@ const styles = StyleSheet.create({
     backgroundColor: hexToRgba('#FF5252', 0.08),
     marginTop: 4,
   },
-  silentRestore: {
+  livePending: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 16,
+  },
+  livePendingText: {
     color: BASE.muted,
     fontSize: 13,
     fontWeight: '600',
-    paddingVertical: 14,
-    textAlign: 'center',
   },
   disconnectText: {
     color: BASE.red,
