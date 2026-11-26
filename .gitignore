@@ -2,6 +2,7 @@ node_modules/
 .expo/
 dist-web/
 dist-cdn/
+artifacts/
 .DS_Store
 .vercel
 *.log

@@ -7,7 +7,10 @@
     "api/brokers/health.js": { "maxDuration": 15 },
     "api/brokers/account.js": { "maxDuration": 30 },
     "api/brokers/order.js": { "maxDuration": 30 },
-    "api/brokers/symbols.js": { "maxDuration": 30 }
+    "api/brokers/symbols.js": { "maxDuration": 30 },
+    "api/scan/index.js": { "maxDuration": 60 },
+    "api/scan/status.js": { "maxDuration": 15 },
+    "api/scan/auto.js": { "maxDuration": 60 }
   },
   "rewrites": [
     { "source": "/portal", "destination": "/portal/index.html" },

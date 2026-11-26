@@ -22,18 +22,20 @@ import { useAppState } from './AppState';
 import { EaBlurWallpaper } from './EaBlurWallpaper';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { popToHome } from './navPush';
+import { loadMt5Token } from './brokers/mt5Token';
 import {
   normalizeScanResult,
   postChartScan,
 } from './scan/api';
 import {
   AUTO_TRADE_MIN_ACCURACY,
-  advisoryLevelsForSide,
+  SKIP_REASON,
   buildTpLadder,
   clampLot,
   clampTrades,
   evaluateAutoTradeGate,
   formatPrice,
+  formatSkipReasons,
   strategyBlurb,
   type Side,
 } from './scan/strategy';
@@ -93,8 +95,10 @@ type ScanOutcome = {
   tps?: string[];
   autoTradeAllowed?: boolean;
   autoTradeReasons?: string[];
+  skipReason?: string | null;
   demo?: boolean;
   source?: 'api' | 'local';
+  mt5Live?: boolean;
 };
 
 const ENGINE_STAGES: {
@@ -242,12 +246,6 @@ async function ocrChartImage(uri: string): Promise<OcrResult> {
   return { symbol: null, timeframe: null, raw: '' };
 }
 
-function hashSeed(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h;
-}
-
 function buildExplanation(
   symbol: string,
   timeframe: string,
@@ -335,10 +333,9 @@ async function buildProofChartUri(
   return `${canvas.toDataURL('image/png')}#edgesocr=${symbol}|${timeframe}`;
 }
 
-/** Live trade engine hook — only mark EXECUTE/CONFIRM when a real backend exists. */
-function useLiveTradeEngineAvailable() {
-  // No MT5/order API is wired in this app yet — never fake fills.
-  return false;
+/** Live trade engine: only when MT5 is connected (never invent fills). */
+function useLiveTradeEngineAvailable(mt5Token: string | null) {
+  return Boolean(String(mt5Token || '').trim());
 }
 
 function EdgesRadar({
@@ -833,12 +830,13 @@ export function ChartScannerScreen() {
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
   const { accent } = useAppState();
-  const liveEngine = useLiveTradeEngineAvailable();
   const picking = useRef(false);
   const proofStarted = useRef(false);
   const ocrGen = useRef(0);
   const scanTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+  const [mt5Token, setMt5Token] = useState<string | null>(null);
+  const liveEngine = useLiveTradeEngineAvailable(mt5Token);
   const [symbol, setSymbol] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<string | null>(null);
   const [lotRaw, setLotRaw] = useState('0.01');
@@ -853,6 +851,16 @@ export function ChartScannerScreen() {
   const [outcome, setOutcome] = useState<ScanOutcome | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [detail, setDetail] = useState<HistoryEntry | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadMt5Token().then((t) => {
+      if (!cancelled) setMt5Token(t);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [stage2, setStage2] = useState<StageState>('idle');
   const [stage3, setStage3] = useState<StageState>('idle');
@@ -1076,7 +1084,11 @@ export function ChartScannerScreen() {
 
     void (async () => {
       const started = Date.now();
-      const apiRes = await postChartScan(uriSnap, ac.signal);
+      const token = String(mt5Token || '').trim() || (await loadMt5Token());
+      const apiRes = await postChartScan(uriSnap, {
+        signal: ac.signal,
+        mt5Id: token,
+      });
       const wait = Math.max(0, 4800 - (Date.now() - started));
       if (wait) await new Promise((r) => setTimeout(r, wait));
       if (ac.signal.aborted) return;
@@ -1090,13 +1102,46 @@ export function ChartScannerScreen() {
       }
 
       const norm = normalizeScanResult(apiRes);
+      const mt5Live = Boolean(String(token || '').trim());
+
+      if (norm.skip && !norm.direction) {
+        setStage3('done');
+        setStage4('done');
+        setStage5('blocked');
+        setStage6('blocked');
+        setRadarStatus('SIGNAL DETECTED');
+        const skipLine =
+          norm.skipReason ||
+          SKIP_REASON.API_UNCLEAR;
+        setOutcome({
+          bias: 'Skip',
+          confidence: norm.accuracy || 0,
+          timeframe: norm.timeframe || ocrTf || '—',
+          tp: '—',
+          sl: '—',
+          explanation:
+            norm.summary ||
+            skipLine ||
+            'Scanner preferred SKIP — no clear trade.',
+          autoTradeAllowed: false,
+          autoTradeReasons: [skipLine],
+          skipReason: skipLine,
+          demo: norm.demo,
+          source: 'api',
+          mt5Live,
+        });
+        setDetectError(null);
+        return;
+      }
+
       if (!norm.direction || !norm.symbol) {
         setStage3('error');
         setStage4('error');
         setRadarStatus('INITIALISING');
         setDetectError(
-          norm.error ||
-            'Could not determine BUY/SELL from this chart. Try another screenshot.',
+          norm.skipReason ||
+            norm.error ||
+            'Could not determine BUY/SELL from this chart. Prefer SKIP — try another screenshot.',
         );
         return;
       }
@@ -1109,20 +1154,13 @@ export function ChartScannerScreen() {
       setSymbol(sym);
       if (norm.timeframe) setTimeframe(norm.timeframe);
 
+      // Never invent prices — missing scale → SKIP (prefer no trade).
       let entry = norm.entryPrice;
       let stop = norm.stopLoss;
       let tps: number[] = [];
-      if (entry != null && stop != null) {
-        tps = buildTpLadder(entry, stop, side, 3).tps;
-      } else {
-        const adv = advisoryLevelsForSide(
-          sym,
-          side,
-          hashSeed(sym + tf + uriSnap.slice(0, 40)),
-        );
-        entry = adv.entry;
-        stop = adv.stopLoss;
-        tps = adv.tps;
+      const hasLiveLevels = entry != null && stop != null;
+      if (hasLiveLevels) {
+        tps = buildTpLadder(entry!, stop!, side, 3).tps;
       }
 
       const gate = evaluateAutoTradeGate({
@@ -1134,6 +1172,8 @@ export function ChartScannerScreen() {
         stopLoss: stop,
         lotSize,
         trades,
+        requireMt5: true,
+        mt5Connected: mt5Live,
       });
 
       const explanation = buildExplanation(
@@ -1143,12 +1183,15 @@ export function ChartScannerScreen() {
         confidence,
         lotSize,
         trades,
-        norm.summary,
+        norm.summary ||
+          (!hasLiveLevels ? SKIP_REASON.NO_PRICES : undefined),
       );
 
-      const tpStr = tps.map((t) => formatPrice(t, entry!)).join(' / ');
-      const slStr = formatPrice(stop!, entry!);
-      const entryStr = formatPrice(entry!);
+      const tpStr = hasLiveLevels
+        ? tps.map((t) => formatPrice(t, entry!)).join(' / ')
+        : '—';
+      const slStr = hasLiveLevels ? formatPrice(stop!, entry!) : '—';
+      const entryStr = hasLiveLevels ? formatPrice(entry!) : '—';
 
       setOutcome({
         bias,
@@ -1157,12 +1200,16 @@ export function ChartScannerScreen() {
         tp: tpStr,
         sl: slStr,
         entry: entryStr,
-        tps: tps.map((t) => formatPrice(t, entry!)),
+        tps: hasLiveLevels
+          ? tps.map((t) => formatPrice(t, entry!))
+          : undefined,
         explanation,
         autoTradeAllowed: gate.allowed,
         autoTradeReasons: gate.reasons,
+        skipReason: gate.skipReason,
         demo: norm.demo,
         source: 'api',
+        mt5Live,
       });
       setStage4('done');
       setRadarStatus('SIGNAL DETECTED');
@@ -1172,7 +1219,7 @@ export function ChartScannerScreen() {
             id: `scan_${Date.now()}`,
             symbol: sym,
             timeframe: tf || '—',
-            bias,
+            bias: gate.allowed ? bias : `Skip/${bias}`,
             confidence,
             message: explanation,
             lotSize,
@@ -1448,8 +1495,15 @@ export function ChartScannerScreen() {
               ]}
             >
               {outcome.autoTradeAllowed
-                ? `Auto-trade gate passed (≥${AUTO_TRADE_MIN_ACCURACY}%, valid prices, real symbol)`
-                : `Auto-trade blocked: ${(outcome.autoTradeReasons || ['gate']).join(' · ')}`}
+                ? `Auto-trade gate passed (≥${AUTO_TRADE_MIN_ACCURACY}%, live prices, real symbol${outcome.mt5Live ? ', MT5 live' : ''})`
+                : formatSkipReasons(
+                    outcome.autoTradeReasons?.length
+                      ? outcome.autoTradeReasons
+                      : [
+                          outcome.skipReason ||
+                            SKIP_REASON.API_UNCLEAR,
+                        ],
+                  )}
             </Text>
           </View>
         ) : null}

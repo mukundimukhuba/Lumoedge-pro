@@ -3,9 +3,17 @@
  *
  * Exact body (locked to curl contract):
  *   { "symbol": "XAUUSD", "id": "MT5_TOKEN_FROM_CONNECT" }
+ *
+ * Client applies conservative quality gates after the response — prefer SKIP.
  */
 
-import { LUMOEDGE_SCAN_ROOT } from './api';
+import { LUMOEDGE_VISION_HOST, getScanApiRoot } from './api';
+import {
+  AUTO_TRADE_MIN_ACCURACY,
+  SKIP_REASON,
+  evaluateAutoTradeGate,
+  type Side,
+} from './strategy';
 
 export const AUTO_MARKETS = [
   'XAUUSD',
@@ -49,9 +57,80 @@ export type AutoScanSignal = {
   candles?: unknown;
   demo?: boolean;
   raw?: unknown;
+  gateReasons?: string[];
 };
 
 const TIMEOUT_MS = 60_000;
+
+/**
+ * Apply client-side conservative gate on an auto-scan response.
+ * Prefer SKIP when confidence, prices, or demo status are unsafe.
+ */
+export function applyAutoScanClientGate(
+  signal: AutoScanSignal,
+  opts?: { lotSize?: number; trades?: number },
+): AutoScanSignal {
+  if (!signal.ok) return signal;
+
+  if (signal.demo) {
+    return {
+      ...signal,
+      trade: false,
+      skip: true,
+      reason: SKIP_REASON.DEMO_SIGNAL,
+      gateReasons: [SKIP_REASON.DEMO_SIGNAL],
+    };
+  }
+
+  if (signal.skip || signal.trade === false) {
+    return {
+      ...signal,
+      trade: false,
+      skip: true,
+      reason: signal.reason || SKIP_REASON.API_UNCLEAR,
+    };
+  }
+
+  const dirRaw = String(signal.direction || '').toLowerCase();
+  const side: Side | null = dirRaw.includes('sell')
+    ? 'sell'
+    : dirRaw.includes('buy')
+      ? 'buy'
+      : null;
+
+  const accuracy = Math.round(Number(signal.accuracy) || 0);
+  const gate = evaluateAutoTradeGate({
+    accuracy,
+    side,
+    symbol: String(signal.symbol || ''),
+    demo: signal.demo,
+    entryPrice: signal.entryPrice ?? null,
+    stopLoss: signal.stopLoss ?? null,
+    lotSize: opts?.lotSize ?? 0.01,
+    trades: opts?.trades ?? 1,
+    requireMt5: true,
+    mt5Connected: true, // caller already required token to reach here
+  });
+
+  if (!gate.allowed) {
+    return {
+      ...signal,
+      trade: false,
+      skip: true,
+      reason: gate.skipReason || SKIP_REASON.API_UNCLEAR,
+      gateReasons: gate.reasons,
+      accuracy,
+    };
+  }
+
+  return {
+    ...signal,
+    trade: true,
+    skip: false,
+    accuracy,
+    direction: side || signal.direction,
+  };
+}
 
 export async function postAutoScan(
   body: AutoScanRequest,
@@ -70,6 +149,8 @@ export async function postAutoScan(
     return {
       ok: false,
       error: 'Connect MetaTrader first. Auto Scan reads the live market on your account.',
+      skip: true,
+      reason: SKIP_REASON.MT5_REQUIRED,
     };
   }
 
@@ -85,29 +166,68 @@ export async function postAutoScan(
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${LUMOEDGE_SCAN_ROOT}/api/scan/auto`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    const rawText = await res.text();
-    let data: Record<string, unknown> = {};
-    try {
-      data = JSON.parse(rawText) as Record<string, unknown>;
-    } catch {
-      return { ok: false, error: 'Auto Scan unavailable. Try again later.' };
+    const roots = [getScanApiRoot(), LUMOEDGE_VISION_HOST].filter(
+      (r, i, a) => r && a.indexOf(r) === i,
+    );
+    let data: Record<string, unknown> | null = null;
+    let lastFail: AutoScanSignal | null = null;
+
+    for (const root of roots) {
+      try {
+        const res = await fetch(`${root}/api/scan/auto`, {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const rawText = await res.text();
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = JSON.parse(rawText) as Record<string, unknown>;
+        } catch {
+          lastFail = {
+            ok: false,
+            error: 'Auto Scan unavailable. Try again later.',
+          };
+          continue;
+        }
+        if (!res.ok) {
+          lastFail = {
+            ok: false,
+            error: String(
+              parsed.error || parsed.message || `Auto Scan ${res.status}`,
+            ),
+            raw: parsed,
+          };
+          if (res.status === 404) continue;
+          return lastFail;
+        }
+        data = parsed;
+        break;
+      } catch (e) {
+        if (
+          (e instanceof DOMException && e.name === 'AbortError') ||
+          (e instanceof Error && e.name === 'AbortError')
+        ) {
+          throw e;
+        }
+        lastFail = {
+          ok: false,
+          error: 'Auto Scan unreachable. Try again later.',
+        };
+      }
     }
 
-    if (!res.ok) {
-      return {
-        ok: false,
-        error: String(data.error || data.message || `Auto Scan ${res.status}`),
-        raw: data,
-      };
+    if (!data) {
+      return (
+        lastFail || {
+          ok: false,
+          error: 'Auto Scan unavailable. Try again later.',
+        }
+      );
     }
 
     const dirRaw = String(data.direction || data.side || '').toLowerCase();
@@ -117,7 +237,10 @@ export async function postAutoScan(
         ? 'buy'
         : undefined;
 
-    return {
+    const accuracy =
+      Number(data.accuracy ?? data.accuracy_percent ?? 0) || undefined;
+
+    const parsed: AutoScanSignal = {
       ok: data.ok !== false,
       trade: Boolean(data.trade ?? data.open ?? direction),
       skip: Boolean(data.skip || data.noTrade),
@@ -126,7 +249,7 @@ export async function postAutoScan(
       symbol: String(data.symbol || symbol),
       timeframe: data.timeframe ? String(data.timeframe) : undefined,
       direction,
-      accuracy: Number(data.accuracy ?? data.accuracy_percent ?? 0) || undefined,
+      accuracy,
       entryPrice: Number(data.entryPrice ?? data.entry_price) || undefined,
       stopLoss: Number(data.stopLoss ?? data.stop_loss) || undefined,
       takeProfits: Array.isArray(data.takeProfits)
@@ -144,6 +267,22 @@ export async function postAutoScan(
       demo: Boolean(data.demo),
       raw: data,
     };
+
+    // Low server accuracy without explicit skip → client forces skip.
+    if (
+      parsed.ok &&
+      !parsed.skip &&
+      parsed.trade !== false &&
+      accuracy != null &&
+      accuracy > 0 &&
+      accuracy < AUTO_TRADE_MIN_ACCURACY
+    ) {
+      parsed.skip = true;
+      parsed.trade = false;
+      parsed.reason = `${SKIP_REASON.LOW_ACCURACY} (${accuracy}% < ${AUTO_TRADE_MIN_ACCURACY}%)`;
+    }
+
+    return applyAutoScanClientGate(parsed);
   } catch (e) {
     const aborted =
       (e instanceof DOMException && e.name === 'AbortError') ||
