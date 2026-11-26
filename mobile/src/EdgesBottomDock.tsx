@@ -86,7 +86,10 @@ export function EdgesBottomDock({
           borderColor: hexToRgba(accent, 0.35),
         },
       ]}
-      pointerEvents="box-none"
+      // Must capture hits itself — box-none let ScrollView/wallpaper above steal taps.
+      pointerEvents="auto"
+      // @ts-expect-error web-only proof marker
+      dataSet={{ dockRoot: '1' }}
     >
       {Platform.OS === 'web' ? (
         <View
@@ -104,7 +107,7 @@ export function EdgesBottomDock({
           style={StyleSheet.absoluteFill}
         />
       )}
-      <View style={styles.dockRow}>
+      <View style={styles.dockRow} pointerEvents="box-none">
         {TABS.map((tab) => {
           const on = active === tab.id;
           return (
@@ -150,6 +153,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     overflow: 'hidden',
     backgroundColor: 'rgba(0,0,0,0.55)',
+    // Above ScrollView / EaBlurWallpaper (zIndex 0–2) so tabs stay tappable.
+    zIndex: 100,
+    elevation: 100,
   },
   dockRow: {
     flexDirection: 'row',
