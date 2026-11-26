@@ -50,6 +50,7 @@ import {
 } from './portal/mentorScope';
 import {
   dedupeBrokerSymbols,
+  healKnownBrokerSuffix,
   preserveBrokerSymbol,
   symbolsMatch,
 } from './brokers/symbolMeta';
@@ -113,8 +114,8 @@ export function normalizeQuoteSetup(input: {
   lotSize?: number;
   trades?: number;
 }): QuoteSetup | null {
-  // Preserve exact broker SymbolList spelling (e.g. XAUUSD.cent).
-  const symbol = preserveBrokerSymbol(input.symbol);
+  // Preserve exact broker SymbolList spelling; heal OCR .CENT → .cent.
+  const symbol = healKnownBrokerSuffix(input.symbol);
   if (!symbol) return null;
   let lot = Number(input.lotSize);
   if (!Number.isFinite(lot) || lot <= 0) lot = 0.01;

@@ -30,11 +30,16 @@ function dedupeBrokerSymbols(symbols) {
   }
   return out;
 }
+function healKnownBrokerSuffix(symbol) {
+  let s = preserveClient(symbol);
+  if (/\.cent$/i.test(s)) s = s.replace(/\.cent$/i, '.cent');
+  return s;
+}
 function rematchBrokerSpelling(symbol, brokerSymbols) {
   const sym = preserveClient(symbol);
   if (!sym) return sym;
   const hit = brokerSymbols.find((s) => symbolsMatch(s.symbol, sym));
-  return hit?.symbol || sym;
+  return healKnownBrokerSuffix(hit?.symbol || sym);
 }
 function normalizeQuoteSetup(input) {
   const symbol = preserveClient(input.symbol);
@@ -83,6 +88,18 @@ assert.notStrictEqual(
   'must not match uppercased reject form',
 );
 
+// 6) Heal OCR/API .CENT even without a rematch hint (US30.cent broker spelling)
+assert.strictEqual(
+  preserveBrokerSymbol('US30.CENT'),
+  'US30.cent',
+  'OrderSend heals US30.CENT → US30.cent',
+);
+assert.strictEqual(
+  rematchBrokerSpelling('US30.CENT', [{ symbol: 'EURUSD' }]),
+  'US30.cent',
+  'rematch without hit still heals .cent',
+);
+
 console.log('test-symbol-case: ok');
 console.log(
   JSON.stringify(
@@ -93,6 +110,7 @@ console.log(
       rematchedFromUpper: rematchBrokerSpelling('XAUUSD.CENT', [
         { symbol: BROKER },
       ]),
+      us30Healed: preserveBrokerSymbol('US30.CENT'),
     },
     null,
     2,

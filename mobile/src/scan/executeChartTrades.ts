@@ -1,18 +1,19 @@
 /**
  * Chart Scanner → MT5 OrderSend path (same brokers proxy as Auto Trade Engine).
- * Always preserve exact broker symbol casing. Re-check ≥85% gate before send.
+ * Preserve exact broker symbol casing. Execute gate = signal floor (not 85%).
  */
 import {
   formatOrderSendComment,
   sendBrokerOrder,
 } from '../brokers/api';
 import {
+  healKnownBrokerSuffix,
   preserveBrokerSymbol,
   rematchBrokerSpelling,
   symbolsMatch,
 } from '../brokers/symbolMeta';
 import {
-  AUTO_TRADE_MIN_ACCURACY,
+  EXECUTE_MIN_ACCURACY,
   clampLot,
   clampTrades,
   evaluateAutoTradeGate,
@@ -45,16 +46,18 @@ export type ExecuteChartTradesResult = {
   note?: string;
 };
 
-/** Resolve OrderSend symbol: rematch hints first, never change case ourselves. */
+/** Resolve OrderSend symbol: rematch hints, then heal .CENT → .cent. */
 export function resolveOrderSymbol(
   raw: string,
   hints?: Array<string | { symbol: string }>,
 ): string {
-  const base = preserveBrokerSymbol(raw);
+  const base = healKnownBrokerSuffix(raw);
   if (!base) return base;
   const cards = (hints || [])
     .map((h) =>
-      typeof h === 'string' ? { symbol: preserveBrokerSymbol(h) } : h,
+      typeof h === 'string'
+        ? { symbol: healKnownBrokerSuffix(h) }
+        : { ...h, symbol: healKnownBrokerSuffix(h.symbol) },
     )
     .filter((h) => h && preserveBrokerSymbol(h.symbol));
   if (cards.length) {
@@ -82,6 +85,7 @@ export async function executeChartTrades(
     trades,
     requireMt5: true,
     mt5Connected: Boolean(token),
+    minAccuracy: EXECUTE_MIN_ACCURACY,
   });
 
   if (!gate.allowed) {
@@ -93,7 +97,7 @@ export async function executeChartTrades(
       status: 'skipped',
       note:
         formatSkipReasons(gate.reasons) ||
-        `SKIP: below ${AUTO_TRADE_MIN_ACCURACY}% gate`,
+        `SKIP: below ${EXECUTE_MIN_ACCURACY}% signal floor`,
     };
   }
 
@@ -171,7 +175,7 @@ export function hintSymbolsFromQuotes(
   const out: string[] = [];
   const seen = new Set<string>();
   for (const s of selected || []) {
-    const sym = preserveBrokerSymbol(s);
+    const sym = healKnownBrokerSuffix(s);
     if (!sym) continue;
     const key = sym.toUpperCase();
     if (seen.has(key)) continue;
@@ -179,7 +183,7 @@ export function hintSymbolsFromQuotes(
     out.push(sym);
   }
   for (const row of quoteSetups || []) {
-    const sym = preserveBrokerSymbol(row?.symbol);
+    const sym = healKnownBrokerSuffix(row?.symbol);
     if (!sym) continue;
     const key = sym.toUpperCase();
     if (seen.has(key)) continue;
@@ -197,7 +201,9 @@ export function matchQuoteLotTrades(
 ): { lotSize: number; trades: number; symbol: string } {
   const hit = (quoteSetups || []).find((s) => symbolsMatch(s.symbol, symbol));
   return {
-    symbol: hit ? preserveBrokerSymbol(hit.symbol) : preserveBrokerSymbol(symbol),
+    symbol: hit
+      ? healKnownBrokerSuffix(hit.symbol)
+      : healKnownBrokerSuffix(symbol),
     lotSize: clampLot(
       hit?.lotSize != null ? Number(hit.lotSize) : fallbackLot,
     ),

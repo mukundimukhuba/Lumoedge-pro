@@ -45,7 +45,7 @@ import {
   type PersistedHistoryEntry,
 } from './scan/scannerPersist';
 import {
-  AUTO_TRADE_MIN_ACCURACY,
+  EXECUTE_MIN_ACCURACY,
   SKIP_REASON,
   buildTpLadder,
   clampLot,
@@ -870,6 +870,8 @@ export function ChartScannerScreen() {
     proof?: string;
     demo?: string;
     execPopup?: string;
+    /** Proof: 78% Buy with Auto Open — must be execute-ready (not 85% SKIP). */
+    execSignal?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { height: winH, width: winW } = useWindowDimensions();
@@ -1148,6 +1150,63 @@ export function ChartScannerScreen() {
       }, 250);
       return () => clearTimeout(t);
     }
+    // ?execSignal=1 — 78% Buy Auto Open ready (regression for 85% SKIP bug).
+    if (params.execSignal === '1') {
+      const t = setTimeout(() => {
+        const sym = resolveSymbol('US30.CENT');
+        setSymbol(sym);
+        setTimeframe('H4');
+        setLotRaw('0.02');
+        setTradesRaw('3');
+        setExecuteTradesRaw('3');
+        setChartUri(null);
+        setRadarStatus('SIGNAL DETECTED');
+        setStage2('done');
+        setStage3('done');
+        setStage4('done');
+        setStage5('done');
+        setStage6('idle');
+        setAutoOpenTrades(true);
+        setOutcome({
+          bias: 'Buy',
+          confidence: 78,
+          timeframe: 'H4',
+          tp: '50464.61 / 50575.39 / 50686.17',
+          sl: '50243.05',
+          entry: '50353.83',
+          tps: ['50464.61', '50575.39', '50686.17'],
+          side: 'buy',
+          entryNum: 50353.83,
+          stopNum: 50243.05,
+          tpNums: [50464.61, 50575.39, 50686.17],
+          explanation:
+            'Proof: 78% Buy must execute (signal floor) — not SKIP at 85%.',
+          autoTradeAllowed: true,
+          autoTradeReasons: [],
+          skipReason: null,
+          demo: false,
+          source: 'local',
+          mt5Live: true,
+        });
+        setHistory([
+          {
+            id: 'proof_us30_78',
+            symbol: sym,
+            timeframe: 'H4',
+            bias: 'Buy',
+            confidence: 78,
+            message: 'Proof 78% Buy Auto Open',
+            lotSize: 0.02,
+            trades: 3,
+            tp: '50464.61 / 50575.39 / 50686.17',
+            sl: '50243.05',
+            chartUri: null,
+            at: new Date().toISOString(),
+          },
+        ]);
+      }, 250);
+      return () => clearTimeout(t);
+    }
     const t = setTimeout(() => {
       void (async () => {
         const uri = await buildProofChartUri('XAUUSD', 'H1');
@@ -1155,7 +1214,7 @@ export function ChartScannerScreen() {
       })();
     }, 200);
     return () => clearTimeout(t);
-  }, [params.proof, params.demo, params.execPopup]);
+  }, [params.proof, params.demo, params.execPopup, params.execSignal]);
 
   const beginPick = async (mode: 'library' | 'camera') => {
     // Never block on radar INITIALISING / sweep — picker is always available.
@@ -1488,6 +1547,8 @@ export function ChartScannerScreen() {
         trades,
         requireMt5: true,
         mt5Connected: mt5Live,
+        // Buy/Sell signal is enough for Chart Scanner OrderSend (not 85%).
+        minAccuracy: EXECUTE_MIN_ACCURACY,
       });
 
       const explanation = buildExplanation(
@@ -1752,8 +1813,8 @@ export function ChartScannerScreen() {
             <Text style={styles.autoOpenTitle}>Auto Open Trades</Text>
             <Text style={styles.autoOpenSub}>
               {autoOpenTrades
-                ? `ON — opens when gate ≥${AUTO_TRADE_MIN_ACCURACY}%`
-                : `OFF — ask before opening (≥${AUTO_TRADE_MIN_ACCURACY}% gate)`}
+                ? 'ON — opens on Buy/Sell signal (OrderSend)'
+                : 'OFF — ask after scan when Buy/Sell is ready'}
             </Text>
           </View>
           <Switch
@@ -1858,7 +1919,7 @@ export function ChartScannerScreen() {
               ]}
             >
               {outcome.autoTradeAllowed
-                ? `Auto-trade gate passed (≥${AUTO_TRADE_MIN_ACCURACY}%, live prices, real symbol${outcome.mt5Live ? ', MT5 live' : ''})`
+                ? `Ready to open (≥${EXECUTE_MIN_ACCURACY}% signal, live prices, real symbol${outcome.mt5Live ? ', MT5 live' : ''})`
                 : formatSkipReasons(
                     outcome.autoTradeReasons?.length
                       ? outcome.autoTradeReasons
@@ -1995,8 +2056,8 @@ export function ChartScannerScreen() {
             </Text>
             <Text style={styles.promptBody}>
               Chart is locked in the radar. Set lot size and trades, then tap
-              Scan now for a ~5s analyzing pass. Auto Open uses the same ≥
-              {AUTO_TRADE_MIN_ACCURACY}% gate.
+              Scan now for a ~5s analyzing pass. Auto Open sends on a Buy/Sell
+              signal (OrderSend); manual asks right after scan.
             </Text>
             <LotTradesFields
               accent={accent}
@@ -2063,8 +2124,8 @@ export function ChartScannerScreen() {
                 ? ` · ${outcome.timeframe}`
                 : ''}
               {outcome?.bias ? ` · ${outcome.bias}` : ''} ·{' '}
-              {outcome?.confidence ?? '—'}% · lot {lotRaw}. Gate ≥
-              {AUTO_TRADE_MIN_ACCURACY}% still applies.
+              {outcome?.confidence ?? '—'}% · lot {lotRaw}. Opens the same
+              OrderSend path as Auto Open.
             </Text>
             <View style={styles.paramField}>
               <Text style={styles.paramLabel}>Number of trades</Text>

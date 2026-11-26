@@ -1,13 +1,33 @@
 import type { BrokerSymbol } from './api';
 
 /**
- * Trim / strip spaces only — never change letter case.
+ * Trim / strip spaces only — never change letter case of the root ticker.
  * Brokers (e.g. XAUUSD.cent) reject symbols when the suffix case is altered.
  */
 export function preserveBrokerSymbol(symbol: string | null | undefined): string {
   return String(symbol || '')
     .trim()
     .replace(/\s+/g, '');
+}
+
+/**
+ * Known broker suffixes that must stay lowercase (OCR/API often emit .CENT).
+ * Only rewrites the matched suffix; root ticker casing is left alone.
+ */
+const KNOWN_LOWER_SUFFIXES = ['.cent'] as const;
+
+export function healKnownBrokerSuffix(
+  symbol: string | null | undefined,
+): string {
+  let sym = preserveBrokerSymbol(symbol);
+  if (!sym) return sym;
+  for (const suf of KNOWN_LOWER_SUFFIXES) {
+    const re = new RegExp(`${suf.replace('.', '\\.')}$`, 'i');
+    if (re.test(sym)) {
+      sym = sym.replace(re, suf);
+    }
+  }
+  return sym;
 }
 
 /** Case-insensitive compare for UI matching; does not mutate either string. */
@@ -108,5 +128,5 @@ export function rematchBrokerSpelling(
   const sym = preserveBrokerSymbol(symbol);
   if (!sym) return sym;
   const hit = brokerSymbols.find((s) => symbolsMatch(s.symbol, sym));
-  return hit?.symbol || sym;
+  return healKnownBrokerSuffix(hit?.symbol || sym);
 }

@@ -5,15 +5,25 @@
  * • Right-edge only: bias from last 5–8 candles (rising → BUY, falling → SELL).
  * • Levels: BUY SL below / TPs above; SELL SL above / TPs below.
  * • TP ladder: 1R / 2R / 3R.
- * • Auto-trade gate: accuracy ≥ 85%, live prices (never invented), real symbol.
+ * • Home Auto Trade gate: accuracy ≥ 85%, live prices, real symbol.
+ * • Chart Scanner execute: Buy/Sell signal floor (≥70%) is enough for OrderSend.
  *   Max 3 trades, lot 0.01–1.
  */
 
-/** Minimum accuracy % required to open an auto trade. Prefer skip below this. */
+/**
+ * Home Auto Trade Engine batch gate — prefer skip below this.
+ * Chart Scanner OrderSend does NOT use this; see EXECUTE_MIN_ACCURACY.
+ */
 export const AUTO_TRADE_MIN_ACCURACY = 85;
 
 /** Signals below this are treated as unclear / no direction for display tradeability. */
 export const SCAN_SIGNAL_MIN_ACCURACY = 70;
+
+/**
+ * Chart Scanner Auto Open / Execute floor: a clear Buy/Sell signal is enough.
+ * Matches SCAN_SIGNAL_MIN_ACCURACY so 78% Buy no longer blocks MT5 OrderSend.
+ */
+export const EXECUTE_MIN_ACCURACY = SCAN_SIGNAL_MIN_ACCURACY;
 
 export const MAX_AUTO_TRADES = 3;
 export const LOT_MIN = 0.01;
@@ -203,6 +213,11 @@ export type AutoTradeGateInput = {
   /** When true, missing MT5 connection is a hard skip. */
   requireMt5?: boolean;
   mt5Connected?: boolean;
+  /**
+   * Accuracy floor. Default AUTO_TRADE_MIN_ACCURACY (85).
+   * Chart Scanner execute passes EXECUTE_MIN_ACCURACY (signal floor).
+   */
+  minAccuracy?: number;
 };
 
 export type AutoTradeGateResult = {
@@ -217,13 +232,18 @@ export function evaluateAutoTradeGate(
 ): AutoTradeGateResult {
   const reasons: string[] = [];
 
+  const minAccuracy =
+    input.minAccuracy != null && Number.isFinite(input.minAccuracy)
+      ? Number(input.minAccuracy)
+      : AUTO_TRADE_MIN_ACCURACY;
+
   if (input.requireMt5 && !input.mt5Connected) {
     reasons.push(SKIP_REASON.MT5_REQUIRED);
   }
   if (!input.side) reasons.push(SKIP_REASON.NO_DIRECTION);
-  if (input.accuracy < AUTO_TRADE_MIN_ACCURACY) {
+  if (input.accuracy < minAccuracy) {
     reasons.push(
-      `${SKIP_REASON.LOW_ACCURACY} (${input.accuracy}% < ${AUTO_TRADE_MIN_ACCURACY}%)`,
+      `${SKIP_REASON.LOW_ACCURACY} (${input.accuracy}% < ${minAccuracy}%)`,
     );
   }
   if (!isRealSymbol(input.symbol, input.demo)) {

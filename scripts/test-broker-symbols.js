@@ -23,8 +23,12 @@ assert(
   'preserve keeps lower suffix',
 );
 assert(
-  preserveBrokerSymbol('XAUUSD.CENT') === 'XAUUSD.CENT',
-  'preserve keeps upper suffix as given',
+  preserveBrokerSymbol('XAUUSD.CENT') === 'XAUUSD.cent',
+  'preserve heals .CENT → .cent for OrderSend',
+);
+assert(
+  preserveBrokerSymbol('US30.CENT') === 'US30.cent',
+  'preserve heals US30.CENT → US30.cent',
 );
 assert(
   preserveBrokerSymbol('XAU USD.cent') === 'XAUUSD.cent',
