@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070D" />
+  <meta name="color-scheme" content="dark" />
+  <title>RCG Giveaway — Lumo Edge Pro</title>
+  <meta name="description" content="Invite-only: free trading robot + free Lumo Edge Pro app access for RCG Markets account holders." />
+  <meta name="robots" content="noindex, nofollow" />
+  <meta property="og:title" content="Lumo Edge Pro — RCG invite" />
+  <meta property="og:description" content="Verify your RCG Markets MT5 account and claim a free robot + app subscription." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="/g/rcg-d36f2878e48d3ab9b649572a" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="icon" href="/favicon.ico" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg0: #05070D;
+      --bg1: #0C1220;
+      --ink: #F4F6FA;
+      --muted: #9AA3B5;
+      --line: rgba(255, 255, 255, 0.1);
+      --accent: #E11D2E;
+      --accent-soft: rgba(225, 29, 46, 0.16);
+      --ok: #2DD4A8;
+      --warn: #F5B942;
+      --radius: 16px;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background:
+        radial-gradient(1200px 600px at 80% -10%, rgba(225, 29, 46, 0.22), transparent 55%),
+        radial-gradient(900px 500px at -10% 20%, rgba(40, 90, 180, 0.18), transparent 50%),
+        linear-gradient(180deg, var(--bg0), var(--bg1) 48%, #070B14);
+      color: var(--ink);
+      font-family: Outfit, system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    body {
+      padding: max(18px, env(safe-area-inset-top)) 16px max(28px, env(safe-area-inset-bottom));
+    }
+
+    .wrap {
+      width: min(520px, 100%);
+      margin: 0 auto;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 22px;
+      animation: rise 520ms ease-out both;
+    }
+
+    .brand-mark {
+      width: 54px;
+      height: 54px;
+      border-radius: 14px;
+      object-fit: cover;
+      background: #111;
+      box-shadow: 0 0 0 1px var(--line), var(--shadow);
+    }
+
+    .brand h1 {
+      font-family: Syne, Outfit, sans-serif;
+      font-weight: 800;
+      font-size: clamp(1.85rem, 7vw, 2.35rem);
+      line-height: 0.98;
+      letter-spacing: -0.03em;
+      margin: 0;
+    }
+
+    .brand h1 span {
+      color: var(--accent);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .eyebrow i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 0 4px var(--accent-soft);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+
+    .hero-copy {
+      margin: 0 0 22px;
+      animation: rise 620ms ease-out both;
+    }
+
+    .hero-copy h2 {
+      margin: 0 0 10px;
+      font-family: Syne, Outfit, sans-serif;
+      font-size: clamp(1.25rem, 5.2vw, 1.55rem);
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.45;
+    }
+
+    .panel {
+      background: rgba(10, 14, 24, 0.78);
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      padding: 18px 16px 16px;
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow);
+      animation: rise 720ms ease-out both;
+    }
+
+    .steps {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 16px;
+    }
+
+    .step-pill {
+      flex: 1;
+      text-align: center;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 8px 6px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid transparent;
+    }
+
+    .step-pill.on {
+      color: var(--ink);
+      border-color: rgba(225, 29, 46, 0.45);
+      background: var(--accent-soft);
+    }
+
+    .step-pill.done {
+      color: var(--ok);
+      border-color: rgba(45, 212, 168, 0.35);
+    }
+
+    label {
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 12px 0 6px;
+    }
+
+    input, select, button {
+      font: inherit;
+    }
+
+    input, select {
+      width: 100%;
+      appearance: none;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(0, 0, 0, 0.35);
+      color: var(--ink);
+      padding: 14px 14px;
+      font-size: 16px; /* iOS zoom-safe */
+      outline: none;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    input:focus, select:focus {
+      border-color: rgba(225, 29, 46, 0.7);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+
+    select {
+      background-image: linear-gradient(45deg, transparent 50%, #9AA3B5 50%),
+        linear-gradient(135deg, #9AA3B5 50%, transparent 50%);
+      background-position: calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px);
+      background-size: 6px 6px, 6px 6px;
+      background-repeat: no-repeat;
+      padding-right: 36px;
+    }
+
+    .btn {
+      width: 100%;
+      margin-top: 16px;
+      border: 0;
+      border-radius: 14px;
+      padding: 15px 16px;
+      font-weight: 700;
+      font-size: 1rem;
+      letter-spacing: 0.01em;
+      color: #fff;
+      background: linear-gradient(180deg, #F03343, var(--accent));
+      box-shadow: 0 10px 28px rgba(225, 29, 46, 0.35);
+      cursor: pointer;
+      transition: transform 140ms ease, filter 140ms ease, opacity 140ms ease;
+    }
+
+    .btn:hover { filter: brightness(1.05); }
+    .btn:active { transform: translateY(1px) scale(0.99); }
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      filter: none;
+    }
+
+    .btn.ghost {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+      box-shadow: none;
+      margin-top: 10px;
+    }
+
+    .btn.register {
+      margin-top: 0;
+      margin-bottom: 14px;
+      background: linear-gradient(180deg, #F7C85A, #E0A423);
+      color: #1A1405;
+      box-shadow: 0 10px 28px rgba(224, 164, 35, 0.28);
+      text-decoration: none;
+      display: block;
+      text-align: center;
+    }
+
+    .btn.register small {
+      display: block;
+      margin-top: 4px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      opacity: 0.85;
+    }
+
+    .msg {
+      margin-top: 12px;
+      padding: 11px 12px;
+      border-radius: 12px;
+      font-size: 0.92rem;
+      line-height: 1.4;
+      display: none;
+    }
+
+    .msg.show { display: block; animation: fade 220ms ease both; }
+    .msg.err {
+      background: rgba(225, 29, 46, 0.12);
+      border: 1px solid rgba(225, 29, 46, 0.35);
+      color: #FFB4BA;
+    }
+    .msg.ok {
+      background: rgba(45, 212, 168, 0.1);
+      border: 1px solid rgba(45, 212, 168, 0.35);
+      color: #B8F5E3;
+    }
+    .msg.info {
+      background: rgba(245, 185, 66, 0.1);
+      border: 1px solid rgba(245, 185, 66, 0.35);
+      color: #FFE2A3;
+    }
+
+    .hidden { display: none !important; }
+
+    .key-box {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px dashed rgba(45, 212, 168, 0.45);
+      background: rgba(45, 212, 168, 0.08);
+      word-break: break-all;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 1.02rem;
+      letter-spacing: 0.04em;
+      text-align: center;
+    }
+
+    .howto {
+      margin: 16px 0 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .howto li {
+      position: relative;
+      padding: 8px 0 8px 28px;
+      border-top: 1px solid var(--line);
+    }
+
+    .howto li::before {
+      content: attr(data-n);
+      position: absolute;
+      left: 0;
+      top: 8px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-weight: 700;
+      display: grid;
+      place-items: center;
+    }
+
+    .fine {
+      margin: 18px 2px 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.4;
+      text-align: center;
+    }
+
+    .fine a { color: #D7DCE8; }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fade {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.15); opacity: 0.7; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header class="brand">
+      <img class="brand-mark" src="/splash-mascot.png" alt="Lumo Edge Pro" width="54" height="54" />
+      <div class="eyebrow"><i></i> Official giveaway</div>
+      <h1>Lumo Edge <span>Pro</span></h1>
+    </header>
+
+    <section class="hero-copy">
+      <h2>Free UNLIMITED BULL robot + free app access</h2>
+      <p>
+        Verify your RCG Markets trading account and your Unlimited Bull license key appears automatically.
+        Non-RCG brokers are not eligible.
+      </p>
+    </section>
+
+    <a
+      class="btn register"
+      id="rcgRegister"
+      href="https://my.rcgmarkets.com/auth/register?partner_code=9113864"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      Open RCG account
+      <small>No account yet? Register with partner code 9113864</small>
+    </a>
+
+    <section class="panel" aria-live="polite">
+      <div class="steps" id="steps">
+        <div class="step-pill on" data-step="1">1 · Verify RCG</div>
+        <div class="step-pill" data-step="2">2 · Your key</div>
+      </div>
+
+      <form id="verifyForm" autocomplete="on">
+        <label for="name">Your name</label>
+        <input id="name" name="name" autocomplete="name" placeholder="Name on the account" />
+
+        <label for="email">Email for your license</label>
+        <input id="email" name="email" type="email" autocomplete="email" placeholder="you@email.com" required />
+
+        <label for="server">RCG MT5 server</label>
+        <select id="server" name="server" required>
+          <option value="RCGMarkets-Real">RCGMarkets-Real (Live)</option>
+          <option value="RCGMarkets-Demo">RCGMarkets-Demo (Demo)</option>
+        </select>
+
+        <label for="login">MT5 login</label>
+        <input id="login" name="login" inputmode="numeric" autocomplete="username" placeholder="Your RCG account number" required />
+
+        <label for="password">Trading password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Trading password (not investor)" required />
+
+        <button class="btn" id="verifyBtn" type="submit">Verify &amp; get Unlimited Bull key</button>
+        <div class="msg" id="verifyMsg" role="status"></div>
+      </form>
+
+      <div id="success" class="hidden">
+        <div class="msg ok show" id="successMsg">Your Unlimited Bull license is ready.</div>
+        <p class="fine" id="eaNameLine" style="margin:0 0 10px;text-align:left"></p>
+        <div class="key-box" id="licenseKey"></div>
+        <button class="btn" id="copyBtn" type="button">Copy license key</button>
+        <ol class="howto">
+          <li data-n="1">Open <a href="https://lumoedgepro.vercel.app">lumoedgepro.vercel.app</a> (or the phone app).</li>
+          <li data-n="2">Use the same email you entered above.</li>
+          <li data-n="3">Paste this key on the Activate screen.</li>
+          <li data-n="4">Connect Broker → RCG Markets to trade with your free robot.</li>
+        </ol>
+        <button class="btn ghost" id="shareBtn" type="button">Share this giveaway</button>
+      </div>
+    </section>
+
+    <p class="fine">
+      RCG Markets holders only · One free key per MT5 login and email ·
+      Password is used only to verify and is never stored ·
+      <a href="https://my.rcgmarkets.com/auth/register?partner_code=9113864">Open RCG account</a>
+      ·
+      <a href="https://lumoedgepro.vercel.app">Open Lumo Edge Pro</a>
+    </p>
+  </main>
+
+  <script>
+    (function () {
+      // Invite-only token — must match /g/rcg-<token>/ path + GIVEAWAY_ACCESS_TOKEN.
+      const ACCESS_TOKEN = 'd36f2878e48d3ab9b649572a';
+      const SHARE_URL = (location.origin || '') + '/g/rcg-' + ACCESS_TOKEN;
+
+      const $ = (id) => document.getElementById(id);
+      const verifyForm = $('verifyForm');
+      const success = $('success');
+      const verifyMsg = $('verifyMsg');
+      const serverSelect = $('server');
+
+      function setStep(n) {
+        document.querySelectorAll('.step-pill').forEach((el) => {
+          const s = Number(el.getAttribute('data-step'));
+          el.classList.toggle('on', s === n);
+          el.classList.toggle('done', s < n);
+        });
+      }
+
+      function showMsg(el, text, kind) {
+        el.textContent = text || '';
+        el.className = 'msg show ' + (kind || 'info');
+      }
+
+      function clearMsg(el) {
+        el.textContent = '';
+        el.className = 'msg';
+      }
+
+      function showKey(data) {
+        verifyForm.classList.add('hidden');
+        success.classList.remove('hidden');
+        setStep(2);
+        $('licenseKey').textContent = data.key || '';
+        const ea = data.eaName || 'UNLIMITED BULLv1';
+        $('eaNameLine').textContent = 'Robot: ' + ea;
+        $('successMsg').textContent =
+          data.message || (ea + ' license ready — free robot + app access unlocked.');
+        $('successMsg').className = 'msg ok show';
+      }
+
+      async function api(path, opts) {
+        const res = await fetch(path, {
+          method: (opts && opts.method) || 'GET',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Giveaway-Token': ACCESS_TOKEN,
+          },
+          body: opts && opts.body ? JSON.stringify(opts.body) : undefined,
+        });
+        let data = null;
+        try { data = await res.json(); } catch (_) { data = null; }
+        return { res, data };
+      }
+
+      async function loadServers() {
+        try {
+          const { res, data } = await api('/api/giveaway/verify?t=' + encodeURIComponent(ACCESS_TOKEN));
+          if (res.ok && data && Array.isArray(data.servers) && data.servers.length) {
+            const current = serverSelect.value;
+            serverSelect.innerHTML = '';
+            data.servers.forEach((s) => {
+              const opt = document.createElement('option');
+              opt.value = s;
+              opt.textContent = /demo/i.test(s) ? s + ' (Demo)' : /real|live/i.test(s) ? s + ' (Live)' : s;
+              serverSelect.appendChild(opt);
+            });
+            if (data.servers.includes(current)) serverSelect.value = current;
+          }
+        } catch (_) { /* keep defaults */ }
+      }
+
+      verifyForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        clearMsg(verifyMsg);
+        const btn = $('verifyBtn');
+        btn.disabled = true;
+        btn.textContent = 'Verifying RCG & issuing key…';
+        try {
+          const { res, data } = await api('/api/giveaway/verify', {
+            method: 'POST',
+            body: {
+              accessToken: ACCESS_TOKEN,
+              server: serverSelect.value,
+              login: $('login').value.trim(),
+              password: $('password').value,
+              email: $('email').value.trim(),
+              name: $('name').value.trim(),
+            },
+          });
+          $('password').value = '';
+          if (!res.ok || !data || !data.ok || !data.key) {
+            const err =
+              (data && (data.userMessage || data.error)) ||
+              'Verification failed. Check login, password, email, and RCG server.';
+            showMsg(verifyMsg, err, 'err');
+            return;
+          }
+          showKey(data);
+        } catch (err) {
+          showMsg(verifyMsg, 'Network error. Check your connection and try again.', 'err');
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Verify & get Unlimited Bull key';
+        }
+      });
+
+      $('copyBtn').addEventListener('click', async () => {
+        const key = $('licenseKey').textContent.trim();
+        try {
+          await navigator.clipboard.writeText(key);
+          $('copyBtn').textContent = 'Copied';
+          setTimeout(() => { $('copyBtn').textContent = 'Copy license key'; }, 1600);
+        } catch (_) {
+          const range = document.createRange();
+          range.selectNodeContents($('licenseKey'));
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+      });
+
+      $('shareBtn').addEventListener('click', async () => {
+        const text =
+          'Lumo Edge Pro RCG invite — verify your MT5 and get a free Unlimited Bull key: ' + SHARE_URL;
+        if (navigator.share) {
+          try {
+            await navigator.share({ title: 'Lumo Edge Pro RCG Invite', text, url: SHARE_URL });
+            return;
+          } catch (_) { /* fall through */ }
+        }
+        window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener');
+      });
+
+      loadServers();
+    })();
+  </script>
+</body>
+</html>
