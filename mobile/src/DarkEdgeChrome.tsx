@@ -74,28 +74,42 @@ export function DarkEdgeChrome({
       document.head.appendChild(style);
     }
 
+    const paintNode = (node: Element) => {
+      if (!(node instanceof HTMLElement)) return;
+      const bg = getComputedStyle(node).backgroundColor;
+      if (
+        bg === 'rgb(242, 242, 242)' ||
+        bg === 'rgb(255, 255, 255)' ||
+        bg === 'rgba(255, 255, 255, 1)'
+      ) {
+        node.style.setProperty('background-color', BLACK, 'important');
+      }
+    };
+
     const paint = () => {
       document.documentElement.style.backgroundColor = BLACK;
       document.body.style.backgroundColor = BLACK;
-      document.querySelectorAll('div').forEach((node) => {
-        const bg = getComputedStyle(node).backgroundColor;
-        if (
-          bg === 'rgb(242, 242, 242)' ||
-          bg === 'rgb(255, 255, 255)' ||
-          bg === 'rgba(255, 255, 255, 1)'
-        ) {
-          (node as HTMLElement).style.setProperty(
-            'background-color',
-            BLACK,
-            'important',
-          );
-        }
-      });
+      document.querySelectorAll('div').forEach(paintNode);
     };
 
+    // Immediate kill of white stack cards on mount / navigation (not 500ms later).
     paint();
-    const id = window.setInterval(paint, 500);
-    return () => window.clearInterval(id);
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        m.addedNodes.forEach((n) => {
+          if (n instanceof HTMLElement) {
+            paintNode(n);
+            n.querySelectorAll?.('div').forEach(paintNode);
+          }
+        });
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    const id = window.setInterval(paint, 2000);
+    return () => {
+      mo.disconnect();
+      window.clearInterval(id);
+    };
   }, []);
 
   return (

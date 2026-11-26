@@ -47,10 +47,16 @@ export default function Root({ children }: PropsWithChildren) {
                 -webkit-text-size-adjust: 100%;
                 text-size-adjust: 100%;
               }
-              /* Kill Expo Router / RN-web default #f2f2f2 stack card (white top strip). */
+              /* Kill Expo Router / RN-web default #f2f2f2 / white stack card flash. */
               #root, #root > div, body > div,
               #root div[style*="background-color: rgb(242, 242, 242)"],
-              #root div[style*="background-color:rgb(242, 242, 242)"] {
+              #root div[style*="background-color:rgb(242, 242, 242)"],
+              #root div[style*="background-color: rgb(255, 255, 255)"],
+              #root div[style*="background-color:rgb(255, 255, 255)"],
+              #root div[style*="background-color: #fff"],
+              #root div[style*="background-color:#fff"],
+              #root div[style*="background-color: #ffffff"],
+              #root div[style*="background-color:#ffffff"] {
                 background-color: #000000 !important;
                 max-width: 100%;
                 overflow-x: hidden;
