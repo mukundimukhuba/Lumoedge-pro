@@ -7,11 +7,15 @@ import {
   View,
 } from 'react-native';
 import { useAppState } from '../AppState';
-import { fetchLicenseStatus } from '../licenses/remoteApi';
+import {
+  fetchCaptchaConfig,
+  fetchLicenseStatus,
+  issueCheckboxChallenge,
+  type CaptchaPublicConfig,
+} from '../licenses/remoteApi';
 import { listSubscriptions } from '../subscriptions/remoteApi';
 import {
   LICENSE_DURATIONS,
-  displaySubscriptionStatus,
   type LicenseDurationId,
   type SubscriptionRow,
 } from '../subscriptions/types';
@@ -45,7 +49,6 @@ export function LicenseKeysPanel() {
   const [assigneeName, setAssigneeName] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
   const [duration, setDuration] = useState<LicenseDurationId>('30d');
-  const [subscriptionId, setSubscriptionId] = useState<string>('');
   const [approvedSubs, setApprovedSubs] = useState<SubscriptionRow[]>([]);
   const [lastGenerated, setLastGenerated] = useState<{
     clientEmail: string;
@@ -58,8 +61,25 @@ export function LicenseKeysPanel() {
   const [flashError, setFlashError] = useState(false);
   const [envLine, setEnvLine] = useState('Checking Supabase…');
   const [regenerate, setRegenerate] = useState(false);
+  const [captcha, setCaptcha] = useState<CaptchaPublicConfig>({
+    provider: 'checkbox',
+    siteKey: null,
+  });
+  const [robotChecked, setRobotChecked] = useState(false);
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  const [challengeBusy, setChallengeBusy] = useState(false);
+  const [providerToken, setProviderToken] = useState<string | null>(null);
 
   const mentorEmail = mentor?.email?.trim().toLowerCase() || '';
+  const robotVerified = Boolean(
+    captcha.provider === 'checkbox'
+      ? robotChecked && challengeToken
+      : providerToken,
+  );
+  const activeId = myEas.some((e) => e.id === eaId)
+    ? eaId
+    : myEas[0]?.id ?? '';
+  const canGenerate = Boolean(activeId && robotVerified);
 
   useEffect(() => {
     if (!mentorEmail) return;
@@ -98,6 +118,19 @@ export function LicenseKeysPanel() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await fetchCaptchaConfig();
+      if (cancelled) return;
+      if (res.captcha) setCaptcha(res.captcha);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Auto-link approved subscription for the typed client email (no picker UI).
+  useEffect(() => {
     if (!mentorEmail) return;
     let cancelled = false;
     (async () => {
@@ -111,9 +144,6 @@ export function LicenseKeysPanel() {
       if (cancelled) return;
       if (res.ok) {
         setApprovedSubs(res.subscriptions);
-        if (res.subscriptions.length === 1 && !subscriptionId) {
-          setSubscriptionId(res.subscriptions[0]!.id);
-        }
       }
     })();
     return () => {
@@ -121,9 +151,103 @@ export function LicenseKeysPanel() {
     };
   }, [mentorEmail, assigneeEmail]);
 
-  const activeId = myEas.some((e) => e.id === eaId)
-    ? eaId
-    : myEas[0]?.id ?? '';
+  // Load Turnstile/reCAPTCHA widget script when site keys exist (web only).
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (captcha.provider === 'turnstile' && captcha.siteKey) {
+      const id = 'cf-turnstile-script';
+      if (!document.getElementById(id)) {
+        const s = document.createElement('script');
+        s.id = id;
+        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+        s.async = true;
+        document.head.appendChild(s);
+      }
+    }
+    if (captcha.provider === 'recaptcha' && captcha.siteKey) {
+      const id = 'g-recaptcha-script';
+      if (!document.getElementById(id)) {
+        const s = document.createElement('script');
+        s.id = id;
+        s.src = `https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(captcha.siteKey)}`;
+        s.async = true;
+        document.head.appendChild(s);
+      }
+    }
+  }, [captcha.provider, captcha.siteKey]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (captcha.provider !== 'turnstile' || !captcha.siteKey) return;
+    const host =
+      document.getElementById('license-turnstile') ||
+      (document.querySelector(
+        '[data-nativeid="license-turnstile"], [id="license-turnstile"]',
+      ) as HTMLElement | null);
+    if (!host) return;
+    host.setAttribute('id', 'license-turnstile');
+    let widgetId: string | null = null;
+    let cancelled = false;
+    const tryRender = () => {
+      const w = (window as unknown as {
+        turnstile?: {
+          render: (
+            el: HTMLElement,
+            opts: {
+              sitekey: string;
+              callback: (t: string) => void;
+              'expired-callback'?: () => void;
+              'error-callback'?: () => void;
+            },
+          ) => string;
+        };
+      }).turnstile;
+      if (!w || cancelled) return false;
+      host.innerHTML = '';
+      widgetId = w.render(host, {
+        sitekey: captcha.siteKey!,
+        callback: (t: string) => setProviderToken(t),
+        'expired-callback': () => setProviderToken(null),
+        'error-callback': () => setProviderToken(null),
+      });
+      return true;
+    };
+    if (tryRender()) return;
+    const timer = setInterval(() => {
+      if (tryRender()) clearInterval(timer);
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      if (widgetId) host.innerHTML = '';
+    };
+  }, [captcha.provider, captcha.siteKey]);
+
+  const resetRobot = () => {
+    setRobotChecked(false);
+    setChallengeToken(null);
+    setProviderToken(null);
+  };
+
+  const onToggleRobot = async () => {
+    if (captcha.provider !== 'checkbox') return;
+    if (robotChecked) {
+      resetRobot();
+      return;
+    }
+    setChallengeBusy(true);
+    setFlash('');
+    const res = await issueCheckboxChallenge({ actorEmail: mentorEmail });
+    setChallengeBusy(false);
+    if (!res.ok || !res.token) {
+      setFlashError(true);
+      setFlash(res.error || 'Could not complete robot check.');
+      resetRobot();
+      return;
+    }
+    setRobotChecked(true);
+    setChallengeToken(res.token);
+  };
 
   const onGenerate = async () => {
     if (!activeId) {
@@ -146,6 +270,13 @@ export function LicenseKeysPanel() {
       setFlash('Select a license duration.');
       return;
     }
+    const token =
+      captcha.provider === 'checkbox' ? challengeToken : providerToken;
+    if (!token) {
+      setFlashError(true);
+      setFlash('Confirm you’re not a robot before generating a key.');
+      return;
+    }
     const email = assigneeEmail.trim().toLowerCase();
     const matching = approvedSubs.filter((s) => s.clientEmail === email);
     if (!matching.length) {
@@ -155,10 +286,7 @@ export function LicenseKeysPanel() {
       );
       return;
     }
-    const subId =
-      subscriptionId && matching.some((s) => s.id === subscriptionId)
-        ? subscriptionId
-        : matching[0]!.id;
+    const subId = matching[0]!.id;
     const ea = myEas.find((e) => e.id === activeId);
     setFlashError(false);
     setFlash('Generating license key…');
@@ -168,6 +296,7 @@ export function LicenseKeysPanel() {
       duration,
       subscriptionId: subId,
       regenerate,
+      challengeToken: token,
     });
     if (!result) {
       setFlashError(true);
@@ -189,8 +318,8 @@ export function LicenseKeysPanel() {
       );
       setAssigneeName('');
       setAssigneeEmail('');
-      setSubscriptionId('');
       setRegenerate(false);
+      resetRobot();
       await refreshScopedLicenseKeys({ role: 'mentor', email: mentorEmail });
     } else {
       setFlashError(true);
@@ -209,8 +338,8 @@ export function LicenseKeysPanel() {
         <Text style={styles.h2}>Generate license keys</Text>
         <Text style={styles.hint}>
           Select your EA, enter the client’s registered email, choose duration,
-          then generate. Keys are linked to you + EA + client email +
-          subscription. Other mentors’ EAs never appear here.
+          confirm you’re not a robot, then generate. Keys are linked to you + EA
+          + client email. Other mentors’ EAs never appear here.
         </Text>
         <Text style={styles.env}>{envLine}</Text>
         {mentor?.email && !isSuperAdminEmail(mentor.email) ? (
@@ -279,33 +408,6 @@ export function LicenseKeysPanel() {
           })}
         </View>
 
-        {approvedSubs.length > 0 ? (
-          <>
-            <Text style={styles.label}>APPROVED SUBSCRIPTION</Text>
-            {approvedSubs.map((s) => {
-              const on = s.id === subscriptionId;
-              return (
-                <Pressable
-                  key={s.id}
-                  onPress={() => setSubscriptionId(s.id)}
-                  style={[styles.subRow, on && styles.subRowOn]}
-                >
-                  <Text style={styles.subText}>
-                    {s.clientEmail} · {displaySubscriptionStatus(s.status)} · $
-                    {s.amountUsd}
-                  </Text>
-                  <Text style={styles.hint}>{s.id}</Text>
-                </Pressable>
-              );
-            })}
-          </>
-        ) : (
-          <Text style={styles.hint}>
-            Enter an approved client email to link a subscription. Pending
-            payments cannot receive keys.
-          </Text>
-        )}
-
         <Pressable
           onPress={() => setRegenerate((v) => !v)}
           style={styles.regenRow}
@@ -316,14 +418,85 @@ export function LicenseKeysPanel() {
           </Text>
         </Pressable>
 
+        <Text style={styles.label}>4 · ROBOT CHECK</Text>
+        {captcha.provider === 'checkbox' ? (
+          <Pressable
+            onPress={onToggleRobot}
+            disabled={challengeBusy}
+            style={[styles.robotRow, robotChecked && styles.robotRowOn]}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: robotChecked, busy: challengeBusy }}
+            accessibilityLabel="I'm not a robot"
+          >
+            <View
+              style={[styles.robotBox, robotChecked && styles.robotBoxOn]}
+              accessibilityElementsHidden
+            >
+              <Text style={styles.robotMark}>{robotChecked ? '✓' : ''}</Text>
+            </View>
+            <Text style={styles.robotLabel}>
+              {challengeBusy ? 'Verifying…' : "I'm not a robot"}
+            </Text>
+          </Pressable>
+        ) : captcha.provider === 'turnstile' ? (
+          <View nativeID="license-turnstile" style={styles.widgetHost} />
+        ) : captcha.provider === 'recaptcha' && captcha.siteKey ? (
+          <Pressable
+            onPress={async () => {
+              const g = (
+                window as unknown as {
+                  grecaptcha?: {
+                    ready: (cb: () => void) => void;
+                    execute: (
+                      siteKey: string,
+                      opts: { action: string },
+                    ) => Promise<string>;
+                  };
+                }
+              ).grecaptcha;
+              if (!g) {
+                setFlashError(true);
+                setFlash('reCAPTCHA is still loading — try again in a moment.');
+                return;
+              }
+              g.ready(() => {
+                void g
+                  .execute(captcha.siteKey!, { action: 'generate_license' })
+                  .then((t) => setProviderToken(t))
+                  .catch(() => {
+                    setProviderToken(null);
+                    setFlashError(true);
+                    setFlash('reCAPTCHA failed — try again.');
+                  });
+              });
+            }}
+            style={[styles.robotRow, providerToken && styles.robotRowOn]}
+            accessibilityRole="button"
+            accessibilityLabel="Verify with reCAPTCHA"
+          >
+            <Text style={styles.robotLabel}>
+              {providerToken ? '✓ Verified with reCAPTCHA' : 'Verify with reCAPTCHA'}
+            </Text>
+          </Pressable>
+        ) : (
+          <Text style={styles.hint}>Robot check unavailable.</Text>
+        )}
+
         <Pressable
-          style={[styles.gen, !activeId && styles.genDisabled]}
+          style={[styles.gen, !canGenerate && styles.genDisabled]}
           onPress={onGenerate}
+          disabled={!canGenerate}
           accessibilityRole="button"
+          accessibilityState={{ disabled: !canGenerate }}
           accessibilityLabel="Generate license key"
         >
           <Text style={styles.genText}>GENERATE LICENSE KEY</Text>
         </Pressable>
+        {!robotVerified ? (
+          <Text style={styles.hint}>
+            Generate stays disabled until the robot check is complete.
+          </Text>
+        ) : null}
         {flash ? (
           <Text style={flashError ? styles.msgErr : styles.msg}>{flash}</Text>
         ) : null}
@@ -422,19 +595,39 @@ const styles = StyleSheet.create({
   },
   eaChipText: { color: '#E5E7EB', fontWeight: '600', fontSize: 13 },
   eaChipTextOn: { color: '#fff' },
-  subRow: {
+  regenRow: { paddingVertical: 4 },
+  robotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
     borderWidth: 1,
     borderColor: '#374151',
     borderRadius: 10,
-    padding: 10,
-    gap: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    backgroundColor: '#0B0E14',
   },
-  subRowOn: {
+  robotRowOn: {
     borderColor: ACCENT,
-    backgroundColor: 'rgba(124,92,255,0.15)',
+    backgroundColor: 'rgba(124,92,255,0.12)',
   },
-  subText: { color: '#E5E7EB', fontWeight: '600', fontSize: 13 },
-  regenRow: { paddingVertical: 4 },
+  robotBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#9CA3AF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111827',
+  },
+  robotBoxOn: {
+    borderColor: ACCENT,
+    backgroundColor: ACCENT,
+  },
+  robotMark: { color: '#fff', fontWeight: '900', fontSize: 14, lineHeight: 16 },
+  robotLabel: { color: '#E5E7EB', fontWeight: '700', fontSize: 14 },
+  widgetHost: { minHeight: 70, alignSelf: 'stretch' },
   gen: {
     marginTop: 6,
     borderRadius: 12,
