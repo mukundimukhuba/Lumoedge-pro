@@ -6,18 +6,49 @@
  *
  * OpenedOrders: mt5Api returns a raw array (see openedOrders()).
  * mt5rest fields are typically PascalCase (Ticket, Symbol, Lots, Profit, …).
+ *
+ * Env precedence (read at call time — not module load):
+ *   1. BROKER_API_URL (canonical Vercel secret)
+ *   2. LUMOEDGE_MT5_URL (legacy alias only — must NOT override a newer BROKER_API_URL)
+ *   3. https://lumoedge.com
+ *
+ * Prior bug: LUMOEDGE_MT5_URL was preferred and captured at cold-start, so a stale
+ * LUMOEDGE value (e.g. hung 134.209.68.188) kept winning after BROKER_API_URL was updated.
  */
 
-const LUMOEDGE_MT5 = (
-  process.env.LUMOEDGE_MT5_URL ||
-  process.env.BROKER_API_URL ||
-  'https://lumoedge.com'
-)
-  .trim()
-  .replace(/\/+$/, '');
+function normalizeMt5Base(raw) {
+  return String(raw || '')
+    .trim()
+    .replace(/\/+$/, '');
+}
 
 function mt5Root() {
-  return LUMOEDGE_MT5;
+  return (
+    normalizeMt5Base(process.env.BROKER_API_URL) ||
+    normalizeMt5Base(process.env.LUMOEDGE_MT5_URL) ||
+    'https://lumoedge.com'
+  );
+}
+
+/** Hostname only — safe for health diagnostics (no credentials). */
+function mt5UpstreamHost() {
+  const root = mt5Root();
+  try {
+    return new URL(/:\/\//.test(root) ? root : `http://${root}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when both env names are set to different bases — ops footgun.
+ * Health surfaces this without echoing full URLs beyond hostname.
+ */
+function mt5EnvConflict() {
+  const broker = normalizeMt5Base(process.env.BROKER_API_URL);
+  const lumo = normalizeMt5Base(process.env.LUMOEDGE_MT5_URL);
+  if (!broker || !lumo) return false;
+  return broker !== lumo;
 }
 
 /** Native mt5rest vs lumoedge /api/mt5 bridge. */
@@ -25,17 +56,16 @@ function isMt5Rest() {
   const mode = String(process.env.MT5_API_MODE || '').trim().toLowerCase();
   if (mode === 'mt5rest' || mode === 'rest') return true;
   if (mode === 'bridge' || mode === 'lumoedge') return false;
+  const root = mt5Root();
   try {
-    const host = new URL(
-      /:\/\//.test(LUMOEDGE_MT5) ? LUMOEDGE_MT5 : `http://${LUMOEDGE_MT5}`,
-    ).hostname;
+    const host = new URL(/:\/\//.test(root) ? root : `http://${root}`).hostname;
     if (/lumoedge\.com$/i.test(host)) return false;
   } catch {
     /* fall through */
   }
   // Any non-lumoedge BROKER_API_URL (e.g. DigitalOcean droplet) → mt5rest.
   return Boolean(
-    (process.env.LUMOEDGE_MT5_URL || process.env.BROKER_API_URL || '').trim(),
+    (process.env.BROKER_API_URL || process.env.LUMOEDGE_MT5_URL || '').trim(),
   );
 }
 
@@ -137,13 +167,16 @@ function bodyLooksHealthy(text) {
  * Durable bridge probe — never invents a healthy status.
  * Prefers /health, then /Health, then /ping.
  */
-async function probeBridgeHealth({ timeoutMs = 4000 } = {}) {
+async function probeBridgeHealth({ timeoutMs = 8000 } = {}) {
   const configured = Boolean(
-    (process.env.LUMOEDGE_MT5_URL || process.env.BROKER_API_URL || '').trim(),
+    (process.env.BROKER_API_URL || process.env.LUMOEDGE_MT5_URL || '').trim(),
   );
   const root = mt5Root();
+  const upstreamHost = mt5UpstreamHost();
+  const envConflict = mt5EnvConflict();
   const started = Date.now();
   // One budget for the whole probe — hung TCP must not multiply timeouts.
+  // 8s: healthy mt5rest answers in <100ms; hung blackhole hosts still fail once.
   const deadline = started + timeoutMs;
   const paths = ['/health', '/Health', '/ping', '/Ping'];
   let lastError = 'no response';
@@ -169,6 +202,13 @@ async function probeBridgeHealth({ timeoutMs = 4000 } = {}) {
           latencyMs,
           path,
           detail: text.slice(0, 80) || 'Healthy',
+          upstreamHost,
+          envConflict,
+          sourceEnv: normalizeMt5Base(process.env.BROKER_API_URL)
+            ? 'BROKER_API_URL'
+            : normalizeMt5Base(process.env.LUMOEDGE_MT5_URL)
+              ? 'LUMOEDGE_MT5_URL'
+              : 'default',
         };
       }
       lastError = `HTTP ${res.status}${text ? `: ${text.slice(0, 80)}` : ''}`;
@@ -195,6 +235,13 @@ async function probeBridgeHealth({ timeoutMs = 4000 } = {}) {
     path: null,
     detail: lastError,
     error: `MT5 bridge health check failed (${lastError})`,
+    upstreamHost,
+    envConflict,
+    sourceEnv: normalizeMt5Base(process.env.BROKER_API_URL)
+      ? 'BROKER_API_URL'
+      : normalizeMt5Base(process.env.LUMOEDGE_MT5_URL)
+        ? 'LUMOEDGE_MT5_URL'
+        : 'default',
   };
 }
 
@@ -216,7 +263,7 @@ async function connectLiveMt5({ user, password, server }) {
   }
 
   // Fail fast when the droplet is hung — do not burn the whole serverless budget.
-  const health = await probeBridgeHealth({ timeoutMs: 3500 });
+  const health = await probeBridgeHealth({ timeoutMs: 8000 });
   if (!health.ok) {
     return {
       ok: false,
@@ -705,6 +752,8 @@ module.exports = {
   sendLiveOrder,
   probeBridgeHealth,
   mt5Root,
+  mt5UpstreamHost,
+  mt5EnvConflict,
   mapOrder,
   extractOrdersList,
   humanizeConnectError,
