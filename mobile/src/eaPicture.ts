@@ -122,37 +122,18 @@ export function eaPictureImageSource(
 }
 
 /**
- * Prefer Supabase image render transforms when the URI is a public object URL,
- * so the CDN can serve a display-sized derivative instead of a tiny original.
- * Falls back to the original URI when the path is not a Supabase public object.
+ * Display URI for EA pictures.
+ *
+ * Always returns the original URI — hero and avatars must share one high-quality
+ * source. Do not route through Supabase `/render/image/` (or any other
+ * size-specific derivative): those produce a softer large hero while small
+ * circles still look sharp.
  */
 export function eaPictureDisplayUri(
   uri: string | null | undefined,
-  layout: { width: number; height: number },
+  _layout?: { width: number; height: number },
 ): string | null {
-  if (!uri) return null;
-  if (!uri.startsWith('http')) return uri;
-
-  const dpr = Math.max(1, PixelRatio.get());
-  const w = Math.max(64, Math.round(layout.width * dpr));
-  const h = Math.max(64, Math.round(layout.height * dpr));
-
-  try {
-    const u = new URL(uri);
-    const marker = '/storage/v1/object/public/';
-    const idx = u.pathname.indexOf(marker);
-    if (idx === -1) return uri;
-
-    const publicPath = u.pathname.slice(idx + marker.length);
-    u.pathname = `/storage/v1/render/image/public/${publicPath}`;
-    u.searchParams.set('width', String(w));
-    u.searchParams.set('height', String(h));
-    u.searchParams.set('resize', 'cover');
-    u.searchParams.set('quality', '85');
-    return u.toString();
-  } catch {
-    return uri;
-  }
+  return uri || null;
 }
 
 /** Compress every EA / key data-URL picture in a catalog. */

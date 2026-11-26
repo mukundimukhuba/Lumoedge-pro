@@ -26,10 +26,7 @@ import { AutoTradeEngineOverlay } from './AutoTradeEngineOverlay';
 import { pushAutoTradeHistory } from './autoTradeHistory';
 import { BotTradeFloat } from './BotTradeFloat';
 import { loadMt5Token } from './brokers/mt5Token';
-import {
-  eaPictureDisplayUri,
-  eaPictureImageSource,
-} from './eaPicture';
+import { eaPictureImageSource } from './eaPicture';
 import { EdgesBottomDock } from './EdgesBottomDock';
 import { LicenseActivateScreen } from './LicenseActivateScreen';
 import { PaymentPendingScreen } from './PaymentPendingScreen';
@@ -169,11 +166,6 @@ export function EaControlScreen() {
   const [autoEngineOpen, setAutoEngineOpen] = useState(false);
   const [mt5Token, setMt5Token] = useState<string | null>(null);
   const [historyTick, setHistoryTick] = useState(0);
-  /** Fall back to the raw public URL if Supabase render transforms are disabled. */
-  const [heroTransformFailed, setHeroTransformFailed] = useState(false);
-  useEffect(() => {
-    setHeroTransformFailed(false);
-  }, [rawPictureUri]);
 
   useEffect(() => {
     let cancelled = false;
@@ -212,22 +204,11 @@ export function EaControlScreen() {
     () => ({ width: Math.max(1, windowW), height: heroTotalH }),
     [windowW, heroTotalH],
   );
-  const avatarLayout = useMemo(() => ({ width: 40, height: 40 }), []);
+  /** One URI / source for hero + status/FAB avatars — no separate low-res path. */
   const eaPicture = useMemo<ImageSourcePropType>(() => {
     if (!rawPictureUri) return fallbackMascot;
-    const displayUri =
-      !heroTransformFailed && rawPictureUri.startsWith('http')
-        ? eaPictureDisplayUri(rawPictureUri, heroLayout) || rawPictureUri
-        : rawPictureUri;
-    return eaPictureImageSource(displayUri, heroLayout);
-  }, [rawPictureUri, heroLayout, heroTransformFailed]);
-  const eaAvatar = useMemo<ImageSourcePropType>(() => {
-    if (!rawPictureUri) return fallbackMascot;
-    const displayUri = rawPictureUri.startsWith('http')
-      ? eaPictureDisplayUri(rawPictureUri, avatarLayout) || rawPictureUri
-      : rawPictureUri;
-    return eaPictureImageSource(displayUri, avatarLayout);
-  }, [rawPictureUri, avatarLayout]);
+    return eaPictureImageSource(rawPictureUri, heroLayout);
+  }, [rawPictureUri, heroLayout]);
   const dockPad = Math.max(6, 2 + safeBottom);
   const dockH = Math.round(58 * scale) + dockPad;
   /** Reference stack gaps ≈ 10–15px (use 12). */
@@ -458,29 +439,33 @@ export function EaControlScreen() {
               : null,
           ]}
         >
-          {/* Single full-bleed cover — fills the hero band without letterbox or dual-crop chop. */}
-          <Image
-            source={eaPicture}
-            style={[
-              styles.heroCoverImg,
-              // RN-web Image paints via background-image; set both object-* and
-              // background* so cover + face bias apply across engines.
-              Platform.OS === 'web'
-                ? ({
-                    objectFit: 'cover',
-                    objectPosition: 'center 22%',
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center 22%',
-                    backgroundRepeat: 'no-repeat',
-                  } as object)
-                : null,
-            ]}
-            resizeMode="cover"
-            onError={() => {
-              if (!heroTransformFailed) setHeroTransformFailed(true);
-            }}
-            accessibilityIgnoresInvertColors
-          />
+          {/* Single full-bleed cover — same URI as avatars; no transform/downscale. */}
+          {Platform.OS === 'web' && rawPictureUri ? (
+            // RN-web Image uses background-image, which softens large covers.
+            // A real <img> keeps the shared URI sharp at hero size.
+            <img
+              src={rawPictureUri}
+              alt=""
+              draggable={false}
+              style={{
+                position: 'absolute',
+                left: 0,
+                top: 0,
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                objectPosition: 'center 22%',
+                pointerEvents: 'none',
+              }}
+            />
+          ) : (
+            <Image
+              source={eaPicture}
+              style={styles.heroCoverImg}
+              resizeMode="cover"
+              accessibilityIgnoresInvertColors
+            />
+          )}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Edges logo — triple tap for Mentors Portal"
@@ -633,7 +618,7 @@ export function EaControlScreen() {
                 hitSlop={8}
               >
                 <Image
-                  source={eaAvatar}
+                  source={eaPicture}
                   style={[
                     styles.statusThumb,
                     {
@@ -643,7 +628,7 @@ export function EaControlScreen() {
                       borderRadius: Math.max(15, Math.round(17 * scale)),
                     },
                     Platform.OS === 'web'
-                      ? ({ objectFit: 'cover' } as object)
+                      ? ({ objectFit: 'cover', objectPosition: 'center 22%' } as object)
                       : null,
                   ]}
                   resizeMode="cover"
