@@ -1,9 +1,10 @@
 import { BlurView } from 'expo-blur';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { usePathname, useRouter } from 'expo-router';
+import { usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppState } from './AppState';
+import { popToHome, pushAppPage, type AppPageHref } from './navPush';
 
 const BASE = {
   black: '#000000',
@@ -16,7 +17,7 @@ const TABS: {
   id: DockTab;
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
-  href: '/' | '/chart-scanner' | '/connect-broker';
+  href: AppPageHref;
 }[] = [
   { id: 'home', label: 'Home', icon: 'home-outline', href: '/' },
   {
@@ -47,13 +48,13 @@ export function dockTabFromPath(pathname: string | null | undefined): DockTab {
   const p = pathname || '';
   if (p.includes('chart-scanner')) return 'scanner';
   if (p.includes('connect-broker')) return 'broker';
+  // Quotes is a Home sub-page — highlight Home while there.
   return 'home';
 }
 
 /**
- * Stable bottom dock: Home → /, Chart scanner → /chart-scanner,
- * Connect → /connect-broker. Always uses replace() so back-stack never
- * swaps destinations. Active tab follows the current pathname.
+ * Bottom dock: Chart Scanner / Connect open with a horizontal stack push
+ * (same as Quotes). Home pops back when possible so the slide reverses.
  */
 export function EdgesBottomDock({
   onHomeRetap,
@@ -61,20 +62,25 @@ export function EdgesBottomDock({
   /** Called when Home is pressed while already on EA home (e.g. close sheets). */
   onHomeRetap?: () => void;
 } = {}) {
-  const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { accent } = useAppState();
   const active = dockTabFromPath(pathname);
+  const onQuotes = (pathname || '').includes('quotes');
   const dockPad = Math.max(insets.bottom, Platform.OS === 'web' ? 12 : 8);
 
   const go = (tab: DockTab) => {
-    if (tab === active) {
-      if (tab === 'home') onHomeRetap?.();
+    if (tab === 'home') {
+      if (active === 'home' && !onQuotes) {
+        onHomeRetap?.();
+        return;
+      }
+      popToHome();
       return;
     }
+    if (tab === active) return;
     const href = TABS.find((t) => t.id === tab)!.href;
-    router.replace(href);
+    pushAppPage(href);
   };
 
   return (
